@@ -248,7 +248,7 @@ pub(crate) struct AuthorizedBuild {
     lifecycle_guard: File,
     package: String,
     requested_outputs: Vec<String>,
-    reviewed_digest: Option<ReviewedSource>,
+    reviewed_digest: ReviewedSource,
 }
 
 /// The exact local source files approved before any build command runs.
@@ -1994,9 +1994,9 @@ impl AurClient {
             return Err(AurError::PkgbuildNotFound(package.to_string()).into());
         }
         let reviewed_digest = if self.settings.aur.review_pkgbuild {
-            Some(Self::review_pkgbuild(package, &pkgbuild_path).await?)
+            Self::review_pkgbuild(package, &pkgbuild_path).await?
         } else {
-            Some(ReviewedSource::capture(&pkg_dir)?)
+            ReviewedSource::capture(&pkg_dir)?
         };
 
         Ok(AuthorizedBuild {
@@ -2051,9 +2051,7 @@ impl AurClient {
         if !pkgbuild_path.exists() {
             return Err(AurError::PkgbuildNotFound(package).into());
         }
-        if let Some(digest) = &reviewed_digest {
-            digest.verify(&pkg_dir)?;
-        }
+        reviewed_digest.verify(&pkg_dir)?;
 
         let pgp_home = Self::fetch_missing_pgp_keys(&pkgbuild_path).await?;
 
@@ -2125,9 +2123,7 @@ impl AurClient {
 
         let fresh = pkg_files.is_empty();
         if fresh {
-            if let Some(digest) = &reviewed_digest {
-                digest.verify(&pkg_dir)?;
-            }
+            reviewed_digest.verify(&pkg_dir)?;
             let log_path = self.build_log_path(&package);
 
             let status = self
@@ -2151,9 +2147,7 @@ impl AurClient {
 
         Self::authorize_archives(
             &pkg_files,
-            reviewed_digest
-                .as_ref()
-                .context("Missing reviewed source")?,
+            &reviewed_digest,
             &package,
             &requested_outputs,
             fresh,
@@ -2275,9 +2269,9 @@ impl AurClient {
         // Same hash seal as install_package_outputs: re-verify the reviewed
         // PKGBUILD right before this dependency build runs.
         let reviewed_digest = if self.settings.aur.review_pkgbuild {
-            Some(Self::review_pkgbuild(package_base, &pkgbuild_path).await?)
+            Self::review_pkgbuild(package_base, &pkgbuild_path).await?
         } else {
-            Some(ReviewedSource::capture(&pkg_dir)?)
+            ReviewedSource::capture(&pkg_dir)?
         };
         let pgp_home = Self::fetch_missing_pgp_keys(&pkgbuild_path).await?;
 
@@ -2315,18 +2309,14 @@ impl AurClient {
         {
             return Self::authorize_archives(
                 &archives,
-                reviewed_digest
-                    .as_ref()
-                    .context("Missing reviewed source")?,
+                &reviewed_digest,
                 package_base,
                 &package_outputs,
                 false,
             );
         }
 
-        if let Some(digest) = &reviewed_digest {
-            digest.verify(&pkg_dir)?;
-        }
+        reviewed_digest.verify(&pkg_dir)?;
         let log_path = self.build_log_path(package);
         let status = self
             .run_build(&pkg_dir, &env, package)
@@ -2347,9 +2337,7 @@ impl AurClient {
         self.write_cache_key(package_base, &cache_key).await?;
         Self::authorize_archives(
             &pkg_files,
-            reviewed_digest
-                .as_ref()
-                .context("Missing reviewed source")?,
+            &reviewed_digest,
             package_base,
             &package_outputs,
             true,
@@ -5307,19 +5295,25 @@ mod tests {
             settings: Settings::default(),
             package_base_locks: Arc::new(dashmap::DashMap::new()),
         };
+        let checkout = client.build_dir.join("fixture");
+        std::fs::create_dir_all(&checkout)?;
+        std::fs::write(checkout.join("PKGBUILD"), b"reviewed source")?;
+        std::fs::write(
+            checkout.join(".SRCINFO"),
+            b"pkgbase = fixture\npkgver = 1\npkgrel = 1\narch = any\npkgname = fixture\n",
+        )?;
         let first = AuthorizedBuild {
             lifecycle_guard: client.acquire_build_lifecycle().await?,
             package: "fixture".into(),
             requested_outputs: vec!["fixture".into()],
-            reviewed_digest: None,
+            reviewed_digest: ReviewedSource::capture(&checkout)?,
         };
         let second = client.clone().acquire_build_lifecycle().await?;
         let lifecycle_path = client.build_dir.with_added_extension("lifecycle.lock");
         let inode = std::fs::metadata(&lifecycle_path)?.ino();
         let package_guard = client.acquire_package_base_file_lock("fixture").await?;
         let package_inode = package_guard.metadata()?.ino();
-        let source = client.build_dir.join("PKGBUILD");
-        std::fs::write(&source, b"reviewed source")?;
+        let source = checkout.join("PKGBUILD");
 
         assert!(
             client.clean_all().is_err(),
