@@ -167,7 +167,7 @@ async fn test_remove_package() {
         .expect("history-disabled service should build");
 
     // Remove the package
-    let result = service.remove(&["test-package".to_string()], false).await;
+    let result = service.remove(&["test-package".to_string()]).await;
     assert!(result.is_ok());
 
     // Verify it's no longer installed
@@ -382,7 +382,7 @@ mod proptest_tests {
 
             // Remove
             let remove_result = rt.block_on(
-                service.remove(std::slice::from_ref(&package_name), false)
+                service.remove(std::slice::from_ref(&package_name))
             );
             prop_assert!(remove_result.is_ok());
             prop_assert!(!rt.block_on(pm.is_installed(&package_name)).unwrap());

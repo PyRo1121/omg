@@ -353,10 +353,7 @@ pub(crate) async fn remove_with_manager(
     );
     println!();
 
-    // PackageService::remove currently ignores its recursion flag (the Arch
-    // backend always cleans unneeded dependencies, other backends never do);
-    // pass `false` and let the backend defaults decide.
-    let result = service.remove(packages, false).await;
+    let result = service.remove(packages).await;
 
     crate::core::usage::track_remove_result(result.is_ok());
 
