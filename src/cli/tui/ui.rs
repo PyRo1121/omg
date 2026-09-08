@@ -888,6 +888,7 @@ fn draw_runtimes(f: &mut Frame, area: Rect, app: &App) {
                 "󰛦"
             } else if [
                 "node", "python", "rust", "go", "ruby", "java", "zig", "dotnet", "erlang", "php",
+                "swift",
             ]
             .iter()
             .any(|runtime| name.eq_ignore_ascii_case(runtime))

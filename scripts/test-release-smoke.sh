@@ -322,7 +322,7 @@ jq -e 'length == 4 and ([.[].distro] | sort) == ["arch", "debian", "fedora", "ub
 assert_rc 143 bash -c 'export FAKE_QEMU_SUITE_PID=$$; exec "$@"' _ "$qemu_runner" --distro all --staged-dir "$scratch/valid" --evidence-dir "$scratch/qemu-interrupted"
 qemu_result=$(find "$scratch/qemu-interrupted" -mindepth 2 -maxdepth 2 -name results.json -print -quit)
 jq -e 'length == 4 and .[0].result == "INCOMPLETE" and all(.[1:][]; .result == "NOT_RUN")' "$qemu_result" >/dev/null || fail 'interrupted QEMU suite lost target states'
-for attempt in {1..100}; do
+for _attempt in {1..100}; do
   child_result=$(find "$scratch/qemu-interrupted" -mindepth 4 -maxdepth 4 -name results.json -print -quit)
   if [[ -n "$child_result" ]] && jq -e '.[0].result == "HARNESS_ERROR"' "$child_result" >/dev/null 2>&1; then break; fi
   sleep 0.1
@@ -384,8 +384,8 @@ jq -e 'length == 167 and all(.[]; .result == "BLOCKED")' "$blocked_results" >/de
 export FAKE_QEMU_GUEST_EXIT=0
 assert_rc 2 "$qemu_runner" --inventory-tiers "hermetic';exit 0;'"
 assert_rc 2 "$qemu_runner" --inventory-tiers $'hermetic\n\047;exit 0;\047'
-native_arch=x86_64; foreign_arch=aarch64
-if [[ "$(uname -m)" == aarch64 || "$(uname -m)" == arm64 ]]; then native_arch=aarch64; foreign_arch=x86_64; fi
+foreign_arch=aarch64
+if [[ "$(uname -m)" == aarch64 || "$(uname -m)" == arm64 ]]; then foreign_arch=x86_64; fi
 # Preflight probes fail closed to HARNESS_ERROR without needing a guest.
 unset OMG_QEMU_ALLOW_NO_KVM
 export OMG_QEMU_KVM_DEVICE="$scratch/does-not-exist"
@@ -542,6 +542,7 @@ grep -q 'gtimeout-stub' "$scratch/gtimeout-log" || fail "macOS toolset run did n
 
 # Per-distro expected exits (#303): source only the pure resolvers out of
 # the runner (anchored extraction keeps the suite hermetic).
+# shellcheck disable=SC1090
 source <(sed -n '/^exit_for_distro/,/^}/p;/^valid_expected_exit/,/^}/p' "$runner")
 [[ "$(exit_for_distro "0" arch)" == "0" ]] || fail "bare exit must apply to every distro"
 [[ "$(exit_for_distro "0" debian)" == "0" ]] || fail "bare exit must apply to debian"

@@ -478,7 +478,7 @@ Plus 54 GitHub-release tools managed through one generic backend
 `dust`, `duf`, `procs`, `ruff`, `uv`, `fnm`, `protoc`, `terragrunt`,
 `packer`, `dive`, `golangci-lint`, `delve`, `stylua`, `kotlin`, `scala`,
 `elixir`, `ghcup`) plus the `dotnet` SDK, Erlang/OTP, and PHP managers —
-67 managed runtimes/tools in total. Each installs checksum-verified release
+68 registered runtimes/tools in total. Platform availability varies by publisher. Each installs checksum-verified release
 assets into `<data-dir>/versions/<tool>/<version>/bin` (flat-layout SDKs
 like .NET expose their host binary at the version root instead), so `use`,
 `list`, `hook-env`, and version-file detection work exactly like the
@@ -498,9 +498,10 @@ Debian/Ubuntu; override detection with `OMG_PHP_DISTRO`. Upstream
 publishes one rolling build per minor, so versions are channels (`8.5`),
 not exact patches — reinstalling refreshes to the latest patch, and
 `.php-version` pins work via the phpenv convention. Haskell is covered
-through `ghcup`, which installs and manages GHC/cabal/HLS itself. Not
-covered, with reasons: Swift (official Linux toolchains target Ubuntu only
-and are ~800 MB with no machine-readable version index).
+through `ghcup`, which installs and manages GHC/cabal/HLS itself. Swift uses
+official Ubuntu toolchains with detached-signature verification and a matching
+`swift --version` check before publication. Swift installation requires an OMG
+build with the `pgp` feature; `.swift-version` pins select `usr/bin`.
 
 **mise compatibility (no mise required):** OMG reads `mise.toml` /
 `.mise.toml` `[tools]` pins, `[env]` variables, and `[tasks.*]` entries
@@ -872,6 +873,7 @@ omg doctor [OPTIONS]
 - Shell hook installation
 - Daemon connectivity
 - Mirror availability
+- Package index health (on Debian/Ubuntu, compressed `*_Packages.lz4`/`.gz`/`.xz` indexes count as healthy)
 - PGP keyring status
 - Runtime integrity
 
@@ -1754,7 +1756,7 @@ These options work with all commands:
 | `--version` | `-V` | Show version |
 | `--verbose` | `-v` | Increase verbosity; repeat (`-vv`) for more detail, also streams package build output live |
 | `--quiet` | `-q` | Suppress non-essential output (command results still print) |
-| `--json` | | Output in JSON format (for scripting) |
+| `--json` | | Output in JSON format (for scripting). Implies quiet output: stdout carries pure JSON while diagnostics go to stderr |
 | `--all-commands` | | Show all commands including advanced ones |
 
 ---

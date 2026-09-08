@@ -65,7 +65,7 @@ curl -fsSL https://omg.latham.cloud/install.sh | bash
 
 ```bash
 # Download latest release
-VERSION="0.1.215"
+VERSION="0.1.218"
 wget "https://github.com/PyRo1121/omg/releases/download/v${VERSION}/omg-v${VERSION}-x86_64-linux-debian.tar.gz"
 
 # Extract
@@ -292,14 +292,14 @@ curl -fsSL https://omg.latham.cloud/install.sh | OMG_NO_TELEMETRY=1 bash
 curl -fsSL https://omg.latham.cloud/install.sh | OMG_SKIP_SHELL=1 bash
 
 # Install specific version
-curl -fsSL https://omg.latham.cloud/install.sh | OMG_VERSION=v0.1.215 bash
+curl -fsSL https://omg.latham.cloud/install.sh | OMG_VERSION=v0.1.218 bash
 
 # Custom install directory
 curl -fsSL https://omg.latham.cloud/install.sh | INSTALL_DIR="$HOME/.omg/bin" bash
 
 # Combine options
 curl -fsSL https://omg.latham.cloud/install.sh |
-  OMG_VERSION=v0.1.215 OMG_NO_TELEMETRY=1 OMG_SKIP_SHELL=1 bash
+  OMG_VERSION=v0.1.218 OMG_NO_TELEMETRY=1 OMG_SKIP_SHELL=1 bash
 ```
 
 ---

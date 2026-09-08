@@ -721,7 +721,7 @@ fn local_to_packages(local_pkgs: Vec<LocalPackage>) -> Vec<Package> {
 #[cfg(test)]
 #[cfg(unix)]
 mod tests {
-    use super::apt_install_error;
+    use super::{APT_FETCH_DIRS, apt_install_error, ensure_fetch_dirs};
 
     fn failed_output(stderr: &[u8]) -> std::process::Output {
         use std::os::unix::process::ExitStatusExt as _;

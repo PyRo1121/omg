@@ -139,7 +139,7 @@ fn host_arch_suffix() -> Result<&'static str> {
     match std::env::consts::ARCH {
         "x86_64" => Ok(""),
         "aarch64" => Ok("-aarch64"),
-        (arch) => anyhow::bail!(
+        arch => anyhow::bail!(
             "Unsupported architecture for Swift: {arch} (Swift.org publishes x86_64 and aarch64 toolchains only)"
         ),
     }
@@ -162,17 +162,15 @@ fn tarball_url(version: &str, ubuntu: &str, arch_suffix: &str) -> String {
 /// previews, GM candidates, and branch junk are rejected.
 fn parse_release_tag(tag: &str) -> Option<String> {
     let bare = tag.strip_prefix("swift-")?.strip_suffix("-RELEASE")?;
-    let parts: Vec<&str> = bare.split('.').collect();
-    if !(2..=3).contains(&parts.len()) {
-        return None;
-    }
-    if !parts
-        .iter()
-        .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
-    {
-        return None;
-    }
-    Some(bare.to_string())
+    is_stable_version(bare).then(|| bare.to_string())
+}
+
+fn is_stable_version(version: &str) -> bool {
+    let parts: Vec<&str> = version.split('.').collect();
+    (2..=3).contains(&parts.len())
+        && parts
+            .iter()
+            .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
 }
 
 /// Filter GitHub releases down to stable versions, newest first.
@@ -413,9 +411,7 @@ impl SwiftManager {
         let candidate = candidate_dir.path().join("keyring.asc");
         let refreshed = async {
             download_file(self.client, SWIFT_KEYS_URL, &candidate).await?;
-            validate_keyring(&candidate)?;
-            fs::rename(&candidate, &self.keyring_path)
-                .context("Failed to publish validated Swift keyring")
+            publish_keyring(&candidate, &self.keyring_path)
         }
         .await;
         match refreshed {
@@ -443,6 +439,7 @@ impl SwiftManager {
         crate::core::security::validate_runtime_version(&version)?;
         let ubuntu = ubuntu_release()?;
         let arch_suffix = host_arch_suffix()?;
+        let _install_lease = super::common::try_lock_runtime_install(&self.versions_dir, &version)?;
         let version_dir = self.versions_dir.join(&version);
 
         // The fast path additionally requires `usr/bin/swift`: a directory
@@ -554,6 +551,11 @@ impl SwiftManager {
 // Generate common runtime manager methods (list_installed, current_version)
 super::common::impl_runtime_common!(SwiftManager);
 
+fn publish_keyring(candidate: &Path, destination: &Path) -> Result<()> {
+    validate_keyring(candidate)?;
+    fs::rename(candidate, destination).context("Failed to publish validated Swift keyring")
+}
+
 #[cfg(feature = "pgp")]
 fn validate_keyring(path: &Path) -> Result<()> {
     PgpVerifier::from_keyring(path)?;
@@ -583,7 +585,7 @@ fn smoke_swift(version_dir: &Path, expected: &str) -> Result<()> {
             })
             .context("Swift did not report its version")?;
         anyhow::ensure!(
-            super::common::version_cmp(actual, expected).is_eq(),
+            is_stable_version(actual) && super::common::version_cmp(actual, expected).is_eq(),
             "Swift artifact version {actual} does not match requested {expected}"
         );
         Ok(())
@@ -632,6 +634,17 @@ mod tests {
         }
     }
 
+    #[test]
+    fn malformed_key_refresh_preserves_cached_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let cached = dir.path().join("cached.asc");
+        let candidate = dir.path().join("candidate.asc");
+        fs::write(&cached, b"prior cache bytes").unwrap();
+        fs::write(&candidate, b"<html>upstream error</html>").unwrap();
+        assert!(publish_keyring(&candidate, &cached).is_err());
+        assert_eq!(fs::read(&cached).unwrap(), b"prior cache bytes");
+    }
+
     #[cfg(unix)]
     #[test]
     fn smoke_test_rejects_a_different_release() {
@@ -646,6 +659,12 @@ mod tests {
         make_staged_executable(&binary).unwrap();
         smoke_swift(dir.path(), "6.1.2").unwrap();
         assert!(smoke_swift(dir.path(), "6.2.0").is_err());
+        fs::write(
+            &binary,
+            "#!/bin/sh\nprintf 'Swift version 6.1-dev (release)\\n'\n",
+        )
+        .unwrap();
+        assert!(smoke_swift(dir.path(), "6.1").is_err());
     }
 
     #[test]

@@ -4,7 +4,7 @@ use crate::cli::{style, ui};
 use crate::runtimes::{
     BunManager, DenoManager, DotnetManager, ErlangManager, GenericToolManager, GoManager,
     JavaManager, NodeManager, PhpManager, PiManager, PythonManager, RubyManager, RustManager,
-    SUPPORTED_RUNTIMES, ZigManager,
+    SUPPORTED_RUNTIMES, SwiftManager, ZigManager,
 };
 
 pub fn resolve_active_version(runtime: &str) -> Result<Option<String>> {
@@ -87,7 +87,8 @@ impl_runtime_install_use!(
     ZigManager,
     DotnetManager,
     ErlangManager,
-    PhpManager
+    PhpManager,
+    SwiftManager
 );
 
 /// Use an already-installed version, or install it first if missing.
@@ -178,7 +179,12 @@ pub async fn use_version(runtime: &str, version: Option<&str>) -> Result<()> {
             install_or_use(&ErlangManager::new(), strip_version_prefix(&version)).await?;
         }
         "php" => {
-            install_or_use(&PhpManager::new(), strip_version_prefix(&version)).await?;
+            PhpManager::new()
+                .install(strip_version_prefix(&version))
+                .await?;
+        }
+        "swift" => {
+            install_or_use(&SwiftManager::new(), strip_version_prefix(&version)).await?;
         }
         other => {
             let Some(manager) = GenericToolManager::for_name(other) else {
@@ -219,6 +225,7 @@ pub fn uninstall_version(runtime: &str, version: &str) -> Result<()> {
         "dotnet" => DotnetManager::new().uninstall(strip_version_prefix(version))?,
         "erlang" => ErlangManager::new().uninstall(strip_version_prefix(version))?,
         "php" => PhpManager::new().uninstall(strip_version_prefix(version))?,
+        "swift" => SwiftManager::new().uninstall(strip_version_prefix(version))?,
         other => {
             let Some(manager) = GenericToolManager::for_name(other) else {
                 anyhow::bail!(
@@ -258,6 +265,7 @@ fn native_version_info(runtime: &str) -> Option<(Result<Vec<String>>, Option<Str
         "dotnet" => probe!(DotnetManager::new()),
         "erlang" => probe!(ErlangManager::new()),
         "php" => probe!(PhpManager::new()),
+        "swift" => probe!(SwiftManager::new()),
         other => GenericToolManager::for_name(other)
             .map(|manager| (manager.list_installed(), manager.current_version())),
     }
@@ -366,6 +374,7 @@ pub fn list_versions_sync(runtime: Option<&str>, json: bool) -> Result<()> {
             (".NET", DotnetManager::new().current_version()),
             ("Erlang/OTP", ErlangManager::new().current_version()),
             ("PHP", PhpManager::new().current_version()),
+            ("Swift", SwiftManager::new().current_version()),
         ] {
             if let Some(v) = mgr_version {
                 ui::print_list_item(name, Some(&v));
@@ -411,6 +420,7 @@ pub async fn list_versions(runtime: Option<&str>, available: bool, json: bool) -
             dotnet_res,
             erlang_res,
             php_res,
+            swift_res,
         ) = tokio::join!(
             tokio::task::spawn_blocking(|| NodeManager::new().current_version()),
             tokio::task::spawn_blocking(|| PythonManager::new().current_version()),
@@ -425,6 +435,7 @@ pub async fn list_versions(runtime: Option<&str>, available: bool, json: bool) -
             tokio::task::spawn_blocking(|| DotnetManager::new().current_version()),
             tokio::task::spawn_blocking(|| ErlangManager::new().current_version()),
             tokio::task::spawn_blocking(|| PhpManager::new().current_version()),
+            tokio::task::spawn_blocking(|| SwiftManager::new().current_version()),
         );
 
         for (name, res) in [
@@ -441,6 +452,7 @@ pub async fn list_versions(runtime: Option<&str>, available: bool, json: bool) -
             (".NET", dotnet_res),
             ("Erlang/OTP", erlang_res),
             ("PHP", php_res),
+            ("Swift", swift_res),
         ] {
             let version = res.with_context(|| format!("Failed to inspect {name} versions"))?;
             if let Some(v) = version {
@@ -569,6 +581,13 @@ pub async fn list_versions(runtime: Option<&str>, available: bool, json: bool) -
                 ui::print_list_item(&v.version, None);
             }
         }
+        "swift" => {
+            let mgr = SwiftManager::new();
+            println!("{} Available remote versions:", style::informative("→"));
+            for version in mgr.list_available().await?.iter().take(20) {
+                ui::print_list_item(&version.version, None);
+            }
+        }
         "php" => {
             let mgr = PhpManager::new();
             println!(
@@ -662,7 +681,7 @@ mod tests {
         let runtimes = super::known_runtimes().expect("runtime list must build");
         assert_eq!(
             runtimes.len(),
-            67,
+            68,
             "13 natives + 54 registry tools: {runtimes:?}"
         );
         for name in [
@@ -671,6 +690,7 @@ mod tests {
             "dotnet",
             "erlang",
             "php",
+            "swift",
             "ripgrep",
             "kustomize",
             "kotlin",

@@ -103,7 +103,7 @@ IFS= read -r header < "$tsv"
 [[ "$header" == $'case\targs_json\tsafety\texpected_exit\texpected_ux\trequires\ttier\ttargets\tassertions\tcleanup' ]] || exit 2
 awk -F '\t' 'NR > 1 { if (NF != 10) exit 1; for (i = 1; i <= NF; i++) if ($i == "") exit 1 }' "$tsv" || exit 2
 declare -A row_args=() row_requires=() row_tier=() row_safety=() row_ux=() row_exit=() row_targets=() row_assertions=()
-while IFS=$'\t' read -r id aj s e u r t tg a c; do
+while IFS=$'\t' read -r id aj s e u r t tg a _cleanup; do
   [[ "$id" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ && -z "${row_args[$id]:-}" ]] || exit 2
   [[ "$r" == - || "$r" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]] || exit 2
   [[ "$r" == - || -n "${row_args[$r]:-}" ]] || exit 2
@@ -159,7 +159,7 @@ prereq_runnable() { # id -> 0 when replayable
 
 # Process substitution (not a pipeline): pass/fail counters below must
 # survive the loop; a `tail | while` pipeline would trap them in a subshell.
-while IFS=$'\t' read -r case args_json safety expected_exit expected_ux requires tier targets assertions cleanup; do
+while IFS=$'\t' read -r case args_json safety _expected_exit expected_ux requires tier targets assertions _cleanup; do
   # Case ids flow into a remote shell command below: reject anything
   # outside the identifier shape instead of executing it.
   if [[ ! "$case" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]]; then

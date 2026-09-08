@@ -56,10 +56,10 @@ fn version_from_tag(tag: &str) -> Option<String> {
 }
 
 fn version_for_tool(tag: &str, tool: &str) -> Option<String> {
-    if let Some((namespace, _)) = tag.rsplit_once('/') {
-        if namespace != tool {
-            return None;
-        }
+    if let Some((namespace, _)) = tag.rsplit_once('/')
+        && namespace != tool
+    {
+        return None;
     }
     version_from_tag(tag)
 }
@@ -302,8 +302,8 @@ fn select_asset<'a>(
                 .iter()
                 .any(|token| asset.name.contains(*token))
         };
-        arch_match(&b.0)
-            .cmp(&arch_match(&a.0))
+        arch_match(b.0)
+            .cmp(&arch_match(a.0))
             .then_with(|| a.0.name.cmp(&b.0.name))
     });
     fallback.into_iter().next()

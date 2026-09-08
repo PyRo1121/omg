@@ -540,7 +540,7 @@ fn parse_dotenv(content: &str, path: &Path) -> Result<Vec<(String, String)>> {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let line = line.strip_prefix("export ").map(str::trim).unwrap_or(line);
+        let line = line.strip_prefix("export ").map_or(line, str::trim);
         let Some((key, value)) = line.split_once('=') else {
             anyhow::bail!(
                 "Malformed line {} in {}: expected KEY=value",
@@ -684,7 +684,7 @@ struct Resolver<'a> {
     warned: bool,
 }
 
-impl<'a> Resolver<'a> {
+impl Resolver<'_> {
     fn lookup(&self, name: &str) -> Option<String> {
         if name == "\0config_root" {
             return Some(self.config_root.clone());
@@ -699,7 +699,7 @@ impl<'a> Resolver<'a> {
             .or_else(|| self.base.get(name).cloned())
     }
 
-    fn warn(&mut self, message: String) {
+    fn warn(&mut self, message: &str) {
         if !self.warned {
             self.warned = true;
             tracing::warn!("{message}");
@@ -762,7 +762,7 @@ impl<'a> Resolver<'a> {
                     if self.strict == Strictness::Strict {
                         anyhow::bail!("{message}");
                     }
-                    self.warn(message);
+                    self.warn(&message);
                 } else if let Some(value) = current {
                     self.assign(&entry.name, value, entry.redact);
                 }
@@ -1003,7 +1003,7 @@ pub(crate) fn eval_sourced_file(
         let output = command.output().with_context(|| {
             format!(
                 "Failed to run {shell} for {}",
-                script.map_or("-".into(), |s: &Path| s.display().to_string())
+                script.map_or_else(|| "-".into(), |s: &Path| s.display().to_string())
             )
         })?;
         if !output.status.success() {

@@ -37,12 +37,13 @@ pub(crate) use pi::PiManager;
 pub(crate) use python::PythonManager;
 pub(crate) use ruby::RubyManager;
 pub(crate) use rust::RustManager;
+pub(crate) use swift::SwiftManager;
 pub(crate) use zig::ZigManager;
 
 /// Bespoke language managers with vendor-specific release APIs.
 pub(crate) const NATIVE_RUNTIMES: &[&str] = &[
     "node", "python", "go", "rust", "ruby", "java", "bun", "pi", "deno", "zig", "dotnet", "erlang",
-    "php",
+    "php", "swift",
 ];
 
 /// Runtimes managed natively by OMG.

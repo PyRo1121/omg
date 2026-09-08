@@ -988,6 +988,12 @@ pub(crate) fn complete_staged_install(
     version_dir: &Path,
     version: &str,
 ) -> Result<()> {
+    let _mutation = try_lock_runtime_file(
+        version_dir
+            .parent()
+            .context("Runtime version has no parent")?,
+        ".mutation.lock",
+    )?;
     write_install_marker(staging.path(), version)?;
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
@@ -1019,6 +1025,12 @@ pub(crate) fn replace_staged_install(
     version_dir: &Path,
     version: &str,
 ) -> Result<()> {
+    let _mutation = try_lock_runtime_file(
+        version_dir
+            .parent()
+            .context("Runtime version has no parent")?,
+        ".mutation.lock",
+    )?;
     write_install_marker(staging.path(), version)?;
     if !is_valid_version_dir(version_dir) {
         anyhow::bail!(
@@ -1115,6 +1127,33 @@ fn write_install_marker(version_dir: &Path, version: &str) -> Result<()> {
 }
 
 pub(crate) const TEST_RUNTIME_MARKER: &str = ".omg-test-mock";
+pub(crate) const INSTALL_PENDING_MARKER: &str = ".omg-installing";
+
+pub(crate) fn try_lock_runtime_install(versions_dir: &Path, version: &str) -> Result<File> {
+    crate::core::security::validate_runtime_version(version)?;
+    try_lock_runtime_file(versions_dir, &format!(".install-{version}.lock"))
+}
+
+fn try_lock_runtime_file(versions_dir: &Path, name: &str) -> Result<File> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+    fs::create_dir_all(versions_dir)?;
+    let lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .custom_flags((nix::fcntl::OFlag::O_NOFOLLOW | nix::fcntl::OFlag::O_NONBLOCK).bits())
+        .open(versions_dir.join(name))?;
+    let metadata = lock.metadata()?;
+    anyhow::ensure!(
+        metadata.is_file() && metadata.nlink() == 1,
+        "Unsafe runtime install lock"
+    );
+    lock.try_lock()
+        .context("Another runtime mutation is in progress; retry when it finishes")?;
+    Ok(lock)
+}
 
 /// Return whether a runtime version path is a real production directory.
 ///
@@ -1124,6 +1163,7 @@ pub(crate) const TEST_RUNTIME_MARKER: &str = ".omg-test-mock";
 pub(crate) fn is_valid_version_dir(version_dir: &Path) -> bool {
     fs::symlink_metadata(version_dir).is_ok_and(|metadata| metadata.is_dir())
         && !version_dir.join(TEST_RUNTIME_MARKER).exists()
+        && matches!(fs::symlink_metadata(version_dir.join(INSTALL_PENDING_MARKER)), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
 }
 
 /// Return whether a runtime binary directory is safe to prepend to `PATH`.
@@ -1253,6 +1293,7 @@ pub(crate) fn activate_version_with_linked_binary(
 /// Mirrors the validation `set_current_version` applies on the way in.
 pub(crate) fn uninstall_version(versions_dir: &Path, version: &str) -> Result<()> {
     crate::core::security::validate_runtime_version(version)?;
+    let _mutation = try_lock_runtime_file(versions_dir, ".mutation.lock")?;
 
     // is_valid_version_dir rejects symlinks, so the removal below cannot
     // escape the versions tree through a linked version path.
@@ -1278,6 +1319,7 @@ pub(crate) fn uninstall_version(versions_dir: &Path, version: &str) -> Result<()
 /// Create or update the "current" symlink
 pub(crate) fn set_current_version(versions_dir: &Path, version: &str) -> Result<()> {
     crate::core::security::validate_runtime_version(version)?;
+    let _mutation = try_lock_runtime_file(versions_dir, ".mutation.lock")?;
 
     let current_link = versions_dir.join("current");
     let version_dir = versions_dir.join(version);
@@ -1909,6 +1951,50 @@ mod tests {
         assert!(parse_sha256_digest("not-a-digest", "nodejs.org").is_err());
         assert!(parse_sha256_digest(&"a".repeat(63), "nodejs.org").is_err());
         assert!(parse_sha256_digest(&"z".repeat(64), "nodejs.org").is_err());
+    }
+
+    #[test]
+    fn pending_runtime_is_neither_listed_activated_nor_removed() -> anyhow::Result<()> {
+        let temp = TempDir::new()?;
+        let version = temp.path().join("1.0.0");
+        fs::create_dir_all(version.join("bin"))?;
+        fs::write(version.join("bin/tool"), b"fixture")?;
+        fs::write(version.join(INSTALL_PENDING_MARKER), b"")?;
+        assert!(!is_valid_version_dir(&version));
+        assert!(list_installed_versions(temp.path())?.is_empty());
+        assert!(activate_version(temp.path(), "1.0.0", Path::new("bin/tool")).is_err());
+        assert!(uninstall_version(temp.path(), "1.0.0").is_err());
+        assert!(version.exists());
+        fs::remove_file(version.join(INSTALL_PENDING_MARKER))?;
+        assert!(is_valid_version_dir(&version));
+        assert_eq!(list_installed_versions(temp.path())?, vec!["1.0.0"]);
+        Ok(())
+    }
+
+    #[test]
+    fn activation_and_removal_share_a_mutation_lease() -> anyhow::Result<()> {
+        let temp = TempDir::new()?;
+        let version = temp.path().join("1.0.0");
+        fs::create_dir(&version)?;
+        let lease = try_lock_runtime_file(temp.path(), ".mutation.lock")?;
+        assert!(set_current_version(temp.path(), "1.0.0").is_err());
+        assert!(uninstall_version(temp.path(), "1.0.0").is_err());
+        assert!(version.exists());
+        drop(lease);
+        set_current_version(temp.path(), "1.0.0")?;
+        assert!(uninstall_version(temp.path(), "1.0.0").is_err());
+        assert!(version.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn runtime_install_lease_excludes_concurrent_recovery() -> anyhow::Result<()> {
+        let temp = TempDir::new()?;
+        let lease = try_lock_runtime_install(temp.path(), "1.0.0")?;
+        assert!(try_lock_runtime_install(temp.path(), "1.0.0").is_err());
+        drop(lease);
+        let _next = try_lock_runtime_install(temp.path(), "1.0.0")?;
+        Ok(())
     }
 
     fn tar_archive_with_symlink(target: &str) -> anyhow::Result<Vec<u8>> {

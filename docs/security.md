@@ -103,7 +103,7 @@ When verifying a package, OMG follows a rigorous multi-step process:
 2. **Calculate**: Computes integrity hashes using modern secure algorithms.
 3. **Match**: Identifies the correct public keys within the system keyring.
 4. **Validate**: Performs the mathematical validation of the signature against the calculated hash.
-5. **Assess**: Confirms the signing authority is trusted and the certificate is current.
+5. **Assess**: Confirms the signing authority is trusted and the certificate is current. Signatures that are expired or dated in the future are rejected.
 
 ## SLSA Provenance
 
@@ -176,7 +176,7 @@ When a package is integrated into the system, it passes through a rigorous 5-sta
 
 ### Security Events
 
-All security-relevant operations—such as signature verifications, vulnerability detections, and policy rejections—are captured by the system's logging backend. These events provided detailed context for audits and real-time monitoring.
+Security events include signature checks, vulnerability detections, and policy rejections. Durable package-operation records fail closed if they cannot be persisted. The daemon's separate best-effort queue can drop events; its incompleteness marker prevents treating a consistent remaining hash chain as proof of a complete audit.
 
 ### Audit Trail
 
@@ -184,6 +184,21 @@ All security-relevant operations—such as signature verifications, vulnerabilit
 - **Security Scans**: Timestamp and results
 - **Policy Violations**: All rejections logged
 - **Configuration Changes**: Policy updates tracked
+
+### Privileged Linux audit storage
+
+Privileged package-operation history lives at `/var/lib/omg/audit/audit.jsonl`.
+Its directories must be owned by root and must not be group- or world-writable.
+OMG does not change `/var/log` permissions to accommodate logging.
+Unprivileged audit storage is unchanged.
+
+On first use, an existing trusted `/var/log/omg` directory is atomically moved
+to `/var/lib/omg/audit`, preserving log bytes, archives, and chain continuity.
+Migration is serialized with other migrations and the legacy audit writer.
+It refuses to proceed if both locations exist, a legacy directory is untrusted,
+or an atomic move cannot be made, including across filesystems.
+Reconcile or move that history while OMG is stopped; do not delete audit data
+to clear the error. A refused migration is not converted into a fresh history.
 
 ### Metrics Collection
 

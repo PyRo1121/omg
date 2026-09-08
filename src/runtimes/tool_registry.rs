@@ -29,7 +29,7 @@ pub(crate) struct RegistryTool {
 }
 
 /// Fifty-four GitHub-release tools. Together with the bespoke language
-/// managers in [`super`], OMG natively manages 67 runtimes/tools.
+/// managers in [`super`], OMG registers 68 runtimes/tools.
 pub(crate) const REGISTRY_TOOLS: &[RegistryTool] = &[
     RegistryTool {
         name: "ripgrep",

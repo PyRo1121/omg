@@ -7,18 +7,20 @@ once enabled, PRs) that agents work while you iterate.
 
 ## Prerequisites
 
-- Linux x86_64 with KVM (`/dev/kvm` readable+writable) and Docker
-  (or podman via `--container-engine`), `jq`, `gh` (authenticated),
-  coreutils. Guests need ~3 GB RAM and several GB of image downloads.
-- ARM legs: an aarch64 host with KVM (e.g. `ubuntu-24.04-arm`); KVM
+- Linux x86_64 with KVM (`/dev/kvm` readable+writable), Docker, `jq`,
+  authenticated `gh`, and coreutils. Guests need ~3 GB RAM and several GB
+  of image downloads. Container smoke also supports Podman; QEMU uses Docker.
+- ARM legs: an aarch64 host with working KVM; a runner label alone does not
+  prove `/dev/kvm` is available. KVM
   cannot cross architectures, so x86_64 hosts fail ARM legs closed
   instead of emulating.
 - macOS legs: any Mac with Homebrew; no container engine needed
   (`--executor native` runs on the host, which CI keeps disposable —
   locally, know it installs/removes the `tree` probe package).
 - One-time: `gh label create qa-failure --description "Automated QA pipeline failures" --color B60205`
-  (filing targets this label). Optional: `OMG_SMOKE_SENTRY_DSN` secret
-  for Sentry reporting (absence is a visible notice, not silent).
+  (filing targets this label). Optional Sentry reporting reads
+  `~/.config/omg-smoke/sentry.json` or `OMG_SMOKE_SENTRY_CONFIG`.
+  See [reporter configuration](../scripts/README.md#optional-sentry-reporting).
 
 ## What to run
 
@@ -60,6 +62,10 @@ Nightly-equivalent (published release + all safe tiers, x86_64 KVM host):
 ```bash
 ./scripts/benchmark-qemu.sh --distro all --release vX.Y.Z --inventory-tiers hermetic,qemu,container,network,pty --inventory-allow-mutations
 ```
+
+The package lifecycle also requires a nonempty privileged audit log and runs
+`omg audit verify` against it. Directory modes and verification output are saved
+under guest evidence. See [Linux audit storage and migration](security.md#privileged-linux-audit-storage).
 
 ## What inventory results prove
 

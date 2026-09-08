@@ -123,7 +123,7 @@ omg --version
 **Expected Output:**
 
 ```
-omg 0.1.215
+omg 0.1.218
 ```
 
 **If you see:**

@@ -837,6 +837,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn oversized_security_audit_is_not_reported_as_complete() {
+        let vulnerability = super::super::protocol::Vulnerability {
+            id: "CVE-fixture".into(), summary: "x".repeat(16_000), score: Some("9.8".into()),
+        };
+        let response = Response::Success {
+            id: 91,
+            result: ResponseResult::SecurityAudit(SecurityAuditResult {
+                total_vulnerabilities: 600, high_severity: 600,
+                vulnerabilities: (0..600).map(|index| (format!("package-{index}"), vec![vulnerability.clone()])).collect(),
+            }),
+        };
+        assert!(crate::daemon::protocol::encode_frame(&response).unwrap().len() > MAX_RESPONSE_SIZE);
+        let encoded = encode_bounded_response(&response, 91).unwrap();
+        let (_, payload) = crate::daemon::protocol::split_frame(&encoded).unwrap();
+        let decoded: Response = bitcode::deserialize(payload).unwrap();
+        assert!(matches!(decoded, Response::Error { id: 91, code: error_codes::RESPONSE_TOO_LARGE, .. }));
+    }
+
+    #[test]
     fn untruncatable_oversized_responses_use_a_dedicated_limit_error() {
         // Message results carry no truncatable list: a single payload alone
         // exceeds the budget, so the response degrades to the dedicated

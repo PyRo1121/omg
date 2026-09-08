@@ -238,12 +238,18 @@ impl UsageStats {
 
     fn save_to(&self, path: &std::path::Path) -> Result<()> {
         let content = serde_json::to_vec_pretty(self).context("Failed to serialize usage stats")?;
-        crate::core::safe_ops::atomic_write_file_sync(path, content)?;
-        // An elevated (sudo) run re-owns the file as root via the rename
-        // above, locking the real user out of their own stats (#290).
-        if let Err(error) = crate::core::safe_ops::restore_original_user_ownership(path) {
-            tracing::warn!("Failed to restore usage stats ownership: {error:#}");
+        use std::io::Write;
+        let parent = path.parent().context("Usage path has no parent")?;
+        std::fs::create_dir_all(parent)?;
+        let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+        if let Some(account) = original_usage_user()? {
+            nix::unistd::fchown(temporary.as_file(), Some(account.uid), Some(account.gid))
+                .context("Failed to set usage stats ownership")?;
         }
+        temporary.write_all(&content)?;
+        temporary.as_file().sync_all()?;
+        temporary.persist(path).map_err(|error| error.error)?;
+        std::fs::File::open(parent)?.sync_all()?;
         Ok(())
     }
 
@@ -489,25 +495,28 @@ fn lock_file_at(lock_path: &std::path::Path) -> Option<std::fs::File> {
     }
 }
 
+fn original_usage_user() -> Result<Option<nix::unistd::User>> {
+    if !crate::core::is_root() {
+        return Ok(None);
+    }
+    std::env::var_os("SUDO_USER")
+        .or_else(|| std::env::var_os("DOAS_USER"))
+        .map(|name| {
+            let name = name.to_str().context("Original user name is not UTF-8")?;
+            nix::unistd::User::from_name(name)
+                .context("Failed to resolve original user")?
+                .context("Original user account does not exist")
+        })
+        .transpose()
+}
+
 fn acquire_usage_lock(lock_path: &Path) -> Result<std::fs::File> {
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 
     use nix::fcntl::OFlag;
-    use nix::unistd::{User, fchown};
+    use nix::unistd::fchown;
 
-    let original_user = if crate::core::is_root() {
-        std::env::var_os("SUDO_USER")
-            .or_else(|| std::env::var_os("DOAS_USER"))
-            .map(|name| {
-                let name = name.to_str().context("Original user name is not UTF-8")?;
-                User::from_name(name)
-                    .context("Failed to resolve original user")?
-                    .context("Original user account does not exist")
-            })
-            .transpose()?
-    } else {
-        None
-    };
+    let original_user = original_usage_user()?;
 
     let mut options = std::fs::OpenOptions::new();
     options
@@ -901,6 +910,20 @@ mod tests {
 
         assert!(error.to_string().contains("Malformed usage stats"));
         assert_eq!(std::fs::read(&path).expect("read fixture"), b"{not-json");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn saving_usage_replaces_symlink_without_changing_its_target() {
+        let directory = tempfile::tempdir().unwrap();
+        let target = directory.path().join("target");
+        let path = directory.path().join("usage.json");
+        std::fs::write(&target, b"untouched").unwrap();
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+        UsageStats::default().save_to(&path).unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"untouched");
+        assert!(!std::fs::symlink_metadata(&path).unwrap().is_symlink());
+        UsageStats::load_from(&path).unwrap();
     }
 
     #[test]

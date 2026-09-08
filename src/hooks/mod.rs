@@ -30,6 +30,7 @@ const VERSION_FILES: &[(&str, &str)] = &[
     (".ruby-version", "ruby"),
     // PHP (phpenv convention)
     (".php-version", "php"),
+    (".swift-version", "swift"),
     // Go
     (".go-version", "go"),
     ("go.mod", "go"),
@@ -326,6 +327,7 @@ fn environment_restore(
         .collect();
     names.sort_unstable();
     names.dedup();
+    use std::fmt::Write as _;
     let mut restore = String::new();
     for name in names {
         anyhow::ensure!(
@@ -335,14 +337,12 @@ fn environment_restore(
         crate::config::mise_env::validate_env_name(name)?;
         match (shell.to_ascii_lowercase().as_str(), base.get(name)) {
             ("fish", Some(value)) => {
-                restore.push_str(&format!("set -gx {name} {};\n", fish_single_quoted(value)))
+                writeln!(restore, "set -gx {name} {};", fish_single_quoted(value))
             }
-            ("fish", None) => restore.push_str(&format!("set -e {name};\n")),
-            (_, Some(value)) => {
-                restore.push_str(&format!("export {name}={};\n", posix_single_quoted(value)))
-            }
-            (_, None) => restore.push_str(&format!("unset {name};\n")),
-        }
+            ("fish", None) => writeln!(restore, "set -e {name};"),
+            (_, Some(value)) => writeln!(restore, "export {name}={};", posix_single_quoted(value)),
+            (_, None) => writeln!(restore, "unset {name};"),
+        }?;
     }
     Ok(restore)
 }
@@ -591,7 +591,8 @@ pub fn build_path_additions<S: std::hash::BuildHasher>(
             // Validate before using as a path component so a hostile pin like
             // `../../evil/bin` can never traverse out of the versions tree and
             // place an attacker-created directory on the shell's PATH.
-            "python" | "go" | "ruby" | "java" | "pi" | "deno" | "zig" | "erlang" | "php" => {
+            "python" | "go" | "ruby" | "java" | "pi" | "deno" | "zig" | "erlang" | "php"
+            | "swift" => {
                 let Some(path) = resolve_runtime_bin_dir(&data_dir, runtime, version)? else {
                     continue;
                 };
@@ -739,11 +740,11 @@ fn resolve_runtime_bin_dir(
 /// become a path component; only an existing real directory is returned.
 fn validated_runtime_bin_dir(data_dir: &Path, runtime: &str, version: &str) -> Option<PathBuf> {
     crate::core::security::validate_runtime_version(version).ok()?;
-    let path = data_dir
-        .join("versions")
-        .join(runtime)
-        .join(version)
-        .join("bin");
+    let version_dir = data_dir.join("versions").join(runtime).join(version);
+    if !crate::runtimes::common::is_valid_version_dir(&version_dir) {
+        return None;
+    }
+    let path = version_dir.join(if runtime == "swift" { "usr/bin" } else { "bin" });
     crate::runtimes::common::is_trusted_runtime_bin_dir(&path).then_some(path)
 }
 
@@ -1018,7 +1019,7 @@ _omg_status_file_valid() {
 
 _omg_refresh_cache() {
   local f=__OMG_STATUS_FILE__
-  _omg_status_file_valid || return
+  _omg_status_file_valid || return 0
   local now=$EPOCHSECONDS
   # Only refresh every 60 seconds
   (( now - _OMG_CACHE_TIME < 60 )) && return
@@ -1181,6 +1182,32 @@ mod tests {
     use std::collections::HashMap;
     use std::fs;
     use tempfile::tempdir;
+
+    #[test]
+    fn managed_paths_require_readiness_and_support_swift_layout() {
+        let dir = tempfile::tempdir().unwrap();
+        let erlang = dir.path().join("versions/erlang/28.0/bin");
+        std::fs::create_dir_all(&erlang).unwrap();
+        assert_eq!(
+            validated_runtime_bin_dir(dir.path(), "erlang", "28.0"),
+            Some(erlang.clone())
+        );
+        std::fs::write(
+            erlang
+                .parent()
+                .unwrap()
+                .join(crate::runtimes::common::INSTALL_PENDING_MARKER),
+            b"",
+        )
+        .unwrap();
+        assert!(validated_runtime_bin_dir(dir.path(), "erlang", "28.0").is_none());
+        let swift = dir.path().join("versions/swift/6.1.2/usr/bin");
+        std::fs::create_dir_all(&swift).unwrap();
+        assert_eq!(
+            validated_runtime_bin_dir(dir.path(), "swift", "6.1.2"),
+            Some(swift)
+        );
+    }
 
     #[test]
     fn project_environment_delta_restores_values_and_absence() {

@@ -7,9 +7,20 @@
 [![Benchmark evidence](https://img.shields.io/badge/benchmarks-scope%20and%20raw%20data-blue?style=flat-square)](benchmarks/README.md)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.95%2B-orange?style=flat-square)](https://www.rust-lang.org)
-[![codecov](https://codecov.io/gh/pyro1121/omg/branch/main/graph/badge.svg?style=flat-square)](https://codecov.io/gh/pyro1121/omg)
+[![codecov](https://codecov.io/gh/PyRo1121/omg/branch/main/graph/badge.svg?style=flat-square)](https://codecov.io/gh/PyRo1121/omg)
 
 OMG replaces `pacman`, `yay`, `nvm`, `pyenv`, `rustup`, `rbenv`, and `jenv` with a single binary. It queries packages in **about 11ms** (13ms mean) via a background daemon that keeps repository indexes in memory.
+
+## Contents
+
+- [Quick Install](#quick-install)
+- [60-Second Tour](#60-second-tour)
+- [Key Features](#key-features)
+- [Release smoke evidence and performance](#release-smoke-evidence-and-performance)
+- [Supported Language Runtimes](#supported-language-runtimes)
+- [CLI Command Reference](#cli-command-reference-selected)
+- [Support](#support)
+- [License](#license)
 
 ---
 
@@ -141,8 +152,8 @@ and container cleanup. Archive downloads and image pulls are excluded.
 
 [Recorded results and artifact digests](benchmarks/records/release-smoke-v0.1.218-local.json)
 identify the binaries and pinned container images. A separate
-[CI run of the same runner](https://github.com/PyRo1121/omg/actions/runs/33912270669)
-contains transcripts and uploaded cleanup evidence. These results prove only
+[CI runs of the same runner](https://github.com/PyRo1121/omg/actions)
+contain transcripts and uploaded cleanup evidence. These results prove only
 these package cases on these images, not every command or every Linux distribution.
 The [local headless QEMU runner](scripts/README.md#benchmark-qemush) now passes
 boot, reboot, sudo, and package lifecycles on all four supported x86_64 baselines.
@@ -201,6 +212,14 @@ OMG natively handles version switching and installation for major ecosystems:
 Run `omg --help` or see the [CLI documentation](docs/cli.md) for full argument details.
 
 **More docs:** [CLI Reference](docs/cli.md) · [Cheatsheet](docs/cheatsheet.md) · [Installation](docs/installation.md) · [Configuration](docs/configuration.md) · [Runtimes](docs/runtimes.md) · [Troubleshooting](docs/troubleshooting.md) · [FAQ](docs/faq.md) · [Security](docs/security.md) · [Contributing](CONTRIBUTING.md)
+
+---
+
+## Support
+
+- **Issues:** [github.com/PyRo1121/omg/issues](https://github.com/PyRo1121/omg/issues)
+- **Security:** report vulnerabilities privately to **<olen@latham.cloud>** (see [SECURITY.md](SECURITY.md)). Do not open public issues for security reports.
+- **Docs:** [CLI Reference](docs/cli.md) · [Troubleshooting](docs/troubleshooting.md) · [FAQ](docs/faq.md)
 
 ---
 

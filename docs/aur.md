@@ -71,8 +71,9 @@ review_pkgbuild = true
 cache_builds = true
 ```
 
-Review is fail-closed: with review enabled and no interactive terminal,
-both single-package and parallel builds bail before cloning or building.
+With review enabled, a non-interactive session cannot proceed past PKGBUILD
+review. Parallel builds refuse before cloning; single-package installation
+may clone or update the checkout before refusing, but does not build it.
 In CI or other non-interactive sessions that accept unreviewed AUR code,
 set `review_pkgbuild = false`. The `--review` flag forces review for one
 invocation.

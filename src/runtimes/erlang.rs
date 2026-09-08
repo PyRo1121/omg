@@ -337,6 +337,9 @@ impl ErlangManager {
         let version = self.resolve_alias(version).await?;
         let version = self.resolve_requested_version(&version).await?;
         crate::core::security::validate_runtime_version(&version)?;
+        // This nonblocking filesystem lease owns final-path initialization and
+        // crash recovery. It never blocks an executor thread while awaiting I/O.
+        let _install_lease = super::common::try_lock_runtime_install(&self.versions_dir, &version)?;
         let version_dir = self.versions_dir.join(&version);
 
         // The fast path additionally requires `bin/erl`: a directory that
@@ -385,6 +388,8 @@ impl ErlangManager {
         if std::env::consts::OS == "linux" {
             require_staged_install_script(&staging.path().join("Install"))?;
         }
+        fs::File::create_new(staging.path().join(super::common::INSTALL_PENDING_MARKER))?
+            .sync_all()?;
         complete_staged_install(&staging, &version_dir, &version)?;
         remove_file_best_effort(&download_path, "runtime archive");
 
@@ -407,6 +412,7 @@ impl ErlangManager {
         }
 
         make_staged_executable(&version_dir.join("bin/erl"))?;
+        fs::remove_file(version_dir.join(super::common::INSTALL_PENDING_MARKER))?;
 
         print_installed("Erlang/OTP", &version);
         self.use_version(&version)?;

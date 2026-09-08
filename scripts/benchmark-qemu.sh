@@ -330,7 +330,18 @@ distro=$1; tag=$2; digest=$3; benchmark=$4; guest_arch=$5; expected_uname=$6; in
 actual_id=$(awk -F= '$1 == "ID" {gsub(/"/, "", $2); print $2}' /etc/os-release)
 [[ "$actual_id" == "$distro" && $(uname -m) == "$expected_uname" ]] || exit 120
 mkdir -p evidence
-trap 'status=$?; printf "%s\n" "$status" > evidence/exit-code' EXIT
+capture_audit_metadata() {
+  timeout --kill-after=2s 5s sudo -n bash -c '
+    for path in /var/log /var/log/omg /var/lib /var/lib/omg /var/lib/omg/audit; do
+      if [[ -e "$path" || -L "$path" ]]; then
+        stat -c "%n uid=%u gid=%g mode=%a type=%F" "$path"
+      else
+        printf "%s absent\n" "$path"
+      fi
+    done
+  ' > evidence/audit-directory-after.txt 2>&1
+}
+trap 'status=$?; printf "%s\n" "$status" > evidence/exit-code; capture_audit_metadata || true' EXIT
 # Preserve directory trust evidence before a privileged operation can fail.
 stat -c '%n uid=%u gid=%g mode=%a type=%F' / /var /var/log > evidence/audit-directory-metadata.txt
 if [[ -e /var/log/omg || -L /var/log/omg ]]; then
@@ -392,6 +403,8 @@ if [[ "$distro" == debian || "$distro" == ubuntu ]]; then
   sudo -n "$bin" remove --yes tree
   if installed >/dev/null 2>&1; then echo 'local package remains installed' >&2; exit 1; fi
 fi
+sudo -n test -s /var/lib/omg/audit/audit.jsonl
+sudo -n env OMG_DATA_DIR=/var/lib/omg "$bin" audit verify > evidence/system-audit-verify.txt 2>&1
 case "$distro" in
   arch) pacman -Q > evidence/installed-after.txt; sha256sum /var/lib/pacman/sync/*.db > evidence/repository-hashes.txt ;;
   debian|ubuntu) dpkg-query -W > evidence/installed-after.txt; find /var/lib/apt/lists -maxdepth 1 -type f ! -name lock -exec sha256sum {} + > evidence/repository-hashes.txt ;;

@@ -35,7 +35,7 @@ use super::common::{
     GithubAsset, GithubRelease, activate_version_with_linked_binary, begin_staged_install,
     clear_dir_contents, complete_staged_install, download_with_progress, extract_tar_xz,
     fetch_github_releases, is_valid_version_dir, normalize_version, parse_sha256_digest,
-    print_already_installed, print_installed, print_using, remove_file_best_effort,
+    print_installed, print_using, remove_file_best_effort, replace_staged_install,
     uninstall_version, validate_download_filename,
 };
 use crate::{cli::style, core::http::download_client};
@@ -433,20 +433,12 @@ impl PhpManager {
         crate::core::security::validate_runtime_version(&version)?;
         let version_dir = self.versions_dir.join(&version);
 
-        // The fast path additionally requires `bin/php`: a directory that
-        // survived extraction but never completed staging is broken and must
-        // reinstall rather than activate.
-        if is_valid_version_dir(&version_dir) && version_dir.join("bin/php").is_file() {
-            print_already_installed("PHP", &version);
-            return self.use_version(&version);
-        }
         if version_dir.exists() {
-            fs::remove_dir_all(&version_dir).with_context(|| {
-                format!(
-                    "Failed to clear incomplete PHP install at {}",
-                    version_dir.display()
-                )
-            })?;
+            anyhow::ensure!(
+                is_valid_version_dir(&version_dir),
+                "Refusing to replace an invalid PHP channel directory: {}",
+                version_dir.display()
+            );
         }
 
         println!(
@@ -505,7 +497,11 @@ impl PhpManager {
             )));
         }
 
-        complete_staged_install(&staging, &version_dir, &version)?;
+        if is_valid_version_dir(&version_dir) {
+            replace_staged_install(&staging, &version_dir, &version)?;
+        } else {
+            complete_staged_install(&staging, &version_dir, &version)?;
+        }
         remove_file_best_effort(&download_path, "runtime archive");
         print_installed("PHP", &version);
         self.use_version(&version)?;
