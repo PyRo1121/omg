@@ -144,7 +144,7 @@ use-uninstall	["use","--uninstall","invalid-runtime"]	controlled-error	1	pass	-	
 list-available	["list","--available"]	read	0	pass	-	hermetic	hermetic:pass	-	tempdir-drop
 hook-uninstall	["hook","--uninstall","bash"]	isolated-write	0	pass	-	hermetic	hermetic:pass	-	tempdir-drop
 hooks-install-force	["hooks","install","--force"]	isolated-write	0	pass	hooks-install	hermetic	hermetic:pass	-	tempdir-drop
-workspace-run-flags	["workspace","run","--parallel","--filter","fixture","smoke"]	read	0	pass	workspace-add	hermetic	hermetic:pass	-	tempdir-drop
+workspace-run-flags	["workspace","run","--parallel","--filter","fixture","--yes","smoke"]	read	0	pass	workspace-add	hermetic	hermetic:pass	-	tempdir-drop
 complete-full	["complete","--shell","bash","--current","se","--last","omg","--full","omg se"]	read	0	pass	-	hermetic	hermetic:pass	-	tempdir-drop
 audit-log-flags	["audit","log","--limit","3","--severity","error","--export","${ROOT}/audit-log-export.json"]	isolated-write	0	pass	-	hermetic	hermetic:pass	-	tempdir-drop
 audit-licenses-filter-policy	["audit","licenses","--format","json","--filter","mit","--check-policy"]	read	0	pass	-	hermetic	hermetic:pass	json-stdout	tempdir-drop
