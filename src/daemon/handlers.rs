@@ -82,6 +82,13 @@ impl SystemBackendAccess {
     }
 }
 
+/// Index contents and their source observation are one publication unit.
+struct PublishedIndex {
+    index: Arc<PackageIndex>,
+    #[cfg(feature = "arch")]
+    epoch: crate::package_managers::pacman_db::AlpmCatalogEpoch,
+}
+
 /// Daemon state shared across handlers.
 ///
 /// Fields are visible only to the daemon subtree (`server`, worker tasks);
@@ -90,15 +97,13 @@ pub struct DaemonState {
     pub(super) cache: PackageCache,
     pub(super) persistent: super::db::PersistentCache,
     pub(super) package_manager: Arc<dyn PackageManager>,
-    index: RwLock<Arc<PackageIndex>>,
+    index: RwLock<PublishedIndex>,
     /// Locked because RefreshIndex must swap in a fresh AlpmWorker: libalpm
     /// caches loaded syncdbs in memory and never revalidates them on disk, so
     /// a worker that predates `omg sync` serves a frozen update list forever.
     system_backends: RwLock<SystemBackendAccess>,
     refresh_lock: tokio::sync::Mutex<()>,
     refresh_debounce: RefreshDebounce,
-    #[cfg(feature = "arch")]
-    index_epoch: RwLock<crate::package_managers::pacman_db::AlpmCatalogEpoch>,
     index_generation: AtomicU64,
     pub(super) runtime_versions: Arc<RwLock<Vec<(String, String)>>>,
     pub(super) rate_limiter: Arc<RateLimiter<NotKeyed, InMemoryState, DefaultClock>>,
@@ -114,7 +119,8 @@ impl DaemonState {
             &self
                 .index
                 .read()
-                .unwrap_or_else(std::sync::PoisonError::into_inner),
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .index,
         )
     }
 
@@ -130,7 +136,7 @@ impl DaemonState {
             .index
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if !Arc::ptr_eq(&current, snapshot) {
+        if !Arc::ptr_eq(&current.index, snapshot) {
             return false;
         }
         action();
@@ -138,13 +144,21 @@ impl DaemonState {
     }
 
     /// Atomically publish a rebuilt index and invalidate derived caches.
-    fn replace_index(&self, index: PackageIndex) -> usize {
+    fn replace_index(
+        &self,
+        index: PackageIndex,
+        #[cfg(feature = "arch")] epoch: crate::package_managers::pacman_db::AlpmCatalogEpoch,
+    ) -> usize {
         let package_count = index.len();
         let mut current = self
             .index
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        *current = Arc::new(index);
+        *current = PublishedIndex {
+            index: Arc::new(index),
+            #[cfg(feature = "arch")]
+            epoch,
+        };
         self.index_generation.fetch_add(1, Ordering::Release);
         self.cache.clear();
         package_count
@@ -187,15 +201,12 @@ impl DaemonState {
             crate::package_managers::pacman_db::AlpmCatalogEpoch::observe()
                 .context("Failed to observe ALPM catalog after index and backend rebuild")?,
         )?;
-        let packages = self.replace_index(index);
+        let packages = self.replace_index(
+            index,
+            #[cfg(feature = "arch")]
+            epoch,
+        );
         self.persistent.invalidate_status();
-        #[cfg(feature = "arch")]
-        {
-            *self
-                .index_epoch
-                .write()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = epoch;
-        }
         Ok(packages)
     }
 
@@ -222,10 +233,11 @@ impl DaemonState {
         match crate::package_managers::pacman_db::AlpmCatalogEpoch::observe() {
             Err(_) => true,
             Ok(disk) => {
-                let loaded = *self
-                    .index_epoch
+                let loaded = self
+                    .index
                     .read()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .epoch;
                 disk != loaded
             }
         }
@@ -341,12 +353,14 @@ impl DaemonState {
             cache,
             persistent,
             package_manager,
-            index: RwLock::new(Arc::new(index)),
+            index: RwLock::new(PublishedIndex {
+                index: Arc::new(index),
+                #[cfg(feature = "arch")]
+                epoch: index_epoch,
+            }),
             system_backends: RwLock::new(system_backends),
             refresh_lock: tokio::sync::Mutex::new(()),
             refresh_debounce: RefreshDebounce::default(),
-            #[cfg(feature = "arch")]
-            index_epoch: RwLock::new(index_epoch),
             index_generation: AtomicU64::new(0),
             runtime_versions: Arc::new(RwLock::new(Vec::new())),
             rate_limiter,
@@ -1475,11 +1489,11 @@ mod tests {
             )
             .await
             .expect("backend lookup started");
-            state.replace_index(PackageIndex::from_records(&[(
-                package,
-                "99.0",
-                "fresh metadata",
-            )]));
+            state.replace_index(
+                PackageIndex::from_records(&[(package, "99.0", "fresh metadata")]),
+                #[cfg(feature = "arch")]
+                crate::package_managers::pacman_db::AlpmCatalogEpoch::UNIX_EPOCH,
+            );
             backend.resume.notify_one();
             let response = tokio::time::timeout(std::time::Duration::from_secs(5), request)
                 .await
@@ -1552,6 +1566,44 @@ mod tests {
         assert_eq!(vulnerability_score("not-a-score"), None);
     }
 
+    #[cfg(feature = "arch")]
+    #[test]
+    fn replacing_index_publishes_its_source_identity() -> anyhow::Result<()> {
+        use crate::package_managers::pacman_db::{AlpmCatalogEpoch, LocalDbEpoch, SyncDbEpoch};
+        let (directory, state) = isolated_state();
+        let epoch = AlpmCatalogEpoch {
+            sync: SyncDbEpoch::from_sync_dir(directory.path())?,
+            local: LocalDbEpoch::UNIX_EPOCH,
+        };
+        let previous = state.index.read().expect("snapshot lock");
+        let previous_epoch = previous.epoch;
+        let previous_index = Arc::clone(&previous.index);
+        assert_ne!(previous_epoch, epoch);
+        std::thread::scope(|scope| {
+            let (ready, started) = std::sync::mpsc::sync_channel(0);
+            let state = &state;
+            let writer = scope.spawn(move || {
+                ready.send(()).expect("reader is waiting");
+                state.replace_index(
+                    PackageIndex::from_records(&[("fresh", "2", "fresh package")]),
+                    epoch,
+                )
+            });
+            started.recv().expect("writer started");
+            assert_eq!(previous.epoch, previous_epoch);
+            assert!(Arc::ptr_eq(&previous.index, &previous_index));
+            drop(previous);
+            assert_eq!(writer.join().expect("writer completed"), 1);
+        });
+        let published = state.index.read().expect("snapshot lock");
+        assert!(published.index.get("fresh").is_some());
+        assert_eq!(
+            published.epoch, epoch,
+            "replacement must not expose a new index with the previous identity"
+        );
+        Ok(())
+    }
+
     #[test]
     fn replacing_index_publishes_snapshot_and_clears_derived_cache() {
         let (_directory, state) = isolated_state();
@@ -1569,7 +1621,14 @@ mod tests {
         assert_eq!(state.index_generation.load(Ordering::Acquire), 0);
 
         let replacement = PackageIndex::from_records(&[("fresh", "2", "fresh package")]);
-        assert_eq!(state.replace_index(replacement), 1);
+        assert_eq!(
+            state.replace_index(
+                replacement,
+                #[cfg(feature = "arch")]
+                crate::package_managers::pacman_db::AlpmCatalogEpoch::UNIX_EPOCH,
+            ),
+            1
+        );
         assert_eq!(state.index_generation.load(Ordering::Acquire), 1);
         let current_snapshot = state.index_snapshot();
         assert!(current_snapshot.get("fresh").is_some());
