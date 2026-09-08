@@ -13,11 +13,13 @@ This guide helps yay users transition to OMG with familiar command patterns and 
 
 | Feature | yay | OMG |
 | --------- | ----- | ----- |
-| Search Speed | 200-800ms | **6ms (12-24x faster)** |
+| Search behavior | Official repositories and AUR | Official repositories and AUR; use `--no-aur` for official-only results |
 | Runtime Management | ❌ | ✅ Node, Python, Go, Rust, Ruby, Java, Bun |
 | Security Scanning | ❌ | ✅ CVE scanning, SBOM generation |
 | Team Sync | ❌ | ✅ Environment lockfiles |
-| Language | Go | Rust (pure, no subprocess) |
+| Language | Go | Rust, with native-tool subprocesses on some paths |
+
+OMG is alpha software. Keep yay and pacman available while validating your required workflows. Comparisons above describe command intent, not complete feature equivalence. See [benchmark scope](../../benchmarks/README.md) and [security limits](../security.md).
 
 ## Command Mapping
 
@@ -25,12 +27,12 @@ This guide helps yay users transition to OMG with familiar command patterns and 
 
 | yay | OMG | Notes |
 | ----- | ----- | ------- |
-| `yay -Ss <query>` | `omg search <query>` | 12-24x faster, unified results |
+| `yay -Ss <query>` | `omg search <query>` | Official and AUR results; output is not guaranteed identical |
 | `yay -S <pkg>` | `omg install <pkg>` | Security grading included |
-| `yay -R <pkg>` | `omg remove <pkg>` | Same behavior |
+| `yay -R <pkg>` | `omg remove <pkg>` | Review the removal plan and OMG's flags |
 | `yay -Syu` | `omg update` | Updates official + AUR |
 | `yay -Si <pkg>` | `omg info <pkg>` | Richer metadata |
-| `yay -Sc` | `omg clean` | Clears caches |
+| `yay -Sc` | `omg clean --cache` | Requests package-cache cleanup |
 | `yay -Qe` | `omg explicit` | List explicitly installed |
 | `yay -Sy` | `omg sync` | Sync databases |
 

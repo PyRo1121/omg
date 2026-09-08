@@ -1,6 +1,6 @@
 # Contributing to OMG
 
-Thank you for your interest in contributing to OMG! This guide will help you get started with development, testing, and submitting changes.
+Start with a reproducible bug, a focused improvement, or a documentation correction. Keep unrelated changes separate and report the exact checks you ran.
 
 ---
 
@@ -26,17 +26,19 @@ cd omg
 rustc --version
 
 # Build the project
-cargo build --features arch  # or 'debian', 'fedora', etc.
+cargo build --locked --no-default-features --features arch,pgp,license
 
 make ci-local-quick
 cargo fmt
 ```
 
+Choose the backend for your host from the release feature matrix below. Cargo features are additive; selecting `debian`, `fedora`, or `macos` without `--no-default-features` also retains the default Arch backend. Test package mutations in disposable containers or VMs, not on the development host.
+
 ### Running OMG Locally
 
 ```bash
 # Run the CLI (debug build)
-cargo run --features arch -- search firefox
+cargo run --features arch --bin omg -- search firefox
 
 # Run the daemon
 cargo run --features arch --bin omgd
@@ -577,14 +579,14 @@ Release binaries are built with these feature sets (`.github/workflows/release.y
 
 | Target | Features |
 | --- | --- |
-| Arch | defaults (`arch,license,pgp`) |
+| Arch | `arch,pgp,license` |
 | Fedora | `fedora,pgp,license` |
-| macOS | `macos,pgp,license` |
-| Debian/Ubuntu | `debian` only — **no `pgp`, no `license`** |
+| macOS ARM64 | `macos,pgp,license` |
+| Debian/Ubuntu | `debian,pgp,license` |
 
-The Debian omission is currently deliberate: keeping the `.deb`-distributed
-binary free of the GPL-encumbered `rust-apt`/PGP stack. The `license` Cargo
-feature only compiles the optional `omg account` dashboard-link command; it
-is not a paywall. Changing shipped Debian features requires updating both
-`release.yml` and the CI matrix together, and should be an explicit
-maintainer decision.
+Every release build passes `--no-default-features` and `--locked`. Linux
+release targets are x86_64. The workflow publishes tar archives, not `.deb`
+packages. The `license` Cargo feature compiles the optional `omg account`
+dashboard-link command; it is not a local CLI paywall. Review dependency
+licenses separately from feature names. Keep the release and CI matrices
+consistent when changing shipped features.
