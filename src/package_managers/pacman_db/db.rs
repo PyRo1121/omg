@@ -1094,10 +1094,19 @@ pub fn invalidate_caches() -> Result<()> {
     }
     super::super::alpm_direct::clear_alpm_cache();
 
-    let cache_dir = paths::cache_dir();
-    remove_cache_file(&cache_dir.join("sync_db.bin"))?;
-    remove_cache_file(&cache_dir.join("local_db_rdeps.bin"))?;
-    remove_cache_file(&cache_dir.join("local_db.bin"))?; // legacy pre-rdeps layout
+    invalidate_derived_cache_files(&paths::cache_dir())
+}
+
+fn invalidate_derived_cache_files(cache_dir: &Path) -> Result<()> {
+    for name in [
+        "sync_db_source_v1",
+        "local_db_source_v1",
+        "sync_db",
+        "local_db_rdeps",
+        "local_db",
+    ] {
+        remove_cache_file(&cache_dir.join(format!("{name}.bin")))?;
+    }
     Ok(())
 }
 
@@ -1944,6 +1953,37 @@ mod tests {
             fs::read(directory.path().join("sync_db.bin"))?,
             b"legacy cache"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn invalidate_derived_cache_files_removes_live_and_legacy_names() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        for name in [
+            "sync_db_source_v1.bin",
+            "local_db_source_v1.bin",
+            "sync_db.bin",
+            "local_db_rdeps.bin",
+            "local_db.bin",
+            "unrelated.bin",
+        ] {
+            fs::write(directory.path().join(name), b"cache")?;
+        }
+        invalidate_derived_cache_files(directory.path())?;
+        for name in [
+            "sync_db_source_v1.bin",
+            "local_db_source_v1.bin",
+            "sync_db.bin",
+            "local_db_rdeps.bin",
+            "local_db.bin",
+        ] {
+            assert!(
+                !directory.path().join(name).exists(),
+                "{name} must be removed"
+            );
+        }
+        assert_eq!(fs::read(directory.path().join("unrelated.bin"))?, b"cache");
+        invalidate_derived_cache_files(directory.path())?;
         Ok(())
     }
 
