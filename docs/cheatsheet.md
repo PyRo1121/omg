@@ -91,9 +91,13 @@ omg config list
 omg config validate
 omg account status
 omg container status
+omg hooks status
+omg hooks uninstall
 omg dash
 ```
 
 Configuration output may disclose private settings; review before sharing. Account linking accepts a token through standard input (`omg account link --token-stdin`), not a command-line token. Use a credential manager rather than putting tokens in shell startup files.
+
+`hooks uninstall` removes only byte-exact current OMG hook templates. Custom, composed, historical, and nonregular files stay in place.
 
 See [CLI reference](./cli.md), [configuration](./configuration.md), [containers](./containers.md), and [installation](./installation.md). CI needs a pinned, verified installer/artifact and a prepared backend-compatible environment; a moving `curl | bash` URL is not a release pin.
