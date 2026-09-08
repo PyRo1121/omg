@@ -194,10 +194,10 @@ impl DaemonState {
         Ok(packages)
     }
 
-    /// Rebuild catalog state when on-disk sync or local databases are newer
-    /// than the loaded index. Isolated daemons are a no-op.
+    /// Rebuild catalog state when the observed sync/local identity differs
+    /// from the loaded index. Isolated daemons are a no-op.
     #[cfg(feature = "arch")]
-    async fn heal_index_if_disk_newer(&self) -> anyhow::Result<()> {
+    async fn heal_index_if_catalog_changed(&self) -> anyhow::Result<()> {
         if !self.uses_production_backends() {
             return Ok(());
         }
@@ -221,31 +221,17 @@ impl DaemonState {
                     .index_epoch
                     .read()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
-                disk.disk_is_newer_than(loaded)
+                disk != loaded
             }
         }
     }
 
     pub(super) async fn status_counts(&self) -> anyhow::Result<(usize, usize, usize, usize)> {
-        if self.uses_production_backends() {
-            let pm_name = self.package_manager.name().to_string();
-            tokio::task::spawn_blocking(move || system_status_for_backend(&pm_name))
-                .await
-                .context("Status task panicked")?
-        } else {
-            self.package_manager.get_status(false).await
-        }
+        self.package_manager.get_status(false).await
     }
 
     pub(super) async fn explicit_packages(&self) -> anyhow::Result<Vec<String>> {
-        if self.uses_production_backends() {
-            let pm_name = self.package_manager.name().to_string();
-            tokio::task::spawn_blocking(move || explicit_packages_for_backend(&pm_name))
-                .await
-                .context("Explicit package task panicked")?
-        } else {
-            self.package_manager.list_explicit().await
-        }
+        self.package_manager.list_explicit().await
     }
 
     pub fn new() -> anyhow::Result<Self> {
@@ -313,17 +299,6 @@ impl DaemonState {
         tracing::info!("Package index loaded: {} packages", index.len());
 
         let cache = PackageCache::default();
-
-        match persistent.get_status() {
-            Ok(Some(status)) => {
-                cache.update_status(Arc::new(status));
-                tracing::debug!("Pre-warmed status cache from persistent storage");
-            }
-            Ok(None) => {}
-            Err(error) => {
-                tracing::warn!("Failed to load persisted status cache: {error}");
-            }
-        }
 
         let quota = Quota::per_second(crate::core::safe_ops::nonzero_u32_or_default(
             GLOBAL_RATE_LIMIT_HZ,
@@ -410,7 +385,7 @@ pub async fn handle_request(state: Arc<DaemonState>, request: Request) -> Respon
 
     #[cfg(feature = "arch")]
     if request.reads_arch_sync_catalog()
-        && let Err(error) = state.heal_index_if_disk_newer().await
+        && let Err(error) = state.heal_index_if_catalog_changed().await
     {
         return internal_error(
             request.id(),
@@ -523,7 +498,7 @@ async fn handle_refresh_index(state: Arc<DaemonState>, id: RequestId) -> Respons
 
 /// Run an index search on the blocking pool. Both search handlers share
 /// this so heavy scans never stall the async executor.
-async fn search_index_blocking(
+pub(super) async fn search_index_blocking(
     index: Arc<PackageIndex>,
     query: String,
 ) -> Result<Vec<PackageInfo>, String> {
@@ -890,75 +865,6 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
     not_found_error(id, format!("Package not found: {package}"))
 }
 
-/// Query native status counts for a production package-manager backend.
-/// Dispatch a native backend query, keeping every feature-gated arm in one
-/// place. Disabled branches collapse to a single canonical error so the two
-/// query shapes can never drift apart. Adding a native backend means adding
-/// an arm here and updating the feature gates below.
-macro_rules! native_backend_query {
-    ($pm_name:expr, $debian:expr, $debian_pure:expr, $arch:expr) => {
-        match $pm_name {
-            "apt" => {
-                #[cfg(feature = "debian")]
-                {
-                    $debian
-                }
-                #[cfg(not(feature = "debian"))]
-                {
-                    Err(backend_disabled("Debian"))
-                }
-            }
-            "apt-pure" => {
-                #[cfg(any(feature = "debian", feature = "debian-pure"))]
-                {
-                    $debian_pure
-                }
-                #[cfg(not(any(feature = "debian", feature = "debian-pure")))]
-                {
-                    Err(backend_disabled("Debian"))
-                }
-            }
-            "pacman" => {
-                #[cfg(feature = "arch")]
-                {
-                    $arch
-                }
-                #[cfg(not(feature = "arch"))]
-                {
-                    Err(backend_disabled("Arch"))
-                }
-            }
-            other => Err(anyhow::anyhow!("Unsupported package manager: {other}")),
-        }
-    };
-}
-
-#[cold]
-fn backend_disabled(backend: &str) -> anyhow::Error {
-    anyhow::anyhow!("{backend} backend disabled")
-}
-
-/// Query native status counts for a production package-manager backend.
-pub(crate) fn system_status_for_backend(
-    pm_name: &str,
-) -> anyhow::Result<(usize, usize, usize, usize)> {
-    native_backend_query!(
-        pm_name,
-        crate::package_managers::apt_get_system_status(),
-        crate::package_managers::debian_db::get_counts_fast(),
-        crate::package_managers::get_system_status()
-    )
-}
-
-pub(crate) fn explicit_packages_for_backend(pm_name: &str) -> anyhow::Result<Vec<String>> {
-    native_backend_query!(
-        pm_name,
-        crate::package_managers::apt_list_explicit(),
-        crate::package_managers::debian_db::list_explicit_fast(),
-        crate::package_managers::list_explicit_fast()
-    )
-}
-
 /// Handle status request
 #[tracing::instrument(skip(state))]
 async fn handle_status(state: Arc<DaemonState>, id: RequestId) -> Response {
@@ -978,19 +884,22 @@ async fn handle_status(state: Arc<DaemonState>, id: RequestId) -> Response {
     // 2. Check persistent cache (disk - slower)
     // Runs in blocking thread to avoid stalling async runtime
     let state_clone = Arc::clone(&state);
-    let cached_result =
-        tokio::task::spawn_blocking(move || state_clone.persistent.get_status()).await;
+    let cached_result = tokio::task::spawn_blocking(move || {
+        state_clone
+            .persistent
+            .get_status(state_clone.cache.status_ttl())
+    })
+    .await;
 
     match cached_result {
         Ok(Ok(Some(cached))) => {
             // METRICS: Cache hit (persistent)
             GLOBAL_METRICS.inc_cache_hits();
-            // Promote to memory cache for next hit (Arc avoids clone)
-            let cached_arc = Arc::new(cached);
-            state.cache.update_status(Arc::clone(&cached_arc));
+            // Do not restart its lifetime by promoting an old snapshot into
+            // the memory cache. Only a new backend refresh starts a new TTL.
             return Response::Success {
                 id,
-                result: ResponseResult::Status(Arc::unwrap_or_clone(cached_arc)),
+                result: ResponseResult::Status(cached),
             };
         }
         Ok(Ok(None)) => {}
@@ -1403,6 +1312,69 @@ mod tests {
         (directory, Arc::new(state))
     }
 
+    #[tokio::test]
+    async fn persisted_status_does_not_restart_memory_ttl() -> anyhow::Result<()> {
+        let (directory, initial) = isolated_state();
+        let status = super::super::status_policy::status_snapshot(42, 20, 1, 2, vec![], Some(3)).0;
+        initial.persistent.set_status(&status)?;
+        let state = Arc::new(DaemonState::new_isolated(
+            directory.path(),
+            PackageIndex::empty(),
+            Arc::clone(&initial.package_manager),
+        )?);
+        assert!(
+            state.cache.get_status().is_none(),
+            "startup must not reset snapshot age"
+        );
+        let Response::Success {
+            result: ResponseResult::Status(result),
+            ..
+        } = handle_status(Arc::clone(&state), 81).await
+        else {
+            panic!("expected cached status")
+        };
+        assert_eq!(result.total_packages, 42);
+        assert!(
+            state.cache.get_status().is_none(),
+            "disk reads must not reset snapshot age"
+        );
+        assert!(state.cache.get_explicit_count().is_none());
+
+        std::fs::write(
+            directory.path().join("status-cache.json"),
+            serde_json::to_vec(&serde_json::json!({"format_version": 1, "status": status}))?,
+        )?;
+        let Response::Success {
+            result: ResponseResult::Status(result),
+            ..
+        } = handle_status(state, 82).await
+        else {
+            panic!("expected current backend status")
+        };
+        assert_eq!(result.total_packages, 0);
+        assert!(!result.vulnerabilities_scanned);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn persisted_status_honors_configured_zero_ttl() -> anyhow::Result<()> {
+        let (_directory, mut state) = isolated_state();
+        Arc::get_mut(&mut state).context("unique test state")?.cache =
+            PackageCache::new_with_ttls(10, 300, 0);
+        let status = super::super::status_policy::status_snapshot(42, 20, 1, 2, vec![], Some(3)).0;
+        state.persistent.set_status(&status)?;
+        let Response::Success {
+            result: ResponseResult::Status(result),
+            ..
+        } = handle_status(state, 83).await
+        else {
+            panic!("expected current backend status")
+        };
+        assert_eq!(result.total_packages, 0);
+        assert!(!result.vulnerabilities_scanned);
+        Ok(())
+    }
+
     type BackendFuture<'a, T> =
         std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<T>> + Send + 'a>>;
 
@@ -1710,46 +1682,57 @@ mod tests {
         );
     }
 
-    #[test]
-    fn status_rejects_unknown_package_manager() {
-        let error = system_status_for_backend("homebrew")
-            .expect_err("unknown backends must not invent a healthy status");
-        assert!(
-            error.to_string().contains("Unsupported package manager"),
-            "got: {error}"
-        );
+    #[cfg(not(feature = "arch"))]
+    #[tokio::test]
+    async fn production_queries_use_the_selected_backend() {
+        for distro in ["fedora", "macos"] {
+            let directory = tempfile::tempdir().unwrap();
+            let manager = Arc::new(crate::package_managers::mock::MockPackageManager::new_in(
+                distro,
+                directory.path(),
+            ));
+            manager.install(&["git".into()]).await.unwrap();
+            let mut state =
+                DaemonState::new_isolated(directory.path(), PackageIndex::empty(), manager)
+                    .unwrap();
+            state.system_backends = RwLock::new(SystemBackendAccess::Production {});
+            assert_eq!(state.status_counts().await.unwrap(), (1, 1, 0, 0));
+            assert_eq!(state.explicit_packages().await.unwrap(), vec!["git"]);
+        }
     }
 
-    #[test]
-    #[cfg(not(any(feature = "debian", feature = "debian-pure")))]
-    fn apt_pure_status_without_debian_fails() {
-        let error = system_status_for_backend("apt-pure")
-            .expect_err("apt-pure without a Debian backend must not invent counts");
-        assert!(
-            error.to_string().contains("Debian backend disabled"),
-            "got: {error}"
-        );
+    #[tokio::test]
+    async fn backend_status_errors_do_not_become_healthy_counts() {
+        let directory = tempfile::tempdir().unwrap();
+        let manager = Arc::new(crate::package_managers::mock::MockPackageManager::new_in(
+            "fedora",
+            directory.path(),
+        ));
+        let state =
+            DaemonState::new_isolated(directory.path(), PackageIndex::empty(), manager).unwrap();
+        std::fs::write(
+            directory.path().join("mock_state_dnf.json"),
+            b"invalid json",
+        )
+        .unwrap();
+        assert!(state.status_counts().await.is_err());
     }
 
-    #[test]
-    fn explicit_rejects_unknown_package_manager() {
-        let error = explicit_packages_for_backend("homebrew")
-            .expect_err("unknown backends must not invent an empty explicit list");
-        assert!(
-            error.to_string().contains("Unsupported package manager"),
-            "got: {error}"
-        );
-    }
-
-    #[test]
-    #[cfg(not(any(feature = "debian", feature = "debian-pure")))]
-    fn apt_pure_explicit_without_debian_fails() {
-        let error = explicit_packages_for_backend("apt-pure")
-            .expect_err("apt-pure without a Debian backend must not invent an empty explicit list");
-        assert!(
-            error.to_string().contains("Debian backend disabled"),
-            "got: {error}"
-        );
+    #[tokio::test]
+    async fn backend_inventory_errors_do_not_become_empty_lists() {
+        let directory = tempfile::tempdir().unwrap();
+        let manager = Arc::new(crate::package_managers::mock::MockPackageManager::new_in(
+            "macos",
+            directory.path(),
+        ));
+        let state =
+            DaemonState::new_isolated(directory.path(), PackageIndex::empty(), manager).unwrap();
+        std::fs::write(
+            directory.path().join("mock_state_homebrew.json"),
+            b"invalid json",
+        )
+        .unwrap();
+        assert!(state.explicit_packages().await.is_err());
     }
 
     #[cfg(feature = "arch")]

@@ -226,6 +226,22 @@ fn team_status_reports_local_workspace_without_an_account() {
     res.assert_stdout_contains("[Team Status]");
 }
 
+#[test]
+#[serial]
+fn status_after_join_reports_the_current_remote() {
+    let project = TestProject::new();
+    craft_workspace(&project);
+    let remote = "https://gist.github.com/fixture/lock";
+    let mut workspace = omg_lib::core::env::team::TeamWorkspace::new(project.path()).unwrap();
+    workspace.join(remote).unwrap();
+    let result = project.run(&["team", "status"]);
+    result.assert_success();
+    result.assert_stdout_contains(&format!("Remote: {remote}"));
+    let status = workspace.load_status().unwrap();
+    assert_eq!(status.config.remote_url.as_deref(), Some(remote));
+    assert_eq!(status.members.len(), 1);
+}
+
 /// Contract: in a crafted initialized workspace, `status` succeeds and reports
 /// the team identity, the empty-lock sentinel "none", and the 1/1 sync ratio
 /// produced by registering the configured local member.

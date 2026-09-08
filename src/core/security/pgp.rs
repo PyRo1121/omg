@@ -363,7 +363,7 @@ mod tests {
         signed_fixture_at(
             hash,
             std::time::SystemTime::now(),
-            std::time::Duration::from_secs(3600),
+            std::time::Duration::from_hours(1),
         )
     }
 
@@ -378,7 +378,7 @@ mod tests {
         use openpgp::types::SignatureType;
 
         let (cert, _) = CertBuilder::general_purpose(Some("omg-test@example.invalid"))
-            .set_creation_time(std::time::SystemTime::now() - std::time::Duration::from_secs(86400))
+            .set_creation_time(std::time::SystemTime::now() - std::time::Duration::from_hours(24))
             .generate()
             .expect("generate test certificate");
         let policy = StandardPolicy::new();
@@ -446,13 +446,13 @@ mod tests {
     fn expired_and_future_signatures_are_rejected() {
         let now = std::time::SystemTime::now();
         for created in [
-            now - std::time::Duration::from_secs(3600),
-            now + std::time::Duration::from_secs(3600),
+            now - std::time::Duration::from_hours(1),
+            now + std::time::Duration::from_hours(1),
         ] {
             let (verifier, signature) = signed_fixture_at(
                 openpgp::types::HashAlgorithm::SHA256,
                 created,
-                std::time::Duration::from_secs(60),
+                std::time::Duration::from_mins(1),
             );
             assert!(matches!(
                 verifier.verify_memory(b"test data", &signature),

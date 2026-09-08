@@ -6,13 +6,13 @@ description: Managing Node.js, Python, Go, Rust, Ruby, Java, Bun, Deno, and Pi
 
 # Runtime Management
 
-OMG provides a unified, high-performance interface for managing multiple programming language runtimes. It is designed to be a faster, more reliable alternative to traditional managers like `nvm`, `pyenv`, or `rustup`, offering sub-millisecond version switching and zero-configuration setups.
+OMG provides one interface for selecting supported language runtimes. Setup requirements and switching costs depend on the provider, installed versions, shell, and filesystem; no universal latency or reliability comparison is established.
 
 ## 🚀 Supported Runtimes
 
 ### Native Runtimes
 
-OMG features native, pure Rust implementations for the most popular language ecosystems. These implementations are optimized for speed and require no external dependencies.
+OMG implements provider-specific runtime managers. Runtime installation, archive extraction, and project builds have platform-specific prerequisites; do not assume every workflow is dependency-free. Consult each provider's documented requirements.
 
 | Runtime | Auto-detect File | Install Command | Switch Command | Binaries |
 | --------- | ------------------ | ----------------- | ---------------- | ---------- |
@@ -303,20 +303,7 @@ omg use rust nightly
 
 ## 📊 Performance Comparison
 
-| Operation | OMG | nvm | pyenv | rustup |
-| ----------- | ----- | ----- | ------- | -------- |
-| **Version switch** | <10ms | 100-200ms | 150-300ms | 50-100ms |
-| **Auto-detect** | <5ms | 50-100ms | 100-200ms | 30-60ms |
-| **Install** | 10-60s | Similar | Similar | Similar |
-| **Shell startup** | <1ms | 20-50ms | 30-70ms | 10-20ms |
-
-**Why is OMG so fast?**
-
-1. **Direct PATH manipulation** - No subprocess overhead
-2. **Daemon caches version files** - Zero filesystem traversal on repeat
-3. **Zero shell overhead** - Pure Rust implementation
-4. **Atomic symlink updates** - Single syscall for version switch
-5. **Pre-compiled binaries** - No runtime compilation
+Compare installed-version activation separately from downloads, builds, and shell startup. Record the exact runtime, artifact, shell, filesystem, and warm/cold conditions. [Package-query benchmarks](../benchmarks/README.md) do not establish runtime-manager speedups.
 
 ---
 
@@ -364,7 +351,7 @@ All runtimes installed in user-local directory:
 
 - **No Sudo Required** - Never need administrative privileges
 - **Isolation** - Versions cannot interfere with each other
-- **Easy Cleanup** - `rm -rf ~/.local/share/omg/versions/node/20.10.0`
+- **Version removal** uses `omg use node 20.10.0 --uninstall`. Switch away from an active version first.
 
 ### Staged installations
 
@@ -429,11 +416,7 @@ grep "omg hook" ~/.zshrc  # Should exist
 curl -I https://nodejs.org/dist/
 ```
 
-**Try different mirror:**
-
-```bash
-omg config set node.mirror "https://npmmirror.com/mirrors/node"
-```
+`node.mirror` is not a supported config key. Inspect the provider error and network access. Do not bypass download integrity checks or substitute an untrusted mirror.
 
 **Check disk space:**
 

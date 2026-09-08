@@ -7,6 +7,7 @@
 # TSV `requires` DAG is satisfied naturally. Disposable guests make
 # package/service-mutation rows safe, but they still need --allow-mutations.
 set -euo pipefail
+trap 'rc=$?; if [[ "$rc" == 2 ]]; then printf "error: invalid inventory configuration or row %s\n" "${id:-<preflight>}" >&2; fi' EXIT
 
 work=""; distro=""; tiers=""; tag=""; binary=""; tsv=""
 allow_mutations=false
@@ -33,13 +34,26 @@ done
 [[ -n "$work" && -n "$distro" && -n "$tiers" && -n "$tag" && -n "$binary" && -n "$tsv" ]] || exit 2
 [[ "$row_timeout" =~ ^[0-9]+$ && "$row_timeout" -gt 0 ]] || exit 2
 case "$distro" in arch|debian|ubuntu|fedora) ;; *) exit 2 ;; esac
-command -v ssh jq >/dev/null || exit 3
+for tool in ssh jq timeout sha256sum; do command -v "$tool" >/dev/null || exit 3; done
+[[ "$binary" == /* && "$binary" != *$'\n'* ]] || exit 2
+[[ "$ssh_user" =~ ^[a-z_][a-z0-9_-]*$ && "$ssh_port" =~ ^[0-9]+$ ]] || exit 2
+[[ "$tiers" =~ ^[a-z,-]+$ && "$tiers" != ,* && "$tiers" != *, && "$tiers" != *,,* ]] || exit 2
+IFS=',' read -ra requested_tiers <<< "$tiers"
+for tier in "${requested_tiers[@]}"; do
+  case "$tier" in hermetic|container|qemu|network|credentialed|pty|nested-container) ;; *) exit 2 ;; esac
+done
 [[ -f "$tsv" ]] || exit 2
 
 root=$(cd "$work" && pwd)
 guest="$root/guest"
 out="$root/inventory"
+# Refuse to overwrite evidence from a previous invocation.
+[[ ! -e "$out" ]] || { printf 'error: inventory evidence already exists: %s\n' "$out" >&2; exit 2; }
 mkdir -p "$out/rows"
+sha256sum "${BASH_SOURCE[0]}" "$tsv" > "$out/input-sha256.txt"
+jq -n --arg release "$tag" --arg distro "$distro" --arg tiers "$tiers" --arg binary "$binary" \
+  --argjson mutations "$allow_mutations" --argjson credentialed "$allow_credentialed" --argjson deadline "$row_timeout" \
+  '{release:$release,distro:$distro,tiers:$tiers,binary:$binary,allow_mutations:$mutations,allow_credentialed:$credentialed,row_timeout_seconds:$deadline}' > "$out/metadata.json"
 # -n keeps ssh from forwarding (and draining) this loop's stdin, which is the
 # TSV stream: without it only the first tier-matching row ever executes.
 opts=(-n -i "$guest/client-key" -p "$ssh_port" -o BatchMode=yes -o ConnectTimeout=5
@@ -49,8 +63,11 @@ target="$ssh_user@127.0.0.1"
 
 # Selected tiers as comma-wrappedneedle, same idiom as release-smoke.sh.
 want=",$tiers,"
-summary_tmp="$out/results.json.tmp"
+# Publish each completed row atomically so an outer deadline cannot erase
+# observed failures. Completion is a separate, last-written receipt.
+summary_tmp="$out/results.json"
 printf '[]' > "$summary_tmp"
+printf '{"complete":false}\n' > "$out/summary.json"
 pass=0; fail=0; skipped=0
 record() { # case_id result exit_code elapsed
   local entry
@@ -60,9 +77,89 @@ record() { # case_id result exit_code elapsed
   mv "$summary_tmp.next" "$summary_tmp"
 }
 
+# Prerequisite lookup for requires-chain replay (see below): id to the
+# columns the skip gates need. Loaded once; the main loop streams the TSV
+# a second time via process substitution.
+resolve_exit() {
+  local cell=$1 entry key seen=, value=""
+  if [[ "$cell" =~ ^(0|[1-9][0-9]{0,2})$ ]] && ((cell <= 255)); then printf '%s' "$cell"; return; fi
+  [[ "$cell" != *, ]] || return 1
+  local entries=()
+  IFS=',' read -ra entries <<< "$cell"
+  for entry in "${entries[@]}"; do
+    [[ "$entry" =~ ^(arch|debian|ubuntu|fedora):(0|[1-9][0-9]{0,2})$ ]] || return 1
+    key=${entry%%:*}
+    [[ "$seen" != *",$key,"* ]] && (( ${entry#*:} <= 255 )) || return 1
+    seen+="$key,"
+    [[ "$key" != "$distro" ]] || value=${entry#*:}
+  done
+  [[ ${#entries[@]} == 4 && -n "$value" ]] || return 1
+  printf '%s' "$value"
+}
+
+# Validate the complete input before any guest action. Requires must point
+# backwards, which rejects missing dependencies and cycles without a depth cap.
+IFS= read -r header < "$tsv"
+[[ "$header" == $'case\targs_json\tsafety\texpected_exit\texpected_ux\trequires\ttier\ttargets\tassertions\tcleanup' ]] || exit 2
+awk -F '\t' 'NR > 1 { if (NF != 10) exit 1; for (i = 1; i <= NF; i++) if ($i == "") exit 1 }' "$tsv" || exit 2
+declare -A row_args=() row_requires=() row_tier=() row_safety=() row_ux=() row_exit=() row_targets=() row_assertions=()
+while IFS=$'\t' read -r id aj s e u r t tg a _cleanup; do
+  [[ "$id" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ && -z "${row_args[$id]:-}" ]] || exit 2
+  [[ "$r" == - || "$r" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]] || exit 2
+  [[ "$r" == - || -n "${row_args[$r]:-}" ]] || exit 2
+  jq -e 'type == "array" and length > 0 and all(.[]; type == "string" and (explode | index(0) == null))' <<< "$aj" >/dev/null || exit 2
+  case "$s" in read|isolated-write|controlled-error|help-boundary|interactive|package-mutation|service-mutation) ;; *) exit 2 ;; esac
+  case "$u" in pass|declared) ;; *) exit 2 ;; esac
+  [[ "$t" != *, && "$t" != ,* && "$t" != *,,* ]] || exit 2
+  IFS=',' read -ra input_tiers <<< "$t"
+  for input_tier in "${input_tiers[@]}"; do
+    case "$input_tier" in hermetic|container|qemu|network|credentialed|pty|nested-container) ;; *) exit 2 ;; esac
+  done
+  if [[ "$tg" != hermetic:pass ]]; then
+    [[ "$tg" != *, ]] || exit 2
+    IFS=',' read -ra input_targets <<< "$tg"
+    seen_targets=,
+    for input_target in "${input_targets[@]}"; do
+      [[ "$input_target" =~ ^(arch|debian|ubuntu|fedora):(pass|pending|known-defect)$ ]] || exit 2
+      target_distro=${input_target%%:*}
+      [[ "$seen_targets" != *",$target_distro,"* ]] || exit 2
+      seen_targets+="$target_distro,"
+    done
+  fi
+  resolved=""
+  if [[ "$u" != declared ]]; then resolved=$(resolve_exit "$e") || exit 2; fi
+  case "$a" in -|json-stdout|artifact:manifest.json|artifact:privacy.json|artifact:sbom.json) ;; *) exit 2 ;; esac
+  row_args["$id"]="$aj"; row_requires["$id"]="$r"
+  row_tier["$id"]="$t"; row_safety["$id"]="$s"; row_ux["$id"]="$u"
+  row_exit["$id"]="$resolved"; row_targets["$id"]="$tg"; row_assertions["$id"]="$a"
+done < <(tail -n +2 "$tsv")
+
+# Replay only prerequisites permitted by the same target and safety gates.
+# A gated prerequisite blocks the dependent row instead of running it without
+# the required state.
+prereq_runnable() { # id -> 0 when replayable
+  local id=$1 t
+  [[ -n "${row_args[$id]:-}" ]] || return 1
+  [[ "${row_ux[$id]}" != declared ]] || return 1
+  [[ "${row_targets[$id]}" == hermetic:pass || ",${row_targets[$id]}," == *",$distro:pass,"* || ",${row_targets[$id]}," == *",$distro:known-defect,"* ]] || return 1
+  local hit=false
+  IFS=',' read -ra tier_list <<< "${row_tier[$id]}"
+  for t in "${tier_list[@]}"; do
+    if [[ "$want" == *",$t,"* ]]; then hit=true; break; fi
+  done
+  [[ "$hit" == true ]] || return 1
+  if [[ ",${row_tier[$id]}," == *",credentialed,"* && "$allow_credentialed" == false ]]; then return 1; fi
+  case "${row_safety[$id]}" in
+    interactive) return 1 ;;
+    package-mutation|service-mutation)
+      [[ "$allow_mutations" == true ]] || return 1 ;;
+  esac
+  return 0
+}
+
 # Process substitution (not a pipeline): pass/fail counters below must
 # survive the loop; a `tail | while` pipeline would trap them in a subshell.
-while IFS=$'\t' read -r case args_json safety expected_exit expected_ux requires tier targets assertions cleanup; do
+while IFS=$'\t' read -r case args_json safety _expected_exit expected_ux requires tier targets assertions _cleanup; do
   # Case ids flow into a remote shell command below: reject anything
   # outside the identifier shape instead of executing it.
   if [[ ! "$case" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]]; then
@@ -95,8 +192,7 @@ while IFS=$'\t' read -r case args_json safety expected_exit expected_ux requires
   if [[ -z "$status" || "$status" == pending ]]; then
     record "qemu-$distro-$case" SKIPPED -1 0; skipped=$((skipped+1)); continue
   fi
-  allow_fail=false
-  if [[ "$status" == known-defect ]]; then allow_fail=true; fi
+  case "$status" in pass|known-defect) ;; *) record "qemu-$distro-$case" HARNESS_ERROR -1 0; fail=$((fail+1)); continue ;; esac
   # Credentialed rows need a real token in the guest: never run them
   # without an explicit opt-in (tiers match by substring, so "network"
   # would otherwise select "network,credentialed" rows).
@@ -111,26 +207,84 @@ while IFS=$'\t' read -r case args_json safety expected_exit expected_ux requires
         record "qemu-$distro-$case" SKIPPED -1 0; skipped=$((skipped+1)); continue
       fi ;;
   esac
-  # Build the remote command: binary + per-element @sh quoting.
-  arg_string=$(printf '%s' "$args_json" | jq -r '[.[] | @sh] | join(" ")')
-  rowdir="\$HOME/inventory-work/$case"
-  remote="rm -rf $rowdir && mkdir -p $rowdir && cd $rowdir && NO_COLOR=1 LC_ALL=C $binary $arg_string"
-  start=$SECONDS
-  # shellcheck disable=SC2086
-  if timeout "$row_timeout" ssh "${opts[@]}" "$target" "$remote" > "$out/rows/$case.log" 2>&1; then
-    rc=0
-  else
-    rc=$?
+  chain=()
+  next="$requires"
+  blocked=false
+  while [[ "$next" != - ]]; do
+    if ! prereq_runnable "$next"; then blocked=true; break; fi
+    chain=("$next" "${chain[@]}")
+    next="${row_requires[$next]}"
+  done
+  if [[ "$blocked" == true ]]; then
+    printf 'dependency %s is gated\n' "$next" > "$out/rows/$case.log"
+    record "qemu-$distro-$case" BLOCKED -1 0; fail=$((fail+1)); continue
   fi
+
+  # Quote each literal segment, substituting only the documented ROOT token.
+  # No eval or shell expansion of inventory argument text is permitted.
+  quote_args() {
+    jq -r '[.[] | if . == "" then @sh else split("${ROOT}") | map(@sh) | join("\"$rowdir\"") end] | join(" ")' <<< "$1"
+  }
+  quoted_binary=$(jq -rn --arg b "$binary" '$b | @sh')
+  quoted_binary_dir=$(jq -rn --arg b "${binary%/*}" '$b | @sh')
+  remote="set -eu; rowdir=\$(mktemp -d \"\$HOME/inventory-$case.XXXXXX\"); cd \"\$rowdir\""
+  remote+="; export NO_COLOR=1 LC_ALL=C PATH=$quoted_binary_dir:\"\$PATH\"; git init -q; printf 'smoke:\n\t@echo smoke-ok\n' > Makefile"
+  remote+="; mkdir -p project; printf '# Nested audit fixture\n' > project/README.md"
+  # The supervisor exits zero after recording a completed CLI's status.
+  # Thus a CLI exit 125 cannot be mistaken for timeout's own exit 125.
+  supervisor=$(jq -rn --arg s 'rc=0; "$@" 3>&- || rc=$?; printf "%s\n" "$rc" >&3' '$s | @sh')
+  remote+="; status_file=\$(mktemp \"\$HOME/inventory-status.XXXXXX\"); trap 'rm -f \"\$status_file\"' EXIT"
+  remote+="; run_omg() { execution_phase=executor; rc=0; timeout --kill-after=5s '$row_timeout' bash -c $supervisor _ \"\$@\" 3>\"\$status_file\" || rc=\$?; if [ \"\$rc\" = 0 ]; then if IFS= read -r rc < \"\$status_file\"; then execution_phase=product; else rc=125; fi; fi; }"
+  for p in "${chain[@]}"; do
+    pargs=$(quote_args "${row_args[$p]}")
+    remote+="; run_omg $quoted_binary $pargs > '$p.prereq.log' 2> '$p.prereq.stderr.log'"
+    remote+="; printf 'prereq $p exit=%s\n' \"\$rc\" >&2; cat '$p.prereq.log' '$p.prereq.stderr.log' >&2"
+    remote+="; if [ \"\$rc\" != '${row_exit[$p]}' ] || [ \"\$execution_phase\" != product ]; then printf '\nOMG_QEMU_RECEIPT:dependency:%s:0\n' \"\$rc\"; exit 0; fi"
+    if [[ "${row_assertions[$p]}" == artifact:* ]]; then
+      remote+="; if [ \"\$rc\" = 0 ] && ! test -s '${row_assertions[$p]#artifact:}'; then printf '\nOMG_QEMU_RECEIPT:dependency:0:1\n'; exit 0; fi"
+    elif [[ "${row_assertions[$p]}" == json-stdout ]]; then
+      remote+="; if [ \"\$rc\" = 0 ] && ! jq -e -s 'length == 1' '$p.prereq.log' >/dev/null 2>&1; then printf '\nOMG_QEMU_RECEIPT:dependency:0:1\n'; exit 0; fi"
+    fi
+  done
+  arg_string=$(quote_args "$args_json")
+  remote+="; run_omg $quoted_binary $arg_string; assertion=0"
+  if [[ "$assertions" == artifact:* ]]; then
+    remote+="; if [ \"\$rc\" = 0 ]; then test -s '${assertions#artifact:}' || assertion=1; fi"
+  fi
+  # A receipt is emitted only after setup and the command complete. SSH
+  # transport/tool failures cannot satisfy an expected product refusal.
+  remote+="; printf '\nOMG_QEMU_RECEIPT:%s:%s:%s\n' \"\$execution_phase\" \"\$rc\" \"\$assertion\""
+  remote="bash -c $(jq -rn --arg s "$remote" '$s | @sh')"
+  start=$SECONDS
+  transport=0
+  budget=$(( (row_timeout + 5) * (${#chain[@]} + 1) + 15 ))
+  timeout --kill-after=5s "$budget" ssh "${opts[@]}" "$target" "$remote" > "$out/rows/$case.stdout.log" 2> "$out/rows/$case.stderr.log" || transport=$?
   elapsed=$((SECONDS - start))
-  verdict=PASS
-  if [[ "$expected_exit" =~ ^[0-9]+$ && "$rc" != "$expected_exit" ]]; then verdict=FAIL; fi
-  if [[ "$verdict" == FAIL && "$allow_fail" == true ]]; then verdict=PASS; fi
+  cat "$out/rows/$case.stdout.log" "$out/rows/$case.stderr.log" > "$out/rows/$case.log"
+  verdict=HARNESS_ERROR; rc=$transport
+  receipt=$(tail -n 1 "$out/rows/$case.stdout.log")
+  if [[ "$transport" == 0 && "$receipt" =~ ^OMG_QEMU_RECEIPT:(product|executor|dependency):([0-9]{1,3}):([01])$ ]]; then
+    phase=${BASH_REMATCH[1]}; rc=${BASH_REMATCH[2]}; assertion_rc=${BASH_REMATCH[3]}
+    verdict=FAIL
+    if [[ "$phase" == dependency ]]; then verdict=BLOCKED
+    elif [[ "$phase" == executor ]]; then
+      [[ "$rc" == 124 || "$rc" == 137 ]] || verdict=HARNESS_ERROR
+    elif [[ "$rc" == "${row_exit[$case]}" && "$assertion_rc" == 0 ]]; then
+      verdict=PASS
+      if [[ "$assertions" == json-stdout && "$rc" == 0 ]]; then
+        head -n -1 "$out/rows/$case.stdout.log" | jq -e -s 'length == 1' >/dev/null 2>&1 || verdict=FAIL
+      fi
+    fi
+  fi
   record "qemu-$distro-$case" "$verdict" "$rc" "$elapsed"
   if [[ "$verdict" == PASS ]]; then pass=$((pass+1)); else fail=$((fail+1)); fi
   printf 'case=%s exit=%s verdict=%s\n' "$case" "$rc" "$verdict"
 done < <(tail -n +2 "$tsv")
-mv "$summary_tmp" "$out/results.json"
-printf '{"pass":%s,"fail":%s,"skipped":%s}\n' "$pass" "$fail" "$skipped" > "$out/summary.json"
+if ((pass + fail == 0)); then
+  record "qemu-$distro-inventory-selection" HARNESS_ERROR -1 0
+  fail=$((fail+1))
+fi
+printf '{"complete":true,"pass":%s,"fail":%s,"skipped":%s}\n' "$pass" "$fail" "$skipped" > "$out/summary.json.next"
+mv "$out/summary.json.next" "$out/summary.json"
 cat "$out/summary.json"
 [[ "$fail" -eq 0 ]]

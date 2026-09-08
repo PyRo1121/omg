@@ -1020,11 +1020,6 @@ impl AlpmCatalogEpoch {
             local: LocalDbEpoch::observe()?,
         })
     }
-
-    #[must_use]
-    pub fn disk_is_newer_than(self, loaded: Self) -> bool {
-        self.sync > loaded.sync || self.local > loaded.local
-    }
 }
 
 /// Get modification time of local db directory.
@@ -1707,7 +1702,7 @@ mod tests {
     }
 
     #[test]
-    fn catalog_epoch_advances_when_local_db_changes() {
+    fn catalog_epoch_changes_when_local_db_changes() {
         let temp_dir = tempfile::TempDir::new().unwrap();
         let older = AlpmCatalogEpoch::UNIX_EPOCH;
         std::fs::write(temp_dir.path().join("ALPM_DB_VERSION"), b"9\n").unwrap();
@@ -1715,9 +1710,9 @@ mod tests {
             sync: SyncDbEpoch::UNIX_EPOCH,
             local: LocalDbEpoch::from_local_dir(temp_dir.path()).unwrap(),
         };
-        assert!(newer.disk_is_newer_than(older));
-        assert!(!older.disk_is_newer_than(newer));
-        assert!(!newer.disk_is_newer_than(newer));
+        assert_ne!(newer, older);
+        assert_ne!(newer.local, older.local);
+        assert_eq!(newer.sync, older.sync);
     }
 
     #[test]

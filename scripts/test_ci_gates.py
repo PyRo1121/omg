@@ -67,6 +67,30 @@ class QuickGateOfflineTests(unittest.TestCase):
         )
 
 
+class QemuConcurrencyTests(unittest.TestCase):
+    def test_matrix_jobs_have_distinct_concurrency_groups(self) -> None:
+        workflow = CI_YML.with_name("qemu-matrix.yml").read_text(encoding="utf-8")
+        groups: list[str] = []
+        for job in ["build-staged", "build-staged-arm", "guest", "guest-arm"]:
+            block = job_block(workflow, job)
+            match = re.search(r"^      group: (.+)$", block, re.MULTILINE)
+            if match is None:
+                self.fail(f"{job} must declare its concurrency group")
+            group = match.group(1)
+            self.assertNotIn(
+                "github.job", group, "github.job is empty during group evaluation"
+            )
+            self.assertIn("github.workflow", group)
+            self.assertIn("github.event_name", group)
+            self.assertIn("matrix.distro", group)
+            groups.append(group)
+        self.assertEqual(
+            len(set(groups)),
+            len(groups),
+            "architecture/job legs must not cancel each other",
+        )
+
+
 class LocalCiGateExecutesTests(unittest.TestCase):
     def test_local_ci_gate_executes_recipes_instead_of_dry_run(self) -> None:
         text = CI_YML.read_text(encoding="utf-8")
@@ -81,6 +105,55 @@ class LocalCiGateExecutesTests(unittest.TestCase):
             r"run:\s*make ci-local-quick",
             "quick-gate must really execute `make ci-local-quick`",
         )
+
+
+class CiDeduplicationTests(unittest.TestCase):
+    def test_quick_gate_executes_shared_checks_only_once(self) -> None:
+        gate = job_block(CI_YML.read_text(encoding="utf-8"), "quick-gate")
+        self.assertEqual(gate.count("run: make ci-local-quick"), 1)
+        result = subprocess.run(
+            ["make", "--no-print-directory", "--dry-run", "ci-local-quick"],
+            cwd=CI_YML.parents[2],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        )
+        for command in [
+            "cargo fmt --all -- --check",
+            "python3 -m unittest discover -s scripts -p 'test_*.py'",
+        ]:
+            with self.subTest(command=command):
+                self.assertNotIn(command, gate)
+                self.assertEqual(result.stdout.count(command), 1)
+        self.assertNotIn("run: make check-shell-syntax", gate)
+        self.assertEqual(result.stdout.count("bash -n"), 1)
+
+    def test_portable_keeps_tests_and_lints_without_repeating_gate_compilation(
+        self,
+    ) -> None:
+        portable = job_block(CI_YML.read_text(encoding="utf-8"), "portable")
+        self.assertIn("needs: quick-gate", portable)
+        self.assertNotIn("cargo check", portable)
+        self.assertIn("cargo clippy --all-targets", portable)
+        self.assertIn("--features debian-pure", portable)
+        self.assertIn("cargo nextest run --lib", portable)
+        makefile = (CI_YML.parents[2] / "Makefile").read_text(encoding="utf-8")
+        self.assertIn(
+            "cargo check --manifest-path fuzz/Cargo.toml --all-targets --locked",
+            makefile,
+        )
+
+    def test_arch_combination_has_one_platform_lane(self) -> None:
+        text = CI_YML.read_text(encoding="utf-8")
+        linux = job_block(text, "linux-matrix")
+        intersections = job_block(text, "feature-intersections")
+        self.assertIn("features: arch,pgp,license", linux)
+        self.assertIn("cargo clippy --all-targets", linux)
+        self.assertIn("cargo nextest run --lib", linux)
+        self.assertNotIn("features: arch,pgp,license", intersections)
+        self.assertIn("features: debian,pgp\n", intersections)
+        self.assertIn("cargo check --all-targets", intersections)
 
 
 class ShellSyntaxGateTests(unittest.TestCase):

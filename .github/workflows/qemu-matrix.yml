@@ -28,7 +28,11 @@ on:
       - "build.rs"
       - "rust-toolchain.toml"
       - ".cargo/**"
+      - "benchmark-hyperfine.sh"
+      - "scripts/record-benchmark-run.py"
       - "scripts/benchmark-qemu.sh"
+      - "scripts/qemu-inventory.sh"
+      - "scripts/test-release-smoke.sh"
       - ".github/workflows/qemu-matrix.yml"
   schedule:
     # Nightly, staggered off docker-e2e's 02:00 slot.
@@ -40,29 +44,24 @@ on:
         type: string
         default: ""
       distro:
-        description: "Single distro (empty = all four)"
+        description: "Guest distro"
         type: choice
-        options: ["", arch, debian, ubuntu, fedora]
-        default: ""
+        options: [all, arch, debian, ubuntu, fedora]
+        default: all
       arch:
-        description: "Guest arch (empty = both; arm64 runs staged legs only)"
+        description: "Guest arch (all includes arm64 staged legs)"
         type: choice
-        options: ["", x64, arm64]
-        default: ""
+        options: [all, x64, arm64]
+        default: all
       staged:
         description: "Build PR binaries and test via --staged-dir"
         type: boolean
         default: false
 
 concurrency:
-  # NOTE: the matrix context does not exist at workflow scope — referencing
-  # it here fails closed for the whole file (zero jobs; even dispatch is
-  # rejected with HTTP 422). Per-distro groups live on the matrix jobs
-  # below and include github.job so x86 and arm64 legs of the same distro
-  # do not share a group (and cancel each other). This default only
-  # scopes non-matrix jobs by ref.
-  group: qemu-${{ github.ref }}
-  # Nightly evidence must never be cancelled by a newer push.
+  # Matrix values belong to job-level groups. Separate interactive runs
+  # from nightly evidence at both workflow and job scope.
+  group: qemu-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'schedule' && 'nightly' || 'interactive' }}
   cancel-in-progress: ${{ github.event_name != 'schedule' }}
 
 permissions:
@@ -80,7 +79,7 @@ jobs:
   build-staged:
     name: "Staged build (${{ matrix.distro }})"
     concurrency:
-      group: qemu-${{ github.ref }}-${{ github.job }}-${{ matrix.distro }}
+      group: qemu-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'schedule' && 'nightly' || 'interactive' }}-build-staged-${{ matrix.distro }}
       cancel-in-progress: ${{ github.event_name != 'schedule' }}
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.staged)
     runs-on: ubuntu-24.04
@@ -224,7 +223,7 @@ jobs:
   build-staged-arm:
     name: "Staged build arm64 (${{ matrix.distro }})"
     concurrency:
-      group: qemu-${{ github.ref }}-${{ github.job }}-${{ matrix.distro }}
+      group: qemu-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'schedule' && 'nightly' || 'interactive' }}-build-staged-arm-${{ matrix.distro }}
       cancel-in-progress: ${{ github.event_name != 'schedule' }}
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.staged)
     runs-on: ubuntu-24.04-arm
@@ -359,7 +358,7 @@ jobs:
   guest:
     name: "QEMU guest (${{ matrix.distro }})"
     concurrency:
-      group: qemu-${{ github.ref }}-${{ github.job }}-${{ matrix.distro }}
+      group: qemu-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'schedule' && 'nightly' || 'interactive' }}-guest-${{ matrix.distro }}
       cancel-in-progress: ${{ github.event_name != 'schedule' }}
     needs: [build-staged, build-staged-ubuntu]
     # Both build jobs are skipped on schedule/release-dispatch; PR and
@@ -369,7 +368,7 @@ jobs:
       (needs.build-staged.result == 'success' || needs.build-staged.result == 'skipped') &&
       (needs.build-staged-ubuntu.result == 'success' || needs.build-staged-ubuntu.result == 'skipped')
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -407,34 +406,44 @@ jobs:
 
       - name: Resolve release tag
         id: tag
+        env:
+          REQUESTED_RELEASE_TAG: ${{ inputs.tag }}
         run: |
           if [[ "${{ github.event_name }}" == 'pull_request' || "${{ inputs.staged }}" == 'true' ]]; then
             VERSION=$(awk -F'"' '/^version =/ {print $2; exit}' Cargo.toml)
             tag="v$VERSION"
-          elif [[ -n "${{ inputs.tag }}" ]]; then
-            tag="${{ inputs.tag }}"
+          elif [[ -n "$REQUESTED_RELEASE_TAG" ]]; then
+            tag="$REQUESTED_RELEASE_TAG"
           else
             tag=$(gh release view --json tagName --jq .tagName --repo PyRo1121/omg)
           fi
           [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::bad tag: $tag"; exit 1; }
           echo "value=$tag" >> "$GITHUB_OUTPUT"
 
-      - name: Run disposable guest lifecycle + inventory rows
+      - name: Benchmark harness regression checks
+        run: |
+          scratch="$HOME/.cache/build-targets/omg-benchmark-tests"
+          mkdir -p "$scratch"
+          PYTHONDONTWRITEBYTECODE=1 TMPDIR="$scratch" \
+            python3 -m unittest discover -s tests -p test_benchmark_records.py
+          rmdir "$scratch"
+
+      - name: Run disposable guest lifecycle + read benchmarks + inventory rows
         # inputs is null on schedule/PR: event checks first so those run.
-        # PRs run the fast container tier; nightlies run everything the
+        # PRs run hermetic and container tiers; nightlies run everything the
         # disposable guest can safely do (mutations on, credentials off).
         # The arch input gates dispatch runs (x64 legs skip arm64-only runs).
         if: >-
-          (github.event_name != 'workflow_dispatch' || inputs.distro == '' || inputs.distro == matrix.distro) &&
-          (github.event_name != 'workflow_dispatch' || inputs.arch == '' || inputs.arch == 'x64')
+          (github.event_name != 'workflow_dispatch' || inputs.distro == 'all' || inputs.distro == matrix.distro) &&
+          (github.event_name != 'workflow_dispatch' || inputs.arch == 'all' || inputs.arch == 'x64')
         run: |
-          args=(--distro "${{ matrix.distro }}" --release "${{ steps.tag.outputs.value }}")
+          args=(--distro "${{ matrix.distro }}" --release "${{ steps.tag.outputs.value }}" --benchmark)
           if [[ "${{ github.event_name }}" == 'pull_request' || "${{ inputs.staged }}" == 'true' ]]; then
-            args+=(--staged-dir staged --inventory-tiers container)
+            args+=(--staged-dir staged --inventory-tiers "hermetic,container" --inventory-allow-mutations)
           else
             # No nested-container: guests have no docker-in-guest (yet).
             # Declared-ux rows (self-update-*, daemon-foreground) self-skip.
-            args+=(--inventory-tiers qemu,container,network,pty --inventory-allow-mutations)
+            args+=(--inventory-tiers "hermetic,qemu,container,network,pty" --inventory-allow-mutations)
           fi
           ./scripts/benchmark-qemu.sh "${args[@]}"
 
@@ -455,7 +464,7 @@ jobs:
   guest-arm:
     name: "QEMU guest arm64 (${{ matrix.distro }})"
     concurrency:
-      group: qemu-${{ github.ref }}-${{ github.job }}-${{ matrix.distro }}
+      group: qemu-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'schedule' && 'nightly' || 'interactive' }}-guest-arm-${{ matrix.distro }}
       cancel-in-progress: ${{ github.event_name != 'schedule' }}
     needs: [build-staged-arm, build-staged-ubuntu-arm]
     if: >-
@@ -464,7 +473,7 @@ jobs:
       needs.build-staged-arm.result == 'success' &&
       needs.build-staged-ubuntu-arm.result == 'success'
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 45
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -508,15 +517,15 @@ jobs:
           [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::bad tag: $tag"; exit 1; }
           echo "value=$tag" >> "$GITHUB_OUTPUT"
 
-      - name: Run disposable ARM guest lifecycle + inventory rows
-        # Staged-only legs run the fast container tier, like x64 PR legs.
+      - name: Run disposable ARM guest lifecycle + read benchmarks + inventory rows
+        # Match x64 staged coverage, including the selected CLI inventory.
         if: >-
-          (github.event_name != 'workflow_dispatch' || inputs.distro == '' || inputs.distro == matrix.distro) &&
-          (github.event_name != 'workflow_dispatch' || inputs.arch == '' || inputs.arch == 'arm64')
+          (github.event_name != 'workflow_dispatch' || inputs.distro == 'all' || inputs.distro == matrix.distro) &&
+          (github.event_name != 'workflow_dispatch' || inputs.arch == 'all' || inputs.arch == 'arm64')
         run: |
-          ./scripts/benchmark-qemu.sh --arch aarch64 --distro "${{ matrix.distro }}" \
+          ./scripts/benchmark-qemu.sh --arch aarch64 --distro "${{ matrix.distro }}" --benchmark \
             --release "${{ steps.tag.outputs.value }}" \
-            --staged-dir staged --inventory-tiers container
+            --staged-dir staged --inventory-tiers hermetic,container --inventory-allow-mutations
 
       - name: Upload guest evidence
         if: always()
