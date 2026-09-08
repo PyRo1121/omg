@@ -1262,6 +1262,27 @@ mod tests {
         })
         .await;
         server.abort();
+
+        let frame = response.context("timed out waiting for prewarmed IPC search")??;
+        let (_, payload) = crate::daemon::protocol::split_frame(&frame)?;
+        let response: Response = bitcode::deserialize(payload)?;
+        let Response::Success {
+            id: 1,
+            result: ResponseResult::Search(results),
+        } = response
+        else {
+            anyhow::bail!("prewarmed IPC search must return the matching successful response");
+        };
+        assert_eq!(
+            results.total, 120,
+            "IPC search must report the full inventory"
+        );
+        assert_eq!(
+            results.packages.len(),
+            100,
+            "IPC search must honor its limit"
+        );
+
         for limit in [75, 120] {
             let response = handle_request(
                 Arc::clone(&state),
