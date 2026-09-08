@@ -203,6 +203,48 @@ static DEBIAN_MMAP_INDEX: LazyLock<RwLock<Option<DebianMmapIndex>>> =
 /// FST provides logarithmic complexity for prefix matching vs O(n) full scan
 static DEBIAN_FST_INDEX: LazyLock<RwLock<Option<FstIndex>>> = LazyLock::new(|| RwLock::new(None));
 
+/// Canonical name-to-row identity, independent of timestamps and file names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct FstMappingId([u8; 32]);
+
+fn sorted_fst_entries<'a>(names: impl IntoIterator<Item = (&'a str, u64)>) -> Vec<(String, u64)> {
+    let mut entries: HashMap<String, u64> = HashMap::new();
+    for (name, index) in names {
+        entries
+            .entry(name.to_lowercase())
+            .and_modify(|previous| *previous = (*previous).max(index))
+            .or_insert(index);
+    }
+    let mut entries: Vec<_> = entries.into_iter().collect();
+    entries.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+    entries
+}
+
+impl FstMappingId {
+    fn hash_entry(hash: &mut Sha256, name: &[u8], index: u64) {
+        hash.update((name.len() as u64).to_le_bytes());
+        hash.update(name);
+        hash.update(index.to_le_bytes());
+    }
+
+    fn from_names<'a>(names: impl IntoIterator<Item = (&'a str, u64)>) -> Self {
+        let mut hash = Sha256::new();
+        for (name, index) in sorted_fst_entries(names) {
+            Self::hash_entry(&mut hash, name.as_bytes(), index);
+        }
+        Self(hash.finalize().into())
+    }
+
+    fn from_map(map: &Map<Mmap>) -> Self {
+        let mut hash = Sha256::new();
+        let mut stream = map.stream();
+        while let Some((name, index)) = stream.next() {
+            Self::hash_entry(&mut hash, name, index);
+        }
+        Self(hash.finalize().into())
+    }
+}
+
 /// FST-based search index with TTL-based eviction
 struct FstIndex {
     map: Map<AlignedVec>,
@@ -213,15 +255,8 @@ struct FstIndex {
 }
 
 impl FstIndex {
-    /// The `.gen` sidecar records which index generation this FST file was
-    /// built from. The three search artifacts (.lz4, .mmap, .fst) are renamed
-    /// as a group, so a crash between renames can serve an old FST beside a
-    /// new mmap; readers validate the pair before trusting name->idx mapping.
-    fn generation_sidecar(path: &Path) -> PathBuf {
-        PathBuf::from(format!("{}.gen", path.display()))
-    }
-
-    /// Open an existing FST index
+    /// Open an FST and derive its identity from the actual mapping. Legacy
+    /// `.gen` files are not evidence of which bytes an open descriptor owns.
     fn open(path: &Path) -> Result<Self> {
         let generation_bytes = read_index_snapshot(&Self::generation_sidecar(path), 64)
             .context("FST generation sidecar missing or unreadable")?;
@@ -234,7 +269,7 @@ impl FstIndex {
 
         Ok(Self {
             map,
-            generation,
+            mapping,
             last_accessed: AtomicU64::new(unix_now_secs()),
         })
     }
@@ -609,6 +644,12 @@ fn hydrate_index_cache(
     }
     package_offsets.push(search_buffer.len());
 
+    cache.fst_mapping = Some(FstMappingId::from_names(
+        index
+            .name_to_idx
+            .iter()
+            .map(|(name, index)| (name.as_str(), *index as u64)),
+    ));
     cache.index = Some(index);
     cache.file_mtimes = file_mtimes;
     cache.search_buffer = search_buffer;
@@ -786,43 +827,27 @@ pub fn ensure_index_loaded() -> Result<()> {
         let fst_path = paths::cache_dir().join("debian_index_v8.fst");
         let fst_build_start = std::time::Instant::now();
 
-        let mut lower_name_to_idx: HashMap<String, usize> =
-            HashMap::with_capacity(index.name_to_idx.len());
-        for (name, idx) in &index.name_to_idx {
-            let lower = name.to_lowercase();
-            lower_name_to_idx
-                .entry(lower)
-                .and_modify(|existing_idx| {
-                    if *idx > *existing_idx {
-                        *existing_idx = *idx;
-                    }
-                })
-                .or_insert(*idx);
-        }
-
-        let mut sorted_packages: Vec<(String, usize)> = lower_name_to_idx.into_iter().collect();
-        sorted_packages.sort_by(|a, b| a.0.cmp(&b.0));
+        let sorted_packages = sorted_fst_entries(
+            index
+                .name_to_idx
+                .iter()
+                .map(|(name, index)| (name.as_str(), *index as u64)),
+        );
 
         // Build FST map: lowercased package name -> package index
         let mut fst_builder = fst::MapBuilder::memory();
         for (name, idx) in sorted_packages {
-            if let Err(e) = fst_builder.insert(name.as_bytes(), idx as u64) {
-                tracing::warn!("Failed to insert '{}' into FST: {}", name, e);
-            }
+            fst_builder
+                .insert(name.as_bytes(), idx)
+                .with_context(|| format!("Failed to insert '{name}' into FST"))?;
         }
 
         let fst_bytes = fst_builder
             .into_inner()
             .context("Failed to build FST index")?;
 
-        // Atomic write for FST index. The .gen sidecar is written first so a
-        // crash in between leaves a mismatched pair that load-time validation
-        // rejects (never an fst trusted against the wrong generation).
-        crate::core::safe_ops::atomic_write_file_sync(
-            FstIndex::generation_sidecar(&fst_path),
-            index.updated_at.to_string().as_bytes(),
-        )
-        .context("Failed to write FST generation sidecar")?;
+        // Publish the complete mapping in one rename. Readers fingerprint
+        // its contents rather than trusting separately published metadata.
         let mut temp_fst =
             NamedTempFile::new_in(parent).context("Failed to create temporary FST file")?;
         temp_fst
@@ -915,8 +940,7 @@ fn disk_cache_is_fresh(cache_path: &Path, lists_dir: &Path) -> bool {
     found_package_list
 }
 
-/// Ensure FST index is loaded (if available on disk)
-/// Returns `Ok(())` whether FST is available or not - FST is optional optimization
+/// Load an optional FST only when its mapping matches the current mmap.
 fn ensure_fst_loaded() {
     let fst_path = paths::cache_dir().join("debian_index_v8.fst");
     if !disk_cache_is_fresh(&fst_path, Path::new("/var/lib/apt/lists")) {
@@ -924,41 +948,36 @@ fn ensure_fst_loaded() {
         return;
     }
 
-    // Check if already loaded
+    // Always acquire mmap before FST when holding both locks.
+    let mmap_guard = crate::core::sync::read_cache(&DEBIAN_MMAP_INDEX);
+    let Some(mmap) = mmap_guard.as_ref() else {
+        return;
+    };
     {
         let guard = crate::core::sync::read_cache(&DEBIAN_FST_INDEX);
-        if let Some(ref fst) = *guard {
-            // Clear if expired
-            if fst.is_expired() {
-                drop(guard);
-                let mut write_guard = crate::core::sync::write_cache(&DEBIAN_FST_INDEX);
-                tracing::debug!("Clearing expired FST index (TTL exceeded)");
-                *write_guard = None;
-            } else {
-                fst.touch();
-                return;
-            }
+        if let Some(fst) = guard.as_ref()
+            && !fst.is_expired()
+            && fst.mapping == mmap.fst_mapping
+        {
+            fst.touch();
+            return;
         }
     }
-
-    // Try to load from disk. The FST only targets the same generation as the
-    // mmap when their recorded generations agree; any mismatch is treated as
-    // absent and triggers a rebuild in the regular search path.
-    let mmap_guard = crate::core::sync::read_cache(&DEBIAN_MMAP_INDEX);
-    if let Ok(fst_index) = FstIndex::open(&fst_path)
-        && let Some(ref mmap) = *mmap_guard
-        && fst_index.generation == mmap.generation()
-    {
-        let mut guard = crate::core::sync::write_cache(&DEBIAN_FST_INDEX);
-        *guard = Some(fst_index);
-        tracing::debug!("Loaded FST index from disk");
-    }
+    let candidate = match FstIndex::open(&fst_path) {
+        Ok(fst) if fst.mapping == mmap.fst_mapping => Some(fst),
+        Ok(_) => None,
+        Err(error) => {
+            tracing::debug!(%error, "FST cache rejected; using regular search");
+            None
+        }
+    };
+    *crate::core::sync::write_cache(&DEBIAN_FST_INDEX) = candidate;
 }
 
 /// Ensure the mmap index is loaded from disk (if available).
 ///
-/// This is nearly instant (just a syscall, no decompression) unlike `ensure_index_loaded()`.
-/// Used by the ultra-fast search and update paths to avoid loading the full index.
+/// Validates the archive and fingerprints its name mapping once on open,
+/// without deserializing the full index. Subsequent accesses reuse the mapping.
 #[must_use]
 pub fn ensure_mmap_loaded() -> bool {
     let mmap_path = paths::cache_dir().join("debian_index_v8.mmap");
@@ -1413,31 +1432,26 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
     }
 
     // ULTRA-FAST PATH: FST + mmap (no index loading, no decompression)
-    // This path takes ~5ms vs ~90ms for `ensure_index_loaded()`
-    if !query.is_empty() && !query.contains(':') {
+    if !query.is_empty() && !query.contains(':') && ensure_mmap_loaded() {
         ensure_fst_loaded();
+        let installed_set = installed_names()?;
+        // Retain the exact checked pair through the search. Do not reacquire
+        // either lock after validation, or reverse the mmap -> FST order.
+        let mmap_guard = crate::core::sync::read_cache(&DEBIAN_MMAP_INDEX);
         let fst_guard = crate::core::sync::read_cache(&DEBIAN_FST_INDEX);
-        if let Some(ref fst_index) = *fst_guard
-            && ensure_mmap_loaded()
-            && let Some(ref mmap) = *crate::core::sync::read_cache(&DEBIAN_MMAP_INDEX)
-            && fst_index.generation == mmap.generation()
+        if let Some(mmap) = mmap_guard.as_ref()
+            && let Some(fst_index) = fst_guard.as_ref()
+            && fst_index.mapping == mmap.fst_mapping
         {
-            let fst_index = fst_guard.as_ref().expect("checked is_some() above");
             fst_index.touch();
-            let query_lower = query.to_lowercase();
-            let installed_set = installed_names()?;
-            let mmap_guard = crate::core::sync::read_cache(&DEBIAN_MMAP_INDEX);
-            if let Some(ref mmap) = *mmap_guard {
-                mmap.touch();
-                return Ok(fst_mmap_search(
-                    &fst_index.map,
-                    mmap,
-                    &query_lower,
-                    &installed_set,
-                ));
-            }
+            mmap.touch();
+            return Ok(fst_mmap_search(
+                &fst_index.map,
+                mmap,
+                &query.to_lowercase(),
+                &installed_set,
+            ));
         }
-        drop(fst_guard);
     }
 
     // Repository and installed inventories have independent freshness rules.
@@ -1478,7 +1492,7 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
     // FST search with in-memory index
     let fst_guard = crate::core::sync::read_cache(&DEBIAN_FST_INDEX);
     if let Some(ref fst_index) = *fst_guard
-        && fst_index.generation == index.updated_at
+        && guard.fst_mapping == Some(fst_index.mapping)
     {
         fst_index.touch();
         return Ok(fst_search(
@@ -2537,29 +2551,114 @@ mod tests {
         Ok(())
     }
 
-    /// Wave-8 coherence fix: the FST's recorded generation must match the
-    /// mmap/index generation or the fst->idx mapping is stale.
     #[test]
-    fn fst_index_requires_generation_sidecar() {
-        let temp = tempfile::TempDir::new().unwrap();
-        let fst_path = temp.path().join("debian_index_v8.fst");
-
+    fn fst_rejects_different_mapping_with_the_same_timestamp() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let fst_path = directory.path().join("index.fst");
         let mut builder = fst::MapBuilder::memory();
-        builder.insert(b"bash", 0u64).unwrap();
-        let fst_bytes = builder.into_inner().unwrap();
+        builder.insert("bash", 0)?;
+        builder.insert("zsh", 1)?;
+        fs::write(&fst_path, builder.into_inner()?)?;
+        fs::write(directory.path().join("index.fst.gen"), b"42")?;
+        let fst = FstIndex::open(&fst_path)?;
 
-        // No sidecar: open refuses (unknown generation).
-        std::fs::write(&fst_path, &fst_bytes).unwrap();
-        assert!(
-            FstIndex::open(&fst_path).is_err(),
-            "missing sidecar rejected"
+        let mut index = DebianPackageIndex::new();
+        index.updated_at = 42;
+        for name in ["zsh", "bash"] {
+            index.add_package(parse_paragraph_str(
+                &format!("Package: {name}\nVersion: 1\nArchitecture: amd64\nDescription: shell\n"),
+                "main",
+                "stable",
+                "fixture",
+            )?);
+        }
+        let mmap_path = directory.path().join("index.mmap");
+        fs::write(
+            &mmap_path,
+            rkyv::to_bytes::<rkyv::rancor::Error>(&index)
+                .map_err(|error| anyhow::anyhow!("fixture serialization: {error}"))?,
+        )?;
+        let mapped = DebianMmapIndex::open(&mmap_path)?;
+        let unchecked = fst_search(&fst.map, &index, "ba", &AHashSet::new());
+        assert_eq!(
+            unchecked.first().context("unchecked prefix lookup")?.name,
+            "zsh",
+            "the old timestamp guard admitted the wrong row for a native prefix lookup"
         );
+        // The mmap helper re-resolves names rather than trusting row numbers;
+        // unchanged name sets do not misroute its exact lookup.
+        let mmap_exact = fst_mmap_search(&fst.map, &mapped, "bash", &AHashSet::new());
+        assert_eq!(
+            mmap_exact.first().context("mmap exact lookup")?.name,
+            "bash"
+        );
+        assert_ne!(
+            fst.mapping, mapped.fst_mapping,
+            "same-second indexes with different mappings must not pair"
+        );
+        let mut cache = DebianIndexCache::default();
+        hydrate_index_cache(&mut cache, index, HashMap::new());
+        assert_eq!(cache.fst_mapping, Some(mapped.fst_mapping));
 
-        // Sidecar present: open stores the generation it records.
-        let sidecar = FstIndex::generation_sidecar(&fst_path);
-        crate::core::safe_ops::atomic_write_file_sync(&sidecar, b"42").unwrap();
-        let index = FstIndex::open(&fst_path).expect("valid sidecar");
-        assert_eq!(index.generation, 42);
+        let mut replacement = fst::MapBuilder::memory();
+        replacement.insert("bash", 1)?;
+        replacement.insert("zsh", 0)?;
+        crate::core::safe_ops::atomic_write_file_sync(&fst_path, replacement.into_inner()?)?;
+        let current = FstIndex::open(&fst_path)?;
+        assert_eq!(current.mapping, mapped.fst_mapping);
+        assert_ne!(
+            fst.mapping, current.mapping,
+            "an open old inode keeps its own identity"
+        );
+        assert_eq!(fst.map.get("bash"), Some(0));
+        let results = fst_mmap_search(&current.map, &mapped, "bash", &AHashSet::new());
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "bash");
+        let prefix = fst_search(
+            &current.map,
+            cache.index.as_ref().context("native index")?,
+            "ba",
+            &AHashSet::new(),
+        );
+        assert_eq!(
+            prefix.first().context("validated prefix lookup")?.name,
+            "bash"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn fst_identity_ignores_sidecars_and_rejects_corrupt_contents() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("index.fst");
+        let mut builder = fst::MapBuilder::memory();
+        builder.insert("bash", 0)?;
+        let mut bytes = builder.into_inner()?;
+        fs::write(&path, &bytes)?;
+        let index = FstIndex::open(&path)?;
+        assert_eq!(index.mapping, FstMappingId::from_names([("bash", 0)]));
+        fs::write(
+            directory.path().join("index.fst.gen"),
+            b"untrusted old generation",
+        )?;
+        assert_eq!(FstIndex::open(&path)?.mapping, index.mapping);
+        *bytes.last_mut().context("FST checksum")? ^= 1;
+        let corrupt = directory.path().join("corrupt.fst");
+        fs::write(&corrupt, bytes)?;
+        assert!(FstIndex::open(&corrupt).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn fst_identity_preserves_case_collision_policy_and_ignores_input_order() {
+        let names = [("Bash", 0), ("bash", 1), ("Zsh", 2)];
+        let expected = FstMappingId::from_names([("bash", 1), ("zsh", 2)]);
+        assert_eq!(FstMappingId::from_names(names), expected);
+        assert_eq!(FstMappingId::from_names(names.into_iter().rev()), expected);
+        assert_ne!(
+            FstMappingId::from_names([("bash", 0), ("zsh", 2)]),
+            expected
+        );
     }
 
     /// Serializes every test that mutates process-global `OMG_TEST_MODE`;
