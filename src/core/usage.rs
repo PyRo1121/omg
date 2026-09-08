@@ -482,34 +482,101 @@ fn lock_usage_file() -> Option<std::fs::File> {
 }
 
 fn lock_file_at(lock_path: &std::path::Path) -> Option<std::fs::File> {
-    let lock = match std::fs::OpenOptions::new()
-        .create(true)
-        .read(true)
-        .write(true)
-        .truncate(false)
-        .open(lock_path)
-    {
-        Ok(lock) => lock,
+    match acquire_usage_lock(lock_path) {
+        Ok(lock) => Some(lock),
         Err(error) => {
             tracing::warn!(
-                "Failed to open usage lock {}: skipping this update ({error})",
+                "Failed to acquire usage lock {}: skipping this update ({error:#})",
                 lock_path.display()
             );
-            return None;
+            None
         }
+    }
+}
+
+fn acquire_usage_lock(lock_path: &Path) -> Result<std::fs::File> {
+    use std::os::unix::fs::MetadataExt;
+    use std::path::Component;
+
+    use nix::unistd::{User, fchown};
+    use rustix::fs::{Mode, OFlags, open, openat};
+
+    let original_user = if crate::core::is_root() {
+        std::env::var_os("SUDO_USER")
+            .or_else(|| std::env::var_os("DOAS_USER"))
+            .map(|name| {
+                let name = name.to_str().context("Original user name is not UTF-8")?;
+                User::from_name(name)
+                    .context("Failed to resolve original user")?
+                    .context("Original user account does not exist")
+            })
+            .transpose()?
+    } else {
+        None
     };
-    // Same root-owned-lock hazard as history.lock (#285): re-own best-effort.
-    if let Err(error) = crate::core::safe_ops::restore_original_user_ownership(lock_path) {
-        tracing::warn!("Failed to restore usage lock ownership: {error:#}");
+
+    let parent = lock_path.parent().context("Usage lock has no parent")?;
+    let name = lock_path
+        .file_name()
+        .context("Usage lock has no filename")?;
+    let directory_flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+    let mut directory = open(
+        if parent.is_absolute() { "/" } else { "." },
+        directory_flags,
+        Mode::empty(),
+    )?;
+    for component in parent.components() {
+        match component {
+            Component::RootDir | Component::CurDir => {}
+            Component::Normal(name) => {
+                directory = openat(&directory, name, directory_flags, Mode::empty())?;
+            }
+            Component::ParentDir | Component::Prefix(_) => {
+                anyhow::bail!("Usage lock path must not traverse parent directories");
+            }
+        }
     }
-    if let Err(error) = lock.lock() {
-        tracing::warn!(
-            "Failed to lock usage stats {}: skipping this update ({error})",
-            lock_path.display()
+    let directory = std::fs::File::from(directory);
+    if let Some(account) = &original_user {
+        let metadata = directory.metadata()?;
+        anyhow::ensure!(
+            metadata.uid() == account.uid.as_raw() && metadata.mode() & 0o022 == 0,
+            "Usage lock directory must be owned by the original user and not writable by others"
         );
-        return None;
     }
-    Some(lock)
+
+    // Keep lookup anchored to the opened directory even if an ancestor is replaced.
+    let flags = OFlags::RDWR | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC;
+    let (lock, created) = match openat(
+        &directory,
+        name,
+        flags | OFlags::CREATE | OFlags::EXCL,
+        Mode::RUSR | Mode::WUSR,
+    ) {
+        Ok(lock) => (lock, true),
+        Err(rustix::io::Errno::EXIST) => (openat(&directory, name, flags, Mode::empty())?, false),
+        Err(error) => return Err(error.into()),
+    };
+    let lock = std::fs::File::from(lock);
+    let metadata = lock.metadata()?;
+    anyhow::ensure!(metadata.is_file(), "Usage lock is not a regular file");
+    anyhow::ensure!(
+        metadata.nlink() == 1,
+        "Usage lock must have exactly one link"
+    );
+    if let Some(account) = original_user {
+        if created {
+            // Existing inodes must never be handed to another user, even with one link.
+            fchown(&lock, Some(account.uid), Some(account.gid))?;
+        } else {
+            anyhow::ensure!(
+                metadata.uid() == account.uid.as_raw(),
+                "Existing usage lock is not owned by the original user"
+            );
+        }
+    }
+    lock.lock().context("Failed to lock usage stats")?;
+    Ok(lock)
 }
 
 /// Run a load-modify-save cycle while holding the usage file lock.
@@ -708,6 +775,61 @@ pub async fn sync_usage_now() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn usage_lock_rejects_symlink_without_changing_target() {
+        use std::os::unix::fs::{MetadataExt, symlink};
+
+        let directory = tempfile::tempdir().unwrap();
+        let target = directory.path().join("sentinel");
+        let path = directory.path().join("usage.lock");
+        std::fs::write(&target, b"unchanged").unwrap();
+        let before = std::fs::metadata(&target).unwrap();
+        symlink(&target, &path).unwrap();
+
+        assert!(lock_file_at(&path).is_none());
+        let after = std::fs::metadata(&target).unwrap();
+        assert_eq!((before.uid(), before.gid()), (after.uid(), after.gid()));
+        assert_eq!(std::fs::read(&target).unwrap(), b"unchanged");
+    }
+
+    #[test]
+    fn usage_lock_rejects_symlinked_ancestor() {
+        let directory = tempfile::tempdir().unwrap();
+        let target = directory.path().join("state");
+        std::fs::create_dir(&target).unwrap();
+        let link = directory.path().join("alias");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        assert!(lock_file_at(&link.join("usage.lock")).is_none());
+        assert!(!target.join("usage.lock").exists());
+    }
+
+    #[test]
+    fn usage_lock_rejects_hardlinks_and_special_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let target = directory.path().join("sentinel");
+        let path = directory.path().join("usage.lock");
+        std::fs::write(&target, b"unchanged").unwrap();
+        std::fs::hard_link(&target, &path).unwrap();
+        assert!(lock_file_at(&path).is_none());
+        assert_eq!(std::fs::read(&target).unwrap(), b"unchanged");
+
+        let fifo = directory.path().join("fifo");
+        nix::unistd::mkfifo(&fifo, nix::sys::stat::Mode::S_IRWXU).unwrap();
+        assert!(lock_file_at(&fifo).is_none());
+        assert!(lock_file_at(directory.path()).is_none());
+    }
+
+    #[test]
+    fn usage_lock_reopens_without_truncation() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("usage.lock");
+        drop(lock_file_at(&path).expect("new usage lock"));
+        std::fs::write(&path, b"unchanged").unwrap();
+        let lock = lock_file_at(&path).expect("existing usage lock");
+        assert_eq!(std::fs::read(&path).unwrap(), b"unchanged");
+        drop(lock);
+    }
 
     #[test]
     fn usage_sync_refuses_to_post_when_telemetry_is_disabled() {
