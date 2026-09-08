@@ -254,7 +254,7 @@ fn check_debian_infra() -> usize {
         && std::fs::read_dir(lists).is_ok_and(|entries| {
             entries
                 .filter_map(Result::ok)
-                .any(|e| e.file_name().to_string_lossy().ends_with("_Packages"))
+                .any(|e| apt_lists_entry_has_index(&e.file_name().to_string_lossy()))
         });
     if has_indexes {
         println!(
@@ -270,6 +270,20 @@ fn check_debian_infra() -> usize {
     }
 
     issues
+}
+
+/// Whether an APT lists entry carries a package index. Modern APT acquires
+/// compressed indexes (`_Packages.lz4`, `.gz`, `.xz` depending on
+/// server/config — see #299), so the compression suffix must be stripped
+/// before testing the `_Packages` stem. `InRelease`/`Release` files alone
+/// are not indexes.
+fn apt_lists_entry_has_index(file_name: &str) -> bool {
+    let stem = file_name
+        .strip_suffix(".lz4")
+        .or_else(|| file_name.strip_suffix(".gz"))
+        .or_else(|| file_name.strip_suffix(".xz"))
+        .unwrap_or(file_name);
+    stem.ends_with("_Packages")
 }
 
 /// Check the Arch Linux infrastructure the ALPM backend depends on:
@@ -828,6 +842,23 @@ pub fn enable_turbo_mode() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn apt_index_detection_accepts_plain_and_compressed_entries() {
+        // Citations: #299 evidence — bookworm lists carry *_Packages.lz4 +
+        // InRelease; .gz/.xz depend on server/config.
+        assert!(apt_lists_entry_has_index(
+            "deb.debian.org_debian_dists_bookworm_main_binary-amd64_Packages"
+        ));
+        assert!(apt_lists_entry_has_index(
+            "deb.debian.org_debian_dists_bookworm_main_binary-amd64_Packages.lz4"
+        ));
+        assert!(apt_lists_entry_has_index("mirror_Packages.gz"));
+        assert!(apt_lists_entry_has_index("mirror_Packages.xz"));
+        assert!(!apt_lists_entry_has_index("deb.debian.org_InRelease"));
+        assert!(!apt_lists_entry_has_index("lock"));
+        assert!(!apt_lists_entry_has_index("partial"));
+    }
 
     #[test]
     fn non_success_non_redirect_mirror_status_is_an_issue() {
