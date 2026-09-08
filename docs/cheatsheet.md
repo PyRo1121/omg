@@ -59,8 +59,6 @@ channel = "stable"
 
 Follow [shell integration](./shell-integration.md) for your shell's hook and completions. Directory-change activation selects installed versions; it is not a dependency installer.
 
-Git hook setup is separate from shell integration: `omg hooks install` installs the generated Git hooks. `omg hooks uninstall` removes only exact, unmodified current templates; custom or modified hooks are preserved.
-
 ## Environment records
 
 ```bash
