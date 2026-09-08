@@ -4,7 +4,7 @@
 # open-pr means locally verified, not merged or deployed. unreviewed is not a dismissal.
 # Duplicate-looking entries keep their original IDs until shared remediation is verified.
 finding_id	severity	status	evidence	path	title
-csf_6682f6f1638c0d6056d4ece2	critical	open-pr	PR #343; two baseline failures; 15 usage tests normally and in user namespace; Clippy passed; lock scope only	src/core/usage.rs	Privileged usage tracking can transfer ownership of an arbitrary root file through a lock symlink
+csf_6682f6f1638c0d6056d4ece2	critical	already-fixed-verified	fcbd97fa / PR #343; merged on main; original local verification retained (15 usage tests normally and in user namespace; Clippy passed; lock scope only)	src/core/usage.rs	Privileged usage tracking can transfer ownership of an arbitrary root file through a lock symlink
 csf_c17f3813a5b888adbd46e35d	high	unreviewed	Compare current code and existing fixes before reproduction	install.sh	Entering an untrusted repository can execute code or poison the shell through automatic mise environment hooks
 csf_60dbbe3ec5a31adbd18032b4	high	unreviewed	Compare current code and existing fixes before reproduction	src/core/privilege.rs	Preserved package-manager configuration can turn constrained OMG sudo access into root command execution
 csf_c1e221da0795c5232f0288a4	high	unreviewed	Compare current code and existing fixes before reproduction	src/package_managers/aur/client.rs	Mutable AUR archives can be substituted before root installation because outputs are not bound to the reviewed build
@@ -12,7 +12,7 @@ csf_faa0b91fc9ff649155b8e8ce	high	unreviewed	Compare current code and existing f
 csf_c02b9be84d08ac7b84fc7f77	high	unreviewed	Compare current code and existing fixes before reproduction	src/package_managers/apt.rs	Privileged Debian preflight maps an invoking-user-writable rkyv archive and uses unchecked references
 csf_2659d8b9d0f37b0042f47ecf	high	unreviewed	Compare current code and existing fixes before reproduction	docs/installation.md	Documented manual installation bypasses mandatory release provenance verification
 csf_2f611a250573ac51885cb808	high	unreviewed	Compare current code and existing fixes before reproduction	src/core/security/policy.rs	`require_pgp` treats repository origin as signature proof for prepared ALPM packages
-csf_698b520eaa50d63fab591260	high	open-pr	PR #344; baseline failure; 18 privilege tests and two Debian snapshot tests; Clippy passed	src/cli/args.rs	Global CLI flags bypass the pre-sudo immutable archive snapshot
+csf_698b520eaa50d63fab591260	high	already-fixed-verified	ce1b58d2 / PR #344; merged on main; original local verification retained (18 privilege tests and two Debian snapshot tests; Clippy passed)	src/cli/args.rs	Global CLI flags bypass the pre-sudo immutable archive snapshot
 csf_5eef98bc6a0d1bd2cc5e4e70	high	unreviewed	Compare current code and existing fixes before reproduction	src/core/safe_ops.rs	Elevated state writes can be raced to transfer ownership of root files
 csf_b6e85633f0f14096aa5190b6	high	unreviewed	Compare current code and existing fixes before reproduction	src/package_managers/aur/client.rs	AUR approval hides executable install-hook and auxiliary-file contents
 csf_640a559599992bb4a020f8d2	high	unreviewed	Compare current code and existing fixes before reproduction	src/bin/omg.rs	Invoking OMG through sudo can replace the enforced package policy
@@ -38,7 +38,7 @@ csf_877c73f206e7000bd0ee357f	high	unreviewed	Compare current code and existing f
 csf_b3455aab467df36b0676bae5	high	unreviewed	Compare current code and existing fixes before reproduction	src/package_managers/aur/client.rs	Mutable AUR archives can be substituted before root installation because outputs are not bound to the reviewed build
 csf_603c0abace6281c6d9b67d53	high	unreviewed	Compare current code and existing fixes before reproduction	src/package_managers/aur/client.rs	Mutable AUR archives can be substituted before root installation because outputs are not bound to the reviewed build
 csf_c5aa4548faeafa36cb2210ab	high	unreviewed	Compare current code and existing fixes before reproduction	src/package_managers/aur/client.rs	AUR’s shared build cache can substitute attacker-authored package payloads for reviewed packages
-csf_524ffdc3b3669e4d2846fd9b	high	open-pr	PR #345; inherited-environment subprocess failed before fix; 17 privilege tests; Clippy passed	src/core/privilege.rs	Privileged APT operations inherit attacker-controlled APT configuration
+csf_524ffdc3b3669e4d2846fd9b	high	already-fixed-verified	35c08986 / PR #345; merged on main; original local verification retained (17 privilege tests; Clippy passed)	src/core/privilege.rs	Privileged APT operations inherit attacker-controlled APT configuration
 csf_136559e6ad869b5022c637c6	high	unreviewed	Compare current code and existing fixes before reproduction	src/hooks/mod.rs	Entering an untrusted repository can execute code through automatic mise environment activation
 csf_d45baa7aabb5c3c82a6f1101	high	unreviewed	Compare current code and existing fixes before reproduction	src/config/mise_env.rs	Entering an untrusted repository can execute code through automatic hook environment imports
 csf_fdd4999c478d30eef01128fe	low	unreviewed	Compare current code and existing fixes before reproduction	src/core/paths.rs	Status command reads an unvalidated environment-selected cache file
