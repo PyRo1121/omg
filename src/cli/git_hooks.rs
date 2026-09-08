@@ -7,6 +7,7 @@
 
 use anyhow::{Context, Result};
 use std::fs;
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
 use crate::cli::style;
@@ -103,12 +104,49 @@ fn get_hooks_dir() -> Result<PathBuf> {
 }
 
 fn read_hook_file(path: &Path) -> Result<Option<String>> {
-    match fs::read_to_string(path) {
-        Ok(content) => Ok(Some(content)),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+    const MAX_HOOK_BYTES: u64 = 64 * 1024;
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK);
+    }
+    let file = match options.open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => {
-            Err(error).with_context(|| format!("Failed to read git hook {}", path.display()))
+            return Err(error)
+                .with_context(|| format!("Failed to read git hook {}", path.display()));
         }
+    };
+    let metadata = file.metadata()?;
+    anyhow::ensure!(
+        metadata.is_file(),
+        "Git hook is not a regular file: {}",
+        path.display()
+    );
+    anyhow::ensure!(
+        metadata.len() <= MAX_HOOK_BYTES,
+        "Git hook exceeds inspection limit: {}",
+        path.display()
+    );
+    let mut content = String::new();
+    file.take(MAX_HOOK_BYTES + 1).read_to_string(&mut content)?;
+    anyhow::ensure!(
+        content.len() as u64 <= MAX_HOOK_BYTES,
+        "Git hook exceeds inspection limit: {}",
+        path.display()
+    );
+    Ok(Some(content))
+}
+
+fn is_generated_hook(name: &str, content: &str) -> bool {
+    match name {
+        "pre-commit" => content == PRE_COMMIT_HOOK,
+        "post-checkout" => content == POST_CHECKOUT_HOOK,
+        "post-merge" => content == POST_MERGE_HOOK,
+        _ => false,
     }
 }
 
@@ -134,7 +172,7 @@ pub fn install(force: bool) -> Result<()> {
         // Check if hook already exists
         if !force {
             match read_hook_file(&hook_path)? {
-                Some(existing) if existing.contains("# OMG") => {
+                Some(existing) if existing == content => {
                     println!("  {} {} (already installed)", style::dim("•"), name);
                     continue;
                 }
@@ -212,9 +250,11 @@ pub fn install(force: bool) -> Result<()> {
 
 /// Uninstall Git hooks
 pub fn uninstall() -> Result<()> {
-    println!("{} Uninstalling Git hooks...\n", style::header("OMG"));
+    uninstall_from(&get_hooks_dir()?)
+}
 
-    let hooks_dir = get_hooks_dir()?;
+fn uninstall_from(hooks_dir: &Path) -> Result<()> {
+    println!("{} Uninstalling Git hooks...\n", style::header("OMG"));
     let hooks = ["pre-commit", "post-checkout", "post-merge"];
 
     let mut removed = 0;
@@ -227,9 +267,9 @@ pub fn uninstall() -> Result<()> {
                 println!("  {} {} (not installed)", style::dim("•"), name);
                 continue;
             }
-            Some(content) if !content.contains("# OMG") => {
+            Some(content) if !is_generated_hook(name, &content) => {
                 println!(
-                    "  {} {} (not an OMG hook, skipping)",
+                    "  {} {} (not an unmodified current OMG hook, skipping)",
                     style::warning("⚠"),
                     name
                 );
@@ -272,12 +312,12 @@ pub fn status() -> Result<()> {
             None => {
                 println!("  {} {} - not installed", style::dim("○"), name);
             }
-            Some(content) if content.contains("# OMG") => {
+            Some(content) if is_generated_hook(name, &content) => {
                 println!("  {} {} - installed (OMG)", style::success("●"), name);
             }
             Some(_) => {
                 println!(
-                    "  {} {} - installed (custom, not OMG)",
+                    "  {} {} - installed (unrecognized or modified)",
                     style::warning("●"),
                     name
                 );
@@ -339,6 +379,79 @@ pub fn run_hook(hook_name: &str) -> Result<()> {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn uninstall_preserves_custom_hooks_with_omg_markers() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let fixtures = [
+            (
+                "pre-commit",
+                format!("{PRE_COMMIT_HOOK}\n# Custom automation\ncustom_check\n"),
+            ),
+            (
+                "post-checkout",
+                "#!/bin/sh\n# OMG integration notes\ncustom_check\n".to_string(),
+            ),
+            ("post-merge", PRE_COMMIT_HOOK.to_string()),
+        ];
+        for (name, content) in &fixtures {
+            fs::write(directory.path().join(name), content)?;
+        }
+        uninstall_from(directory.path())?;
+        for (name, content) in fixtures {
+            assert_eq!(fs::read_to_string(directory.path().join(name))?, content);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn uninstall_removes_exact_generated_hooks_only() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        for (name, content) in [
+            ("pre-commit", PRE_COMMIT_HOOK),
+            ("post-checkout", POST_CHECKOUT_HOOK),
+            ("post-merge", POST_MERGE_HOOK),
+        ] {
+            fs::write(directory.path().join(name), content)?;
+        }
+        let unrelated = directory.path().join("pre-push");
+        fs::write(&unrelated, "custom automation")?;
+        uninstall_from(directory.path())?;
+        for name in MANAGED_HOOKS {
+            assert!(!directory.path().join(name).exists());
+        }
+        assert_eq!(fs::read_to_string(unrelated)?, "custom automation");
+        uninstall_from(directory.path())?;
+        Ok(())
+    }
+
+    #[test]
+    fn hook_inspection_rejects_oversized_files() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("pre-commit");
+        fs::File::create(&path)?.set_len(65 * 1024)?;
+        assert!(uninstall_from(directory.path()).is_err());
+        assert_eq!(fs::metadata(path)?.len(), 65 * 1024);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn uninstall_preserves_symlinks_and_special_files() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let target = directory.path().join("custom-managed-hook");
+        fs::write(&target, PRE_COMMIT_HOOK)?;
+        let path = directory.path().join("pre-commit");
+        std::os::unix::fs::symlink(&target, &path)?;
+        assert!(uninstall_from(directory.path()).is_err());
+        assert!(fs::symlink_metadata(&path)?.file_type().is_symlink());
+        assert_eq!(fs::read_to_string(target)?, PRE_COMMIT_HOOK);
+        fs::remove_file(&path)?;
+        nix::unistd::mkfifo(&path, nix::sys::stat::Mode::S_IRWXU)?;
+        assert!(uninstall_from(directory.path()).is_err());
+        assert!(fs::symlink_metadata(path).is_ok());
+        Ok(())
+    }
 
     fn git(cwd: &Path, args: &[&str]) {
         let status = std::process::Command::new("git")

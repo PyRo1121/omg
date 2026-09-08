@@ -101,6 +101,7 @@ pub struct PackageCache {
     info_miss_cache: Cache<String, bool>,
     /// Maximum cache size
     max_size: usize,
+    status_ttl: Duration,
     /// System status cache - uses &'static str keys to avoid allocation
     system_status: Cache<&'static str, Arc<StatusResult>>,
     /// Explicit package list cache - uses &'static str keys to avoid allocation
@@ -135,10 +136,15 @@ impl PackageCache {
             detailed_cache: build_detailed_cache(byte_capacity, ttl),
             info_miss_cache: build_cache(capacity, ttl),
             max_size,
+            status_ttl,
             system_status: build_cache(1, status_ttl),
             explicit_packages: build_cache(1, status_ttl),
             explicit_count: build_cache(1, status_ttl),
         }
+    }
+
+    pub(super) fn status_ttl(&self) -> Duration {
+        self.status_ttl
     }
 
     /// Get cached system status (Arc clone is cheap - just pointer copy)

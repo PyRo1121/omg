@@ -1,228 +1,48 @@
 ---
-title: Introduction
+title: OMG documentation
 sidebar_position: 1
-description: The complete guide to the fastest unified package manager
+description: Manage system packages, project runtimes, and environment records
 ---
 
-# OMG Documentation
+# OMG documentation
 
-## What Is OMG
+OMG combines system package backends, project runtime selection, and task execution in one Rust CLI. It is alpha software. Keep your native package tools available and use recoverable machines for package mutations.
 
-OMG is a unified package manager and runtime version manager. It replaces pacman, yay, nvm, pyenv, rustup, rbenv, and jenv with one tool.
+**[Install OMG](./installation.md), then [run a project task](./quickstart.md).** The quickstart selects a runtime without changing system packages.
 
----
+## Choose a workflow
 
-## One Tool. Everything You Need
+- [Packages](./packages.md), [package search](./package-search.md), and [AUR](./aur.md).
+- [Runtimes](./runtimes.md) and [shell integration](./shell-integration.md).
+- [Task runner](./task-runner.md) and [containers](./containers.md).
+- [Environment and team records](./team.md), [workflows](./workflows.md), and [integrations](./integrations.md).
+- [Security evidence](./security.md) and [enterprise report limitations](./enterprise.md).
+- [Terminal dashboard](./tui.md), [history](./history.md), and [troubleshooting](./troubleshooting.md).
 
-```bash
-omg install some-aur-package   # System + AUR packages
-omg install ripgrep            # Works on supported Linux distributions, WSL, and macOS
-omg use node 20                # Node.js
-omg use python 3.12            # Python
-omg use rust stable            # Rust
-omg use ruby 3.2               # Ruby
-omg use java 21                # Java
-```
+## Look up a command or setting
 
-Same syntax. Same tool. Same config. **And it's 12-24x faster than pacman.**
+- [CLI reference](./cli.md).
+- [Cheatsheet](./cheatsheet.md).
+- [Configuration](./configuration.md).
+- [FAQ](./faq.md).
+- [Migration from yay](./migration/from-yay.md).
 
----
+## Understand the boundaries
 
-## Why Developers Switch to OMG
+Release targets are Linux x86_64 for Arch, Debian, Ubuntu, and Fedora, plus macOS ARM64. Windows use is through WSL, not a native Windows backend. An available backend does not imply equal command coverage. See [installation](./installation.md) for artifact-specific limitations.
 
-### It's Fast. Really Fast
+Environment capture records inventory. Sync shares a lockfile and checks drift; it does not reconstruct identical machines. Security exports are plaintext evidence inputs, not compliance certifications. SLSA-named artifact checks do not establish SLSA build levels. These distinctions are documented in [security](./security.md) and [team workflows](./team.md).
 
-| Operation | OMG | pacman/yay | How much faster |
-| ----------- | ----- | ------------ | ----------------- |
-| Package search | 5-11ms | 133ms | **12-24x** |
-| Package info | 3-6ms | 138ms | **21-38x** |
-| List installed | <2ms | 14ms | **7-14x** |
+Performance depends on the operation, backend, query, and cache state. Read [benchmark methodology and raw evidence](../benchmarks/README.md) rather than treating local measurements as universal speedups.
 
-**Zero C Dependencies:** OMG uses a pure Rust stack for maximum performance and portability, including `redb` for metadata storage and `zlib-rs`/`ruzstd` for fast decompression.
+## Operate and contribute
 
-On Debian/Ubuntu, the gap is larger: **59-483x faster** than apt-cache.
+- [Architecture](./architecture.md), [daemon](./daemon.md), [IPC](./ipc.md), and [cache](./cache.md).
+- [Performance investigation](./performance-tips.md).
+- [Release operations](./release-operations.md) and [release readiness](./release-readiness.md).
+- [Local QEMU checks](./qemu-local.md), [macOS QEMU notes](./qemu-macos.md), and [QA loop](./qa-loop.md).
+- [Contributing](../CONTRIBUTING.md) and [changelog](./changelog.md).
 
-This isn't a benchmark gimmick. OMG uses a persistent daemon with an in-memory package index. Your searches return before your finger leaves the Enter key.
+Historical changelogs, dated investigations, and audit reports describe their recorded state, not current feature guarantees.
 
-### It Eliminates "Works on My Machine"
-
-```bash
-# Capture your entire environment
-omg env capture
-
-# Commit omg.lock to your repo
-git add omg.lock && git commit -m "Lock environment"
-
-# Teammates verify their machine matches the lock
-omg env check
-# (to restore a shared environment from a Gist: omg env sync <gist-url>)
-```
-
-No more "what version of Node are you running?" No more "did you install the dependencies?" Everyone has the exact same environment.
-
-### It Has Enterprise Security Built In
-
-Most developers bolt security on as an afterthought. OMG has it built in:
-
-- **Vulnerability scanning** — Know about CVEs before they bite you
-- **SBOM generation** — CycloneDX 1.5 format for compliance requirements
-- **Secret scanning** — Catch leaked API keys and credentials
-- **Audit logging** — Hash-chained local logs with explicit authenticity limits
-- **PGP verification** — Verify package signatures automatically
-
-### It Runs Your Tasks Intelligently
-
-```bash
-omg run dev      # Detects priority: Rust > Node > Python
-omg run test     # Ambiguity? Interactive prompt asks your preference
-omg run build --all # Run build script in EVERY detected ecosystem
-```
-
-One command works across all your projects, now with a smart priority hierarchy and interactive ambiguity resolution.
-
-### Stay Up to Date
-
-```bash
-omg self-update  # Updates OMG with a progress bar
-```
-
-Never miss an improvement with the atomic self-updater.
-
----
-
-## Who Is OMG For?
-
-### Individual Developers
-
-Stop wasting time switching between tools. Stop waiting for slow package searches. Stop debugging environment issues. Just get your work done.
-
-### Teams
-
-Share your exact environment through `omg.lock`. Detect when teammates drift from the baseline. Onboard new developers in minutes instead of hours.
-
-### DevOps & Platform Engineers
-
-Generate SBOMs for compliance. Scan for vulnerabilities in CI. Create reproducible builds. Enforce security policies across your organization.
-
-### Enterprises
-
-Fleet management across thousands of machines. Hierarchical policy enforcement. Self-hosted registries for air-gapped environments. SOC2/ISO27001/FedRAMP compliance evidence export.
-
----
-
-## What Can OMG Do?
-
-### Package Management
-
-Search, install, update, and remove system packages from official repositories and AUR. Handles dependencies automatically. Shows security grades for every package.
-
-### Runtime Version Management
-
-Install and switch between versions of Node.js, Python, Rust, Go, Ruby, Java, Bun, and Pi. Detects `.nvmrc`, `.python-version`, and similar files automatically; unsupported runtimes fail explicitly.
-
-### Environment Synchronization
-
-Capture your complete environment to a lockfile. Share it with teammates. Detect drift. Sync instantly. Never debug "works on my machine" again.
-
-### Security & Compliance
-
-Scan for vulnerabilities. Generate SBOMs. Detect leaked secrets. Verify package signatures. Maintain hash-chained local audit logs. Export compliance evidence.
-
-### Task Running
-
-Run project tasks with automatic runtime detection. Works with npm, Cargo, Make, Go, Python, and more. One command, any project.
-
-### Container Integration
-
-Generate Dockerfiles from your project. Run dev shells in containers. Build images. Integrate with Docker and Podman.
-
-### Interactive Dashboard
-
-Full-screen TUI showing system status, packages, runtimes, security alerts, and activity. Real-time monitoring at your fingertips.
-
----
-
-## Getting Started
-
-### Install OMG (30 seconds)
-
-```bash
-curl -fsSL https://omg.latham.cloud/install.sh | bash
-```
-
-### Set Up Your Shell (10 seconds)
-
-```bash
-# Add to ~/.zshrc (or ~/.bashrc)
-eval "$(omg hook zsh)"
-```
-
-### Start Using It (immediately)
-
-```bash
-omg search firefox          # Search packages
-omg install neovim          # Install packages
-omg use node 20             # Switch to Node.js 20
-omg run dev                 # Run your project
-```
-
-**[Full Quick Start Guide →](./quickstart.md)**
-
----
-
-## Documentation
-
-### Getting Started
-
-- **[Quick Start](./quickstart.md)** — Install and run your first commands
-- **[CLI Reference](./cli.md)** — Every command explained
-- **[Configuration](./configuration.md)** — Customize OMG for your workflow
-
-### Core Features
-
-- **[Package Management](./packages.md)** — Search, install, update, remove
-- **[Runtime Management](./runtimes.md)** — Node, Python, Rust, Go, Ruby, Java, Bun
-- **[Shell Integration](./shell-integration.md)** — Hooks, completions, PATH management
-- **[Task Runner](./task-runner.md)** — Unified task execution with smart detection
-- **[Enterprise & Fleet](./enterprise.md)** — Fleet control and compliance at scale
-
-### Advanced Features
-
-- **[Security & Compliance](./security.md)** — Vulnerability scanning, SBOM, audit logs
-- **[Team Collaboration](./team.md)** — Environment lockfiles, drift detection
-- **[Container Support](./containers.md)** — Docker/Podman integration
-- **[TUI Dashboard](./tui.md)** — Interactive terminal dashboard
-
-### Help & Resources
-
-- **[FAQ](./faq.md)** — Frequently asked questions (start here!)
-- **[Cheat Sheet](./cheatsheet.md)** — Quick reference for all commands (print this!)
-- **[Troubleshooting](./troubleshooting.md)** — Common issues and fixes
-- **[Performance Tips](./performance-tips.md)** — Optimization guide for maximum speed
-- **[Integrations](./integrations.md)** — Use OMG with fzf, ripgrep, VS Code, CI/CD, and more
-
-### Deep Dives
-
-- **[Architecture](./architecture.md)** — How OMG works under the hood
-- **[Daemon Internals](./daemon.md)** — The secret to OMG's speed
-
-### Contributing
-
-- **[Contributing Guide](../CONTRIBUTING.md)** — How to contribute to OMG development
-
----
-
-## Support
-
-- **Issues**: [github.com/PyRo1121/omg/issues](https://github.com/PyRo1121/omg/issues)
-- **Discussions**: [github.com/PyRo1121/omg/discussions](https://github.com/PyRo1121/omg/discussions)
-
----
-
-## License
-
-OMG is free and open-source software licensed under the [MIT License](../LICENSE).
-
----
-
-**Ready to stop juggling tools?** [Get started in 5 minutes →](./quickstart.md)
+[Report a bug](https://github.com/PyRo1121/omg/issues) with your version, distribution, command, and redacted output. Report vulnerabilities privately using [SECURITY.md](../SECURITY.md).

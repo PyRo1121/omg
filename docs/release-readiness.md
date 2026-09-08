@@ -1,6 +1,6 @@
 # Release Readiness Checklist
 
-Use this checklist before tagging a release to keep builds reproducible and platform coverage complete.
+Use this checklist before tagging a release. A successful build does not establish runtime coverage, reproducibility of every binary byte, or platform parity.
 
 ## 1) Local Quality Gates
 
@@ -43,7 +43,7 @@ cargo clippy --all-targets --no-default-features --features macos,license --lock
 
 - Quick gate passes (`fmt`, portable `clippy`, `check`, portable tests)
 - Linux matrix passes (Arch, Debian, Fedora)
-- Native macOS job passes; WSL is covered by the matching Linux distribution job
+- Native macOS job passes. Linux jobs exercise the distribution backend, not WSL integration; verify WSL separately before claiming coverage
 - Coverage job completes and uploads merged report
 
 ## 5) Ship Criteria
@@ -52,3 +52,8 @@ cargo clippy --all-targets --no-default-features --features macos,license --lock
 - No regressions in critical tests (`e2e_package_operations`, daemon cache/lifecycle)
 - README and CONTRIBUTING reflect current Rust requirement (1.95.0+)
 - Release artifacts build successfully on all target platforms
+- Each published archive passes the selected smoke cases; retain artifact hashes and failures
+- Daemon-dependent commands have a matching `omgd` binary in the tested installation
+- Archive checksums and tag/workflow-bound attestations verify
+- Generated release SBOM is present and the generation step leaves `Cargo.lock` unchanged
+- Public docs distinguish local candidate evidence from published-artifact results and make no SLSA-level or compliance-certification claim

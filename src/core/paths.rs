@@ -50,6 +50,10 @@ pub fn reset_test_overrides() {
 
 #[inline]
 fn env_path(var: &str) -> Option<PathBuf> {
+    // Direct sudo and library callers do not pass through the child-env scrub.
+    if crate::core::is_root() && var.starts_with("OMG_PACMAN_") {
+        return None;
+    }
     std::env::var_os(var)
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
@@ -223,7 +227,7 @@ fn pacman_root_overridden() -> bool {
     if overridden_pacman_root().is_some() {
         return true;
     }
-    std::env::var_os("OMG_PACMAN_ROOT").is_some_and(|value| !value.is_empty())
+    env_path("OMG_PACMAN_ROOT").is_some()
 }
 
 /// Pacman root directory (default: /). Honors [`set_test_overrides`] in test
@@ -607,6 +611,36 @@ pub fn test_mode() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pacman_environment_overrides_cannot_control_root_paths() {
+        let overrides = [
+            "OMG_PACMAN_CONF",
+            "OMG_PACMAN_ROOT",
+            "OMG_PACMAN_DB_DIR",
+            "OMG_PACMAN_SYNC_DIR",
+            "OMG_PACMAN_LOCAL_DIR",
+            "OMG_PACMAN_CACHE_DIR",
+            "OMG_PACMAN_CACHE_ROOT_DIR",
+            "OMG_PACMAN_MIRRORLIST",
+        ];
+        let variables = overrides.map(|name| (name, Some("/untrusted/pacman")));
+        temp_env::with_vars(variables, || {
+            for name in overrides {
+                if crate::core::is_root() {
+                    assert!(env_path(name).is_none(), "root accepted {name}");
+                } else {
+                    assert_eq!(env_path(name), Some(PathBuf::from("/untrusted/pacman")));
+                }
+            }
+            if crate::core::is_root() {
+                assert_eq!(pacman_conf_path(), PathBuf::from("/etc/pacman.conf"));
+                assert_eq!(pacman_root(), PathBuf::from("/"));
+                #[cfg(feature = "arch")]
+                assert!(!pacman_root_overridden());
+            }
+        });
+    }
 
     #[test]
     fn test_mode_requires_debug_build_and_explicit_truthy_value() {

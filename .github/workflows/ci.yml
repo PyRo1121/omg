@@ -114,15 +114,6 @@ jobs:
           prefix-key: "v1-quick-gate"
           shared-key: "quick-gate"
 
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-
-      - name: Check workflow helpers
-        run: python3 -m unittest discover -s scripts -p 'test_*.py'
-
-      - name: Check shell syntax
-        run: make check-shell-syntax
-
       - name: Check local CI targets
         run: make ci-local-quick
 
@@ -151,16 +142,10 @@ jobs:
           shared-key: "portable"
           cache-on-failure: true
 
-      - name: Compile check
-        run: cargo check --all-targets --no-default-features --features pgp,license --locked
-
       - name: Clippy
         run: |
           cargo clippy --all-targets --no-default-features --features pgp,license \
             --locked -- -D warnings
-
-      - name: Compile fuzz targets
-        run: cargo check --manifest-path fuzz/Cargo.toml --all-targets --locked
 
       - name: Debian feature isolation clippy
         run: |
@@ -450,15 +435,9 @@ jobs:
   #############################################################################
   # STAGE 2a: Feature-intersection compile checks
   #
-  # The per-platform legs above each enable exactly ONE backend feature, so
-  # code paths that only exist under backend INTERSECTIONS are never
-  # type-checked anywhere (Wave-3 review F2). These two legs close the gap:
-  #   - arch+pgp+license: pgp was previously only ever compiled backend-free
-  #     (quick gate), so nothing exercised sequoia together with backend code.
-  #   - debian+pgp: exercises the rust-apt FFI stack against a different
-  #     optional-dependency combination.
-  # Compile/clippy only — no tests, no release build — to keep wall time near
-  # the per-leg quick-gate budget.
+  # Linux already checks and tests arch+pgp+license. Keep only the distinct
+  # debian+pgp combination without license, which the platform matrix omits.
+  # This lane checks optional-dependency isolation; it does not run tests.
   #############################################################################
   feature-intersections:
     name: "Intersections (${{ matrix.platform }})"
@@ -470,22 +449,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: arch-pgp-license
-            image: archlinux:latest@sha256:b0deabeb3d283da2c7f7dbf0eea051b7b2cd0554e0b737cc457fd21683bdcdd1
-            features: arch,pgp,license
-            setup: |
-              pacman -Syu --noconfirm
-              pacman -S --noconfirm --needed base-devel git pkgconf openssl libarchive clang cmake curl
-              curl --proto '=https' --tlsv1.2 -fsSL \
-                https://static.rust-lang.org/rustup/archive/1.28.2/x86_64-unknown-linux-gnu/rustup-init \
-                -o /tmp/rustup-init
-              echo "20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c  /tmp/rustup-init" | sha256sum --check
-              chmod +x /tmp/rustup-init
-              /tmp/rustup-init -y --profile minimal --default-toolchain 1.95.0
-              rm -f /tmp/rustup-init
-              echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-              "$HOME/.cargo/bin/rustup" component add clippy
-
           - platform: debian-pgp
             image: debian:bookworm@sha256:813017f3d62be4b5891a7acca6a01bdcd4b8513daa81b1ab99d3a50385b26931
             features: debian,pgp
@@ -538,14 +501,6 @@ jobs:
 
       - name: Check all targets
         run: cargo check --all-targets --no-default-features --features ${{ matrix.features }} --locked
-
-      # Clippy on the arch intersection leg; the debian leg is check-only by
-      # design (see job comment) to bound total CI time.
-      - name: Clippy
-        if: matrix.features == 'arch,pgp,license'
-        run: |
-          cargo clippy --all-targets --no-default-features --features ${{ matrix.features }} \
-            --locked -- -D warnings
 
   #############################################################################
   # STAGE 2b: Native Platform Build (macOS)

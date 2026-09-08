@@ -6,7 +6,7 @@ description: Background service lifecycle, IPC, and state management
 
 # Daemon Internals (omgd)
 
-The OMG daemon (`omgd`) is an optional speed boost: it keeps package indices in memory for ~5-11ms searches. Most commands work fully without it by querying package managers directly — just slower. `omg audit` (scan and compliance export) and `omg metrics` require a running daemon. Skip the daemon on low-end machines or when you want the smallest footprint.
+The OMG daemon keeps package indexes in memory. Most package queries have direct fallback paths; latency depends on the backend, query, cache state, and enabled sources. Vulnerability scans, Unix SOC 2 export, and metrics require a running daemon. Other audit commands have separate backend requirements. See [security coverage](./security.md).
 
 ## 🚀 Daemon Lifecycle
 
@@ -14,9 +14,9 @@ The OMG daemon (`omgd`) is an optional speed boost: it keeps package indices in 
 
 When the daemon starts, it resolves its operating environment and establishes a secure communication channel:
 
-- **Socket Resolution**: It identifies the optimal path for the Unix socket, prioritizing the user's runtime directory (`$XDG_RUNTIME_DIR`) and falling back to systemic shared locations.
-- **Cleanup and Bind**: It ensures a fresh start by removing any stale socket files and binding with strict `0600` permissions (user read/write only).
-- **Detached Launch**: `omg daemon` (no subcommands) discards stdout and stderr. Run `omgd` directly or through a service manager configured to capture output when you need logs. For daemon status, use `omg daemon-status`; `omg audit` (scan and compliance export) and `omg metrics` require a running daemon.
+- **Socket Resolution**: It identifies the optimal path for the Unix socket in this order: `$OMG_SOCKET_PATH` override, `$XDG_RUNTIME_DIR/omg.sock`, `/run/user/<uid>/omg.sock`, `/tmp/omg-<uid>/omg.sock`, and finally a user-private `<data-dir>/run/omg.sock` used only when the `/tmp` fallback exists but fails validation (e.g. pre-created by another local user).
+- **Cleanup and Bind**: It ensures a fresh start by removing any stale socket files and binding with strict `0600` permissions (user read/write only). The parent directory is created mode `0700` and is enforced on bind and connect to be a real non-symlink directory owned by the current uid with no group/world bits.
+- **Detached Launch**: `omg daemon` (no subcommands) discards stdout and stderr. Run `omg daemon --foreground`, `omgd` directly, or a service manager configured to capture output when you need logs. Both launch modes require a separate matching `omgd` executable; current non-Arch release archives omit it. For daemon status, use `omg daemon-status`; `omg audit` (scan and compliance export) and `omg metrics` require a running daemon.
 
 ### 2. State Management
 
@@ -24,7 +24,7 @@ The daemon maintains a comprehensive, thread-safe view of the system's package a
 
 - **In-Memory Cache (moka)**: A high-speed cache for recent search queries, package metadata, and system status results.
 - **Persistent Status Snapshot**: Versioned JSON published with a same-directory temporary file, `fsync`, and atomic rename. Audit logs remain a separate hash-chained owner-only file.
-- **Package Index**: A highly optimized, searchable index built from official repository databases, enabling sub-millisecond lookups.
+- **Package Index**: A searchable index built from official repository databases. Lookup time depends on the query and index state.
 - **Runtime Registry**: A dynamic list of all installed language runtimes and their active versions.
 
 ### 3. Background Synchronization

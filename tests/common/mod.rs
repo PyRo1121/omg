@@ -305,21 +305,37 @@ fn run_omg_with_home(
         cmd.env(key, value);
     }
 
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt as _;
+        cmd.process_group(0);
+    }
     let mut child = cmd.spawn().expect("Failed to execute omg");
+    #[cfg(unix)]
+    let terminate_group = {
+        let group =
+            nix::unistd::Pid::from_raw(i32::try_from(child.id()).expect("child PID fits pid_t"));
+        move || match nix::sys::signal::killpg(group, nix::sys::signal::Signal::SIGKILL) {
+            Ok(()) | Err(nix::errno::Errno::ESRCH) => {}
+            Err(error) => panic!("Failed to terminate test process group: {error}"),
+        }
+    };
 
     // Drain both pipes on dedicated threads so a chatty child can never fill
     // the OS pipe buffer and block on write while we enforce the timeout.
     let mut stdout_pipe = child.stdout.take().expect("invariant: stdout is piped");
     let mut stderr_pipe = child.stderr.take().expect("invariant: stderr is piped");
+    let (stdout_tx, stdout_rx) = std::sync::mpsc::channel();
+    let (stderr_tx, stderr_rx) = std::sync::mpsc::channel();
     let stdout_handle = thread::spawn(move || {
         let mut buffer = Vec::new();
-        let _ = stdout_pipe.read_to_end(&mut buffer);
-        buffer
+        let result = stdout_pipe.read_to_end(&mut buffer).map(|_| buffer);
+        let _ = stdout_tx.send(result);
     });
     let stderr_handle = thread::spawn(move || {
         let mut buffer = Vec::new();
-        let _ = stderr_pipe.read_to_end(&mut buffer);
-        buffer
+        let result = stderr_pipe.read_to_end(&mut buffer).map(|_| buffer);
+        let _ = stderr_tx.send(result);
     });
 
     let mut timed_out = false;
@@ -329,6 +345,8 @@ fn run_omg_with_home(
             Ok(None) => {
                 if start.elapsed() >= command_timeout {
                     timed_out = true;
+                    #[cfg(unix)]
+                    terminate_group();
                     let _ = child.kill();
                     break;
                 }
@@ -339,10 +357,20 @@ fn run_omg_with_home(
         }
     }
 
+    #[cfg(unix)]
+    terminate_group();
     let output_status = child.wait().expect("Failed to reap omg process");
-    // Joining always succeeds unless a reader panicked (impossible: plain reads).
-    let stdout_bytes = stdout_handle.join().unwrap_or_default();
-    let stderr_bytes = stderr_handle.join().unwrap_or_default();
+    let drain_timeout = Duration::from_secs(1);
+    let stdout_bytes = stdout_rx
+        .recv_timeout(drain_timeout)
+        .expect("stdout drain exceeded its deadline after process-group cleanup")
+        .expect("Failed reading command stdout");
+    let stderr_bytes = stderr_rx
+        .recv_timeout(drain_timeout)
+        .expect("stderr drain exceeded its deadline after process-group cleanup")
+        .expect("Failed reading command stderr");
+    stdout_handle.join().expect("stdout reader panicked");
+    stderr_handle.join().expect("stderr reader panicked");
     let mut stderr = String::from_utf8_lossy(&stderr_bytes).to_string();
     if timed_out {
         if !stderr.ends_with('\n') && !stderr.is_empty() {

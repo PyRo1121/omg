@@ -713,25 +713,28 @@ build_omg() {
     ;;
   esac
 
+  local host_target target_dir
+  host_target=$(rustc --print host-tuple) || return 1
+  target_dir="${CARGO_TARGET_DIR:-target}"
   info "Build features: ${cargo_features}"
   export RUSTFLAGS="-C target-cpu=native"
   start_spinner "Compiling binary (release)"
   # shellcheck disable=SC2086
-  if cargo build --release --quiet ${cargo_features} >/dev/null 2>&1; then
+  if cargo build --release --quiet --target "$host_target" --target-dir "$target_dir" ${cargo_features} >/dev/null 2>&1; then
     stop_spinner "Build successful"
   else
     fail_spinner "Build failed"
     printf "\n${RED}Build output:${RESET}\n"
     # shellcheck disable=SC2086
-    cargo build --release ${cargo_features}
+    cargo build --release --target "$host_target" --target-dir "$target_dir" ${cargo_features}
     exit 1
   fi
 
   # Install
   mkdir -p "$INSTALL_DIR"
-  install_binary "target/release/omg" "$INSTALL_DIR/omg" || return 1
-  if [[ -f "target/release/omgd" ]]; then
-    install_binary "target/release/omgd" "$INSTALL_DIR/omgd" || true
+  install_binary "$target_dir/$host_target/release/omg" "$INSTALL_DIR/omg" || return 1
+  if [[ -f "$target_dir/$host_target/release/omgd" ]]; then
+    install_binary "$target_dir/$host_target/release/omgd" "$INSTALL_DIR/omgd" || return 1
   fi
 
   success "Installed to $INSTALL_DIR/omg"

@@ -1,6 +1,6 @@
 # Contributing to OMG
 
-Thank you for your interest in contributing to OMG! This guide will help you get started with development, testing, and submitting changes.
+Start with a reproducible bug, a focused improvement, or a documentation correction. Keep unrelated changes separate and report the exact checks you ran.
 
 ---
 
@@ -26,17 +26,19 @@ cd omg
 rustc --version
 
 # Build the project
-cargo build --features arch  # or 'debian', 'fedora', etc.
+cargo build --locked --no-default-features --features arch,pgp,license
 
 make ci-local-quick
 cargo fmt
 ```
 
+Choose the backend for your host from the release feature matrix below. Cargo features are additive; selecting `debian`, `fedora`, or `macos` without `--no-default-features` also retains the default Arch backend. Test package mutations in disposable containers or VMs, not on the development host.
+
 ### Running OMG Locally
 
 ```bash
 # Run the CLI (debug build)
-cargo run --features arch -- search firefox
+cargo run --features arch --bin omg -- search firefox
 
 # Run the daemon
 cargo run --features arch --bin omgd
@@ -130,6 +132,8 @@ make ci-local-full
 ```
 
 Both targets use Rust 1.95.0, locked dependencies, and build output under `~/.cache/build-targets/omg-ci-local`. The full target checks the portable, `debian-pure`, and Arch feature sets. It also runs all hermetic Arch tests. GitHub runs the native Debian, Fedora, Ubuntu, macOS, Docker, coverage, and CodeQL jobs.
+
+GitHub's Quick Gate invokes the quick target once; do not repeat its formatting, script tests, shell syntax, or fuzz compile steps in dependent jobs. Portable retains Clippy and library tests. The Linux Arch lane covers `arch,pgp,license`; the separate Debian intersection checks `debian,pgp` without license support. Instrumented coverage remains a distinct run, with its reports generated from the same captured results.
 
 Do not run `cargo clippy --all-targets --all-features` on Arch. That command enables incompatible native package-manager bindings.
 
@@ -577,14 +581,14 @@ Release binaries are built with these feature sets (`.github/workflows/release.y
 
 | Target | Features |
 | --- | --- |
-| Arch | defaults (`arch,license,pgp`) |
+| Arch | `arch,pgp,license` |
 | Fedora | `fedora,pgp,license` |
-| macOS | `macos,pgp,license` |
-| Debian/Ubuntu | `debian` only — **no `pgp`, no `license`** |
+| macOS ARM64 | `macos,pgp,license` |
+| Debian/Ubuntu | `debian,pgp,license` |
 
-The Debian omission is currently deliberate: keeping the `.deb`-distributed
-binary free of the GPL-encumbered `rust-apt`/PGP stack. The `license` Cargo
-feature only compiles the optional `omg account` dashboard-link command; it
-is not a paywall. Changing shipped Debian features requires updating both
-`release.yml` and the CI matrix together, and should be an explicit
-maintainer decision.
+Every release build passes `--no-default-features` and `--locked`. Linux
+release targets are x86_64. The workflow publishes tar archives, not `.deb`
+packages. The `license` Cargo feature compiles the optional `omg account`
+dashboard-link command; it is not a local CLI paywall. Review dependency
+licenses separately from feature names. Keep the release and CI matrices
+consistent when changing shipped features.

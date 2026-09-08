@@ -1,407 +1,60 @@
 ---
-title: Container Support
-sidebar_position: 22
-description: Docker and Podman integration
+title: Containers
+sidebar_position: 44
+description: Docker and Podman command wrappers
 ---
 
-# Container Support
+# Containers
 
-**Docker and Podman Integration**
+OMG wraps selected Docker and Podman operations. The engine, images, project code, and host mounts remain trust boundaries. Container execution is not a guarantee of safe execution of untrusted code.
 
-OMG provides container integration for development workflows, preferring Podman for rootless security while supporting Docker.
-
----
-
-## 🎯 Overview
-
-Container features:
-
-- **Auto-detection** — Detects Docker or Podman automatically
-- **Dev shells** — Interactive containers with project mounted
-- **Dockerfile generation** — Auto-generate from detected runtimes
-- **Build integration** — Build images with OMG defaults
-
----
-
-## 🐳 Container Runtime
-
-### Detection Priority
-
-OMG checks for container runtimes in this order:
-
-1. **Podman** (preferred for rootless security)
-2. **Docker**
-
-### Check Status
+## Inspect the engine
 
 ```bash
 omg container status
+omg container list
+omg container images
+omg container --help
 ```
 
-Output:
+Install and configure an engine separately. Do not expose its socket to a project merely to make a command work; engine access can grant substantial host privileges.
 
-```
-Container Runtime Status:
-  Runtime: podman 4.8.0
-  Rootless: Yes
-  Running containers: 3
-  Images: 15
-```
-
----
-
-## 🖥️ Development Shells
-
-### Start Dev Shell
+## Development shell and execution
 
 ```bash
-# Interactive shell with current directory mounted
 omg container shell
+omg container run alpine -- echo hello
 ```
 
-This:
+These commands create/run containers and can pull images. The development shell mounts the project; review what host data will be writable. A tag can change upstream. Use an approved immutable image digest when repeatability matters.
 
-1. Detects project runtimes (from `.nvmrc`, etc.)
-2. Selects appropriate base image
-3. Mounts current directory to `/app`
-4. Starts interactive shell
+Environment arguments must be `KEY=VALUE`. Volume arguments currently accept `HOST:CONTAINER` only. A suffix such as `:ro` is rejected, not implemented. If a read-only mount is required, use the native engine's verified read-only mount controls rather than dropping the suffix and creating a writable mount. Never mount credentials or private directories as a troubleshooting shortcut.
 
-### Custom Base Image
+## Build
 
 ```bash
-# Use specific base image
-omg container shell --image node:20-alpine
+omg container build -t myapp .
+omg container build -f Dockerfile.prod -t myapp .
 ```
 
-### Shell Options
+Builds execute the selected recipe. Supported options include `--no-cache`, `--build-arg`, and `--target`; inspect `omg container build --help` for their values. Do not put secrets in build arguments or image layers.
+
+## Generate a recipe
 
 ```bash
-# Specify working directory
-omg container shell --workdir /workspace
-
-# Add environment variables
-omg container shell --env NODE_ENV=development
-
-# Mount additional volumes
-omg container shell --volume ~/.ssh:/root/.ssh:ro
-```
-
----
-
-## 🏃 Running Containers
-
-### Run Commands
-
-```bash
-# Run command in container
-omg container run alpine -- echo "hello"
-
-# Run with specific image
-omg container run node:20 -- npm test
-
-# Interactive
-omg container run -i ubuntu -- bash
-```
-
-### Common Patterns
-
-```bash
-# Quick test in clean environment
-omg container run node:20 -- node -e "console.log('Hello')"
-
-# Run tests in isolation
-omg container run rust:1.75 -- cargo test
-
-# Check Python version
-omg container run python:3.12 -- python --version
-```
-
----
-
-## 🏗️ Building Images
-
-### Build from Dockerfile
-
-```bash
-# Build in current directory
-omg container build
-
-# Tag the image
-omg container build -t myapp:latest
-
-# Specify Dockerfile
-omg container build -f Dockerfile.prod -t myapp:prod
-```
-
-### Build Options
-
-```bash
-# Disable cache
-omg container build --no-cache -t myapp
-
-# Build arguments
-omg container build --build-arg NODE_VERSION=20 -t myapp
-
-# Target specific stage
-omg container build --target production -t myapp
-```
-
----
-
-## 📄 Dockerfile Generation
-
-### Auto-Generate Dockerfile
-
-```bash
-# Generate based on detected runtimes
 omg container init
 ```
 
-This creates a Dockerfile based on:
+This writes `Dockerfile.omg`, based on detected project files and runtime selectors. Generation is not verification that the recipe builds, pins all dependencies, or uses a backend-compatible release. Inspect the file before building, including any installer download and execution. Use a reviewed pinned installer and verified archive per [installation](./installation.md), not an unreviewed moving `curl | bash` command.
 
-- Detected version files (`.nvmrc`, `.python-version`, etc.)
-- Project type (package.json, Cargo.toml, etc.)
-- Best practices for that ecosystem
-
-### Example Generated Dockerfile
-
-For a Node.js project with `.nvmrc` containing `20.10.0`:
-
-```dockerfile
-# Auto-generated by OMG
-FROM node:20-alpine
-
-WORKDIR /app
-
-# Install dependencies first for better caching
-COPY package*.json ./
-RUN npm ci --production
-
-# Copy source
-COPY . .
-
-# Build if needed
-RUN npm run build --if-present
-
-EXPOSE 3000
-CMD ["npm", "start"]
-```
-
-### Custom Base Image
+Build the generated file explicitly:
 
 ```bash
-# Specify base image
-omg container init --base ubuntu:22.04
+omg container build -f Dockerfile.omg -t myapp .
 ```
 
----
+## Existing containers
 
-## 📋 Container Management
+`pull` downloads an image, `stop` changes a running container's state, and `exec` executes code in an existing container. Confirm the exact name or ID before using these commands. Do not stop unrelated containers or prune shared images as part of verification.
 
-### List Containers
-
-```bash
-# Running containers
-omg container list
-```
-
-### List Images
-
-```bash
-omg container images
-```
-
-### Pull Images
-
-```bash
-omg container pull node:20
-omg container pull alpine:latest
-```
-
-### Stop Containers
-
-```bash
-# Stop by name or ID
-omg container stop mycontainer
-```
-
-Note: there is no `--all` option — stop containers individually.
-
-### Execute in Running Container
-
-```bash
-# Run command in existing container
-omg container exec mycontainer -- ls -la
-```
-
----
-
-## 🔄 Workflow Integration
-
-### Development Workflow
-
-```bash
-# 1. Start dev container
-omg container shell
-
-# 2. Inside container, use OMG normally
-omg run dev
-omg run test
-
-# 3. Exit when done
-exit
-```
-
-### CI/CD Integration
-
-```yaml
-# GitHub Actions example
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install OMG
-        run: curl -fsSL https://omg.latham.cloud/install.sh | bash
-      
-      - name: Run in Container
-        run: omg container run node:20 -- npm test
-```
-
-### Docker Compose Compatibility
-
-OMG works alongside docker-compose:
-
-```bash
-# Start services with compose
-docker-compose up -d
-
-# Use OMG for one-off commands
-omg container exec web -- omg run test
-```
-
----
-
-## ⚙️ Configuration
-
-### Runtime Preference
-
-Set preferred runtime in `~/.config/omg/config.toml`:
-
-```toml
-[container]
-runtime = "podman"  # or "docker"
-```
-
-### Default Options
-
-```toml
-[container]
-# Default user inside containers
-user = "1000:1000"
-
-# Always mount these paths
-volumes = [
-    "~/.gitconfig:/etc/gitconfig:ro",
-    "~/.ssh:/root/.ssh:ro"
-]
-
-# Environment variables
-env = [
-    "TERM=xterm-256color"
-]
-```
-
----
-
-## 🔒 Security
-
-### Rootless Containers (Podman)
-
-OMG prefers Podman for rootless container execution:
-
-- No root daemon required
-- User namespace isolation
-- Better security defaults
-
-### Best Practices
-
-1. **Use non-root user in Dockerfile**
-
-   ```dockerfile
-   RUN adduser -D appuser
-   USER appuser
-   ```
-
-2. **Read-only mounts when possible**
-
-   ```bash
-   omg container shell --volume ~/.ssh:/root/.ssh:ro
-   ```
-
-3. **Avoid privileged mode**
-
----
-
-## 🔧 Troubleshooting
-
-### "No container runtime found"
-
-```bash
-# Check if Docker/Podman is installed
-which docker
-which podman
-
-# Install Podman (Arch)
-omg install podman
-
-# Install Docker (Arch)
-omg install docker
-sudo systemctl start docker
-```
-
-### "Permission denied"
-
-```bash
-# For Docker, ensure user is in docker group
-sudo usermod -aG docker $USER
-newgrp docker
-
-# Or use Podman (rootless)
-omg install podman
-```
-
-### "Image not found"
-
-```bash
-# Pull image first
-omg container pull node:20
-
-# Check available images
-omg container images
-```
-
-### Container won't start
-
-```bash
-# Check container logs
-podman logs <container-id>
-# or
-docker logs <container-id>
-
-# Try running interactively
-omg container run -it <image> -- bash
-```
-
----
-
-## 📚 See Also
-
-- [Workflows](./workflows.md) — CI/CD integration patterns
-- [Quick Start](./quickstart.md) — Initial setup
-- [Configuration](./configuration.md) — Container settings
-- [Integrations](./integrations.md) — Docker/Compose integration examples
-- [Runtimes](./runtimes.md) — Runtime version management in containers
-- [Team Sync](./team.md) — Sharing containerized environments with teams
-- [Security](./security.md) — Secure container builds and scanning
+See [integrations](./integrations.md), [task runner](./task-runner.md), and [CLI reference](./cli.md).

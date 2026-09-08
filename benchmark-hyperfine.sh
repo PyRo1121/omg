@@ -1,19 +1,13 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 # ============================================================================
-# OMG Performance Benchmark with Hyperfine (Industry Best Practice)
+# OMG command measurements with Hyperfine
 # ============================================================================
 #
-# This benchmark uses hyperfine (https://github.com/sharkdp/hyperfine),
-# the industry-standard CLI benchmarking tool used by ripgrep, fd, and bat.
-#
-# ADVANTAGES OVER CUSTOM BASH TIMING:
-# - Statistical rigor with outlier detection (Modified Z-score method)
-# - Automatic run count determination for confidence intervals
-# - Warm/cold cache benchmarking support
-# - JSON export for CI regression detection
-# - 40-60% faster execution than manual bash loops
+# Hyperfine: https://github.com/sharkdp/hyperfine
+# Raw samples and exit codes are retained. Timing validity does not establish
+# workload equivalence; guest comparisons check package identity and version.
 #
 # REQUIREMENTS:
 #   omg install hyperfine       # Arch Linux
@@ -34,6 +28,9 @@ MIN_RUNS=20
 MAX_RUNS=50
 FAST_MODE=false
 UPDATE_MODE=false
+GUEST_MODE=false
+GUEST_TRANSACTION=""
+GUEST_TOOL=""
 EXPORT_DIR="benchmark_results"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 UPDATE_WORK_DIRS=()
@@ -46,6 +43,11 @@ Usage: $0 [OPTIONS]
 
 Options:
   --fast, -f    Run in fast mode (reduced warmup and runs)
+  --guest       Benchmark info, complete JSON search, and explicit counts in
+                a prepared Linux guest; requires OMG_BENCH_BINARY and tree
+  --guest-transaction <install|remove> <omg|native>
+                Run one transaction in a marked disposable QEMU guest;
+                no warmups, exactly one sample, explicit before/after checks
   --update      Run ONLY the AUR update discovery benchmark (no daemon,
                 no other benchmarks) and exit
   --help, -h    Show this help message
@@ -79,6 +81,23 @@ while [[ $# -gt 0 ]]; do
             FAST_MODE=true
             shift
             ;;
+        --guest)
+            if [[ "$GUEST_MODE" == true ]]; then echo 'Select one guest mode.' >&2; exit 2; fi
+            GUEST_MODE=true
+            shift
+            ;;
+        --guest-transaction)
+            if [[ $# -lt 3 || ( "$2" != install && "$2" != remove ) ]]; then
+                echo 'Guest transaction requires install or remove and omg or native.' >&2; exit 2
+            fi
+            if [[ "$GUEST_MODE" == true || ( "$3" != omg && "$3" != native ) ]]; then
+                echo 'Select one guest mode and tool: omg or native.' >&2; exit 2
+            fi
+            GUEST_MODE=true
+            GUEST_TRANSACTION=$2
+            GUEST_TOOL=$3
+            shift 3
+            ;;
         --update)
             UPDATE_MODE=true
             shift
@@ -95,6 +114,24 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+if [[ "$GUEST_MODE" == true && "$UPDATE_MODE" == true ]]; then
+    echo 'Guest and development update modes are mutually exclusive.' >&2; exit 2
+fi
+if [[ -n "$GUEST_TRANSACTION" ]]; then
+    marker=/run/omg-qemu-benchmark
+    token=${OMG_BENCH_DISPOSABLE_GUEST:-}
+    if [[ ! "$token" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] ||
+       [[ ! -r "$marker" ]] ||
+       [[ "$(LC_ALL=C stat -c '%u:%a:%F:%s' "$marker")" != '0:444:regular file:37' ]] ||
+       [[ "$(<"$marker")" != "$token" ]]; then
+        echo 'Transactions require an explicitly marked disposable QEMU guest.' >&2; exit 2
+    fi
+    case "$(systemd-detect-virt --vm 2>/dev/null)" in
+        kvm|qemu) ;;
+        *) echo 'Transactions require an explicitly marked disposable QEMU guest.' >&2; exit 2 ;;
+    esac
+fi
+
 if [ "$FAST_MODE" = true ]; then
     WARMUP=${OMG_BENCH_WARMUP:-1}
     MIN_RUNS=${OMG_BENCH_RUNS:-5}
@@ -107,6 +144,7 @@ fi
 
 EXPORT_DIR=${OMG_BENCH_EXPORT_DIR:-benchmark_results}
 mkdir -p "$EXPORT_DIR"
+EXPORT_DIR="$(cd "$EXPORT_DIR" && pwd)"
 BENCH_SOURCE_CACHE="${OMG_BENCH_SOURCE_CACHE:-${OMG_CACHE_DIR:-$HOME/.cache/omg}}"
 
 RED='\033[0;31m'
@@ -123,12 +161,8 @@ if ! command -v hyperfine &>/dev/null; then
     echo "  macOS:       brew install hyperfine"
     echo "  Cargo:       cargo install hyperfine"
     echo ""
-    echo "Falling back to standard benchmark.sh..."
-    if [ "$FAST_MODE" = true ]; then
-        exec ./benchmark.sh --fast
-    else
-        exec ./benchmark.sh
-    fi
+    echo "Benchmark not run: hyperfine is required; no substitute timer is used." >&2
+    exit 3
 fi
 
 cleanup() {
@@ -152,10 +186,17 @@ run_hyperfine() {
     local json="$1"
     local md="$2"
     shift 2
-    hyperfine --shell=none --output=pipe --input=null \
+    hyperfine --shell=none --output=pipe \
         --warmup "$WARMUP" --min-runs "$MIN_RUNS" --max-runs "$MAX_RUNS" \
         --export-json "$json" --export-markdown "$md" \
-        "$@"
+        "$@" < /dev/null
+}
+
+command_json() {
+    local command_label=$1
+    shift
+    jq -cn --arg command_label "$command_label" --args \
+        '{"label":$command_label, argv:$ARGS.positional}' -- "$@"
 }
 
 preflight_match() {
@@ -194,6 +235,10 @@ archive_results() {
 }
 
 TARGET_DIR="${OMG_BENCH_TARGET_DIR:-$HOME/.cache/build-targets/omg-benchmark-hyperfine}"
+if [[ "$GUEST_MODE" == true && ( "$UPDATE_MODE" == true || -z "${OMG_BENCH_BINARY:-}" ) ]]; then
+    echo 'Guest benchmarks require a prebuilt binary and cannot use --update.' >&2
+    exit 2
+fi
 
 if [ -n "${OMG_BENCH_BINARY:-}" ]; then
     echo -e "${BLUE}🔧 Using prebuilt binary: $OMG_BENCH_BINARY${NC}"
@@ -215,6 +260,387 @@ fi
 if [ ! -x "$OMG" ]; then
     echo -e "${RED}❌ omg binary not executable: $OMG${NC}" >&2
     exit 1
+fi
+if [[ "$GUEST_MODE" == true ]]; then
+    export LC_ALL=C NO_COLOR=1
+    distro=$(awk -F= '$1 == "ID" {gsub(/"/, "", $2); print $2}' /etc/os-release)
+    extra_native=()
+    extra_name=""
+    case "$distro" in
+        arch) native=(pacman --color never -Qi tree); native_name=pacman ;;
+        debian|ubuntu)
+            native=(apt-cache --no-all-versions show tree); native_name=apt-cache
+            extra_native=(apt show tree); extra_name=apt ;;
+        fedora)
+            native=(rpm -qi tree); native_name=rpm
+            extra_native=(dnf -C info --installed tree); extra_name=dnf ;;
+        *) echo "Unsupported guest distro: $distro" >&2; exit 2 ;;
+    esac
+    command -v jq >/dev/null || exit 3
+    if [[ -n $(find "$EXPORT_DIR" -mindepth 1 -maxdepth 1 -print -quit) ]]; then
+        echo 'Guest benchmark output must be empty; old evidence is never overwritten.' >&2
+        exit 2
+    fi
+    date -u +%Y-%m-%dT%H:%M:%SZ > "$EXPORT_DIR/started-at.txt"
+    # A private, absent socket prevents accidentally timing another run's daemon.
+    export OMG_SOCKET_PATH="$EXPORT_DIR/no-daemon.sock"
+    export OMG_CACHE_DIR="$EXPORT_DIR/cache"
+    export OMG_DATA_DIR="$EXPORT_DIR/data"
+    export OMG_CONFIG_DIR="$EXPORT_DIR/config"
+    export OMG_NO_TELEMETRY=1
+    mkdir -p "$OMG_CACHE_DIR" "$OMG_DATA_DIR" "$OMG_CONFIG_DIR"
+    normalize_info() {
+        awk -v rpm_release="$1" '
+          {sub(/^[[:space:]]+/, ""); sub(/[[:space:]]+$/, "")}
+          /^(Name|Package)[[:space:]]*:/ {sub(/^[^:]*:[[:space:]]*/, ""); name=$0; names++}
+          /^Version[[:space:]]*:/ {sub(/^[^:]*:[[:space:]]*/, ""); version=$0; versions++}
+          /^Release[[:space:]]*:/ {sub(/^[^:]*:[[:space:]]*/, ""); release=$0; releases++}
+          END {
+            if (names != 1 || versions != 1 || name != "tree" || version == "") exit 1;
+            if (rpm_release == "true") {
+              if (releases != 1 || release == "") exit 1;
+              version=version "-" release;
+            }
+            print name "\t" version;
+          }' "$2"
+    }
+    if [[ -n "$GUEST_TRANSACTION" ]]; then
+        expected_version=${OMG_BENCH_EXPECTED_VERSION:-}
+        if [[ ! "$expected_version" =~ ^[A-Za-z0-9][A-Za-z0-9.:+~_-]*$ ]]; then
+            echo 'A prepared transaction requires an exact expected tree version.' >&2; exit 2
+        fi
+        # Privileged mutable state is not export evidence. Never loosen audit locks
+        # merely so an unprivileged evidence copier can read them.
+        root_state="/var/lib/omg-benchmark-$token"
+        sudo -n install -d -m 700 "$root_state" "$root_state/cache" "$root_state/data" "$root_state/config"
+        privileged=(sudo -n env LC_ALL=C NO_COLOR=1 OMG_NO_TELEMETRY=1
+            "OMG_SOCKET_PATH=$root_state/no-daemon.sock" "OMG_CACHE_DIR=$root_state/cache"
+            "OMG_DATA_DIR=$root_state/data" "OMG_CONFIG_DIR=$root_state/config")
+        snapshot_version=$expected_version
+        case "$distro" in
+            arch)
+                transaction_native=pacman
+                if [[ "$GUEST_TRANSACTION" == install ]]; then transaction_args=(pacman -S --noconfirm tree)
+                else transaction_args=(pacman -R --noconfirm tree); fi
+                snapshot_name=tree ;;
+            debian|ubuntu)
+                transaction_native=apt
+                transaction_args=(apt "$GUEST_TRANSACTION" --yes tree)
+                snapshot_name=tree ;;
+            fedora)
+                transaction_native=dnf
+                transaction_args=(dnf "$GUEST_TRANSACTION" -y tree)
+                snapshot_name="tree.$(uname -m)"
+                [[ "$snapshot_version" == *:* ]] || snapshot_version="0:$snapshot_version" ;;
+        esac
+        native_snapshot() {
+            local phase=$1
+            local raw="$EXPORT_DIR/installed-$phase.raw"
+            case "$distro" in
+                arch)
+                    pacman -Q > "$raw" 2> "$raw.stderr"
+                    awk 'NF != 2 {exit 1} {print $1 "\t" $2}' "$raw" ;;
+                debian|ubuntu)
+                    dpkg-query -W '-f=${binary:Package}\t${Version}\t${db:Status-Status}\n' > "$raw" 2> "$raw.stderr"
+                    awk -F '\t' '$3 == "installed" {if (NF != 3 || $2 == "") exit 1; print $1 "\t" $2}' "$raw" ;;
+                fedora)
+                    rpm -qa --qf '%{NAME}.%{ARCH}\t%{EPOCHNUM}:%{VERSION}-%{RELEASE}\n' > "$raw" 2> "$raw.stderr"
+                    awk -F '\t' 'NF != 2 || $1 == "" || $2 == "" {exit 1} {print}' "$raw" ;;
+            esac | sort -u > "$EXPORT_DIR/installed-$phase.tsv"
+            [[ -s "$EXPORT_DIR/installed-$phase.tsv" ]]
+        }
+        verify_tree_identity() {
+            local phase=$1
+            local -a identity_native=("${native[@]}")
+            if [[ "$phase" == before && "$GUEST_TRANSACTION" == install ]]; then
+                case "$distro" in
+                    arch) identity_native=(pacman --color never -Si tree) ;;
+                    fedora) identity_native=(dnf -C info --available tree) ;;
+                esac
+            fi
+            "${privileged[@]}" "$OMG" info tree > "$EXPORT_DIR/omg-info-$phase.stdout" 2> "$EXPORT_DIR/omg-info-$phase.stderr"
+            "${privileged[@]}" "${identity_native[@]}" > "$EXPORT_DIR/native-info-$phase.stdout" 2> "$EXPORT_DIR/native-info-$phase.stderr"
+            normalize_info false "$EXPORT_DIR/omg-info-$phase.stdout" > "$EXPORT_DIR/omg-identity-$phase.tsv"
+            normalize_info "$([[ "$distro" == fedora ]] && echo true || echo false)" \
+                "$EXPORT_DIR/native-info-$phase.stdout" > "$EXPORT_DIR/native-identity-$phase.tsv"
+            printf 'tree\t%s\n' "$expected_version" > "$EXPORT_DIR/expected-identity.tsv"
+            cmp "$EXPORT_DIR/omg-identity-$phase.tsv" "$EXPORT_DIR/expected-identity.tsv"
+            cmp "$EXPORT_DIR/native-identity-$phase.tsv" "$EXPORT_DIR/expected-identity.tsv"
+        }
+        native_snapshot before
+        tree_count=$(awk -F '\t' -v name="$snapshot_name" '$1 == name {count++} END {print count+0}' "$EXPORT_DIR/installed-before.tsv")
+        if [[ "$GUEST_TRANSACTION" == install ]]; then
+            if [[ "$tree_count" != 0 || -e /usr/bin/tree ]]; then
+                echo 'Install sample requires tree absent; refusing a no-op measurement.' >&2; exit 1
+            fi
+            { cat "$EXPORT_DIR/installed-before.tsv"; printf '%s\t%s\n' "$snapshot_name" "$snapshot_version"; } |
+                sort -u > "$EXPORT_DIR/installed-expected.tsv"
+        else
+            if [[ "$tree_count" != 1 || ! -x /usr/bin/tree ]]; then
+                echo 'Remove sample requires exactly one installed tree package.' >&2; exit 1
+            fi
+            awk -F '\t' -v name="$snapshot_name" '$1 != name' "$EXPORT_DIR/installed-before.tsv" > "$EXPORT_DIR/installed-expected.tsv"
+        fi
+        verify_tree_identity before
+        if [[ "$GUEST_TOOL" == omg ]]; then
+            transaction=("${privileged[@]}" "$OMG" "$GUEST_TRANSACTION" --yes tree)
+            transaction_label=OMG
+        else
+            transaction=("${privileged[@]}" "${transaction_args[@]}")
+            transaction_label=$transaction_native
+        fi
+        command_json "$transaction_label" "${transaction[@]}" > "$EXPORT_DIR/command.json"
+        cp /etc/os-release "$EXPORT_DIR/os-release"
+        cp /proc/cpuinfo "$EXPORT_DIR/cpuinfo.txt"
+        cp /proc/meminfo "$EXPORT_DIR/meminfo.txt"
+        cp /proc/stat "$EXPORT_DIR/proc-stat-before.txt"
+        cat /proc/sys/kernel/random/boot_id > "$EXPORT_DIR/boot-id.txt"
+        uname -a > "$EXPORT_DIR/kernel.txt"
+        "$OMG" --version > "$EXPORT_DIR/omg-version.txt"
+        "$transaction_native" --version > "$EXPORT_DIR/native-version.txt" 2>&1
+        hyperfine --version > "$EXPORT_DIR/hyperfine-version.txt"
+        sha256sum "$OMG" "$(command -v "$transaction_native")" > "$EXPORT_DIR/binary-sha256.txt"
+        # The audit needs a privileged read; evidence must remain user-owned.
+        # shellcheck disable=SC2024
+        sudo -n cat /var/lib/omg/audit/audit.jsonl > "$EXPORT_DIR/audit-before.jsonl"
+        printf -v transaction_command '%q ' "${transaction[@]}"
+        WARMUP=0 MIN_RUNS=1 MAX_RUNS=1
+        measurement_rc=0
+        # Retain the actual program exit even on failure; admission below remains strict.
+        run_hyperfine "$EXPORT_DIR/$GUEST_TRANSACTION.json" "$EXPORT_DIR/$GUEST_TRANSACTION.md" \
+            --ignore-failure --command-name "$transaction_label" "$transaction_command" || measurement_rc=$?
+        printf '%s\n' "$measurement_rc" > "$EXPORT_DIR/hyperfine.exit"
+        cp /proc/stat "$EXPORT_DIR/proc-stat-after.txt"
+        native_snapshot after
+        # The audit needs a privileged read; evidence must remain user-owned.
+        # shellcheck disable=SC2024
+        sudo -n cat /var/lib/omg/audit/audit.jsonl > "$EXPORT_DIR/audit-after.jsonl"
+        "${privileged[@]}" "$OMG" audit verify > "$EXPORT_DIR/audit-verify.stdout" 2> "$EXPORT_DIR/audit-verify.stderr"
+        [[ "$measurement_rc" == 0 ]]
+        jq -e --arg label_name "$transaction_label" '
+          .results | length == 1 and .[0].command == $label_name and
+          .[0].exit_codes == [0] and (.[0].times|length == 1)
+        ' "$EXPORT_DIR/$GUEST_TRANSACTION.json" >/dev/null
+        cmp "$EXPORT_DIR/installed-expected.tsv" "$EXPORT_DIR/installed-after.tsv"
+        if [[ "$GUEST_TRANSACTION" == install ]]; then
+            [[ -x /usr/bin/tree ]]
+            verify_tree_identity after
+        else
+            [[ ! -e /usr/bin/tree ]]
+        fi
+        jq -n --arg distro "$distro" --arg operation "$GUEST_TRANSACTION" --arg tool "$GUEST_TOOL" \
+            --arg version "$expected_version" --slurpfile command "$EXPORT_DIR/command.json" \
+            --rawfile boot_id "$EXPORT_DIR/boot-id.txt" '
+          {schema_version:1,kind:"transaction-trial",complete:true,distro:$distro,
+           operation:$operation,tool:$tool,package:"tree",expected_version:$version,
+           state_change_verified:true,samples:1,warmup:0,daemon:"disabled",
+           preparation:"package metadata warmed by preflight; not a cold-cache claim",
+           reset_evidence:"coordinator-required",
+           boot_id:($boot_id|rtrimstr("\n")),command:$command[0]}
+        ' > "$EXPORT_DIR/summary.json"
+        exit 0
+    fi
+    "$OMG" info tree > "$EXPORT_DIR/omg-info.stdout" 2> "$EXPORT_DIR/omg-info.stderr"
+    "${native[@]}" > "$EXPORT_DIR/native-info.stdout" 2> "$EXPORT_DIR/native-info.stderr"
+    normalize_info false "$EXPORT_DIR/omg-info.stdout" > "$EXPORT_DIR/omg-identity.tsv"
+    normalize_info "$([[ "$distro" == fedora ]] && echo true || echo false)" \
+        "$EXPORT_DIR/native-info.stdout" > "$EXPORT_DIR/native-identity.tsv"
+    cmp "$EXPORT_DIR/omg-identity.tsv" "$EXPORT_DIR/native-identity.tsv"
+    if [[ ${#extra_native[@]} -gt 0 ]]; then
+        "${extra_native[@]}" > "$EXPORT_DIR/extra-info.stdout" 2> "$EXPORT_DIR/extra-info.stderr"
+        normalize_info "$([[ "$distro" == fedora ]] && echo true || echo false)" \
+            "$EXPORT_DIR/extra-info.stdout" > "$EXPORT_DIR/extra-identity.tsv"
+        cmp "$EXPORT_DIR/omg-identity.tsv" "$EXPORT_DIR/extra-identity.tsv"
+        "$extra_name" --version > "$EXPORT_DIR/extra-version.txt" 2>&1
+    fi
+    cp /proc/cpuinfo "$EXPORT_DIR/cpuinfo.txt"
+    cp /proc/meminfo "$EXPORT_DIR/meminfo.txt"
+    cp /proc/stat "$EXPORT_DIR/proc-stat-before.txt"
+    sha256sum "$OMG" > "$EXPORT_DIR/binary-sha256.txt"
+    hyperfine --version > "$EXPORT_DIR/hyperfine-version.txt"
+    "$native_name" --version > "$EXPORT_DIR/native-version.txt" 2>&1
+    "$OMG" --version > "$EXPORT_DIR/omg-version.txt"
+    uname -a > "$EXPORT_DIR/kernel.txt"
+    cp /etc/os-release "$EXPORT_DIR/os-release"
+    printf -v omg_command '%q ' "$OMG" info tree
+    printf -v native_command '%q ' "${native[@]}"
+    measured_commands=(--command-name OMG "$omg_command" --command-name "$native_name" "$native_command")
+    expected_commands=2
+    if [[ ${#extra_native[@]} -gt 0 ]]; then
+        printf -v extra_command '%q ' "${extra_native[@]}"
+        measured_commands+=(--command-name "$extra_name" "$extra_command")
+        expected_commands=3
+    fi
+    run_hyperfine "$EXPORT_DIR/info.json" "$EXPORT_DIR/info.md" "${measured_commands[@]}"
+    cp /proc/stat "$EXPORT_DIR/proc-stat-after.txt"
+    jq -e --argjson minimum "$MIN_RUNS" --argjson maximum "$MAX_RUNS" \
+        --argjson expected "$expected_commands" '
+      (.results|length) == $expected and all(.results[];
+        (.times|length) >= $minimum and (.times|length) <= $maximum and
+        (.times|length) == (.exit_codes|length) and all(.exit_codes[]; . == 0))
+    ' "$EXPORT_DIR/info.json" >/dev/null
+    "$OMG" info tree > "$EXPORT_DIR/omg-info-after.stdout" 2> "$EXPORT_DIR/omg-info-after.stderr"
+    "${native[@]}" > "$EXPORT_DIR/native-info-after.stdout" 2> "$EXPORT_DIR/native-info-after.stderr"
+    normalize_info false "$EXPORT_DIR/omg-info-after.stdout" > "$EXPORT_DIR/omg-identity-after.tsv"
+    normalize_info "$([[ "$distro" == fedora ]] && echo true || echo false)" \
+        "$EXPORT_DIR/native-info-after.stdout" > "$EXPORT_DIR/native-identity-after.tsv"
+    cmp "$EXPORT_DIR/omg-identity.tsv" "$EXPORT_DIR/omg-identity-after.tsv"
+    cmp "$EXPORT_DIR/native-identity.tsv" "$EXPORT_DIR/native-identity-after.tsv"
+    if [[ ${#extra_native[@]} -gt 0 ]]; then
+        "${extra_native[@]}" > "$EXPORT_DIR/extra-info-after.stdout" 2> "$EXPORT_DIR/extra-info-after.stderr"
+        normalize_info "$([[ "$distro" == fedora ]] && echo true || echo false)" \
+            "$EXPORT_DIR/extra-info-after.stdout" > "$EXPORT_DIR/extra-identity-after.tsv"
+        cmp "$EXPORT_DIR/extra-identity.tsv" "$EXPORT_DIR/extra-identity-after.tsv"
+    fi
+    {
+        command_json OMG "$OMG" info tree
+        command_json "$native_name" "${native[@]}"
+        if [[ ${#extra_native[@]} -gt 0 ]]; then command_json "$extra_name" "${extra_native[@]}"; fi
+    } | jq -s . > "$EXPORT_DIR/info.commands.json"
+
+    # JSON preserves installable names rather than human-output alias grouping.
+    omg_search=("$OMG" --json search ripgrep --no-aur --limit 100000)
+    extra_search=()
+    case "$distro" in
+        arch) search_native=(pacman --color never -Ss ripgrep); search_name=pacman ;;
+        debian|ubuntu)
+            search_native=(apt-cache search ripgrep); search_name=apt-cache
+            extra_search=(apt search ripgrep) ;;
+        fedora)
+            dnf -q makecache > "$EXPORT_DIR/native-cache-prepare.stdout" 2> "$EXPORT_DIR/native-cache-prepare.stderr"
+            search_native=(dnf -C search ripgrep); search_name=dnf ;;
+    esac
+    omg_names() {
+        jq -er --arg kind "$1" '
+          (if $kind == "search" then map(.name) else .packages end) |
+          if type == "array" and length > 0 and length < 100000 and
+             all(.[]; type == "string" and test("^[A-Za-z0-9][A-Za-z0-9+._:@-]*$"))
+          then .[] else error("invalid or potentially truncated package-name set") end
+        ' "$2" | sort -u
+    }
+    search_names() {
+        case "$1" in
+            pacman) awk '/^[^[:space:]]+\/[^[:space:]]+[[:space:]]/ {split($1,p,"/"); print p[2]}' "$2" ;;
+            apt-cache) awk '$2 == "-" {print $1}' "$2" ;;
+            apt) awk '/^[^[:space:]]+\/[^[:space:]]+[[:space:]]/ {split($1,p,"/"); print p[1]}' "$2" ;;
+            dnf) awk -v arch="$(uname -m)" '
+                $1 ~ /^[A-Za-z0-9][A-Za-z0-9+._-]*\.[A-Za-z0-9_]+$/ {
+                  name=$1; architecture=$1; sub(/^.*\./,"",architecture);
+                  if (architecture != arch && architecture != "noarch") exit 1;
+                  sub(/\.[^.]+$/,"",name); print name;
+                }' "$2" ;;
+        esac | sort -u
+    }
+    capture_search() {
+        local phase=$1
+        "${omg_search[@]}" > "$EXPORT_DIR/search-omg-$phase.stdout" 2> "$EXPORT_DIR/search-omg-$phase.stderr"
+        "${search_native[@]}" > "$EXPORT_DIR/search-native-$phase.stdout" 2> "$EXPORT_DIR/search-native-$phase.stderr"
+        omg_names search "$EXPORT_DIR/search-omg-$phase.stdout" > "$EXPORT_DIR/search-omg-$phase.names"
+        search_names "$search_name" "$EXPORT_DIR/search-native-$phase.stdout" > "$EXPORT_DIR/search-native-$phase.names"
+        grep -Fxq ripgrep "$EXPORT_DIR/search-omg-$phase.names"
+        grep -Fxq ripgrep "$EXPORT_DIR/search-native-$phase.names"
+        if [[ ${#extra_search[@]} -gt 0 ]]; then
+            "${extra_search[@]}" > "$EXPORT_DIR/search-extra-$phase.stdout" 2> "$EXPORT_DIR/search-extra-$phase.stderr"
+            search_names apt "$EXPORT_DIR/search-extra-$phase.stdout" > "$EXPORT_DIR/search-extra-$phase.names"
+            grep -Fxq ripgrep "$EXPORT_DIR/search-extra-$phase.names"
+        fi
+    }
+    capture_search before
+    search_equivalent=true
+    cmp -s "$EXPORT_DIR/search-omg-before.names" "$EXPORT_DIR/search-native-before.names" || search_equivalent=false
+    printf -v search_omg_command '%q ' "${omg_search[@]}"
+    printf -v search_native_command '%q ' "${search_native[@]}"
+    search_commands=(--command-name OMG "$search_omg_command" --command-name "$search_name" "$search_native_command")
+    if [[ ${#extra_search[@]} -gt 0 ]]; then
+        cmp -s "$EXPORT_DIR/search-omg-before.names" "$EXPORT_DIR/search-extra-before.names" || search_equivalent=false
+        printf -v search_extra_command '%q ' "${extra_search[@]}"
+        search_commands+=(--command-name apt "$search_extra_command")
+    fi
+    {
+        command_json OMG "${omg_search[@]}"
+        command_json "$search_name" "${search_native[@]}"
+        if [[ ${#extra_search[@]} -gt 0 ]]; then command_json apt "${extra_search[@]}"; fi
+    } | jq -s . > "$EXPORT_DIR/search.commands.json"
+    run_hyperfine "$EXPORT_DIR/search.json" "$EXPORT_DIR/search.md" "${search_commands[@]}"
+    capture_search after
+    if [[ "$search_equivalent" == false ]]; then
+        echo 'NON-COMPARABLE search: package-name sets differ; timings are observations, not speedup evidence.' >&2
+    fi
+    cmp "$EXPORT_DIR/search-omg-before.names" "$EXPORT_DIR/search-omg-after.names"
+    cmp "$EXPORT_DIR/search-native-before.names" "$EXPORT_DIR/search-native-after.names"
+    if [[ ${#extra_search[@]} -gt 0 ]]; then cmp "$EXPORT_DIR/search-extra-before.names" "$EXPORT_DIR/search-extra-after.names"; fi
+
+    case "$distro" in
+        arch) explicit_native=(pacman -Qqe); explicit_name=pacman ;;
+        debian|ubuntu) explicit_native=(apt-mark showmanual); explicit_name=apt-mark ;;
+        fedora) explicit_native=(dnf -C repoquery --userinstalled --qf '%{name}\n'); explicit_name=dnf ;;
+    esac
+    capture_explicit() {
+        local phase=$1
+        "$OMG" --json explicit > "$EXPORT_DIR/explicit-omg-$phase.stdout" 2> "$EXPORT_DIR/explicit-omg-$phase.stderr"
+        "${explicit_native[@]}" > "$EXPORT_DIR/explicit-native-$phase.stdout" 2> "$EXPORT_DIR/explicit-native-$phase.stderr"
+        omg_names explicit "$EXPORT_DIR/explicit-omg-$phase.stdout" > "$EXPORT_DIR/explicit-omg-$phase.names"
+        sort -u "$EXPORT_DIR/explicit-native-$phase.stdout" > "$EXPORT_DIR/explicit-native-$phase.names"
+        cmp "$EXPORT_DIR/explicit-omg-$phase.names" "$EXPORT_DIR/explicit-native-$phase.names"
+    }
+    capture_explicit before
+    if [[ "$distro" == debian || "$distro" == ubuntu ]]; then
+        dpkg --print-foreign-architectures > "$EXPORT_DIR/foreign-architectures.txt"
+        [[ ! -s "$EXPORT_DIR/foreign-architectures.txt" ]]
+        dpkg-query -W '-f=${Package}\t${db:Status-Status}\n' |
+            awk -F '\t' '$2 == "installed" {print $1}' | sort -u > "$EXPORT_DIR/installed.names"
+        comm -23 "$EXPORT_DIR/explicit-native-before.names" "$EXPORT_DIR/installed.names" > "$EXPORT_DIR/uninstalled-manual.names"
+        [[ ! -s "$EXPORT_DIR/uninstalled-manual.names" ]]
+    fi
+    count_wrapper="$EXPORT_DIR/count-command.sh"
+    cat > "$count_wrapper" <<'COUNT'
+#!/bin/bash
+set -euo pipefail
+case "$1" in
+    omg) exec "$2" ec ;;
+    arch) pacman -Qqe | wc -l ;;
+    debian|ubuntu) apt-mark showmanual | wc -l ;;
+    fedora) dnf -C repoquery --userinstalled --qf '%{name}\n' | wc -l ;;
+    *) exit 2 ;;
+esac
+COUNT
+    count_expected=$(wc -l < "$EXPORT_DIR/explicit-omg-before.names")
+    capture_counts() {
+        local phase=$1
+        "$BASH" "$count_wrapper" omg "$OMG" > "$EXPORT_DIR/count-omg-$phase.stdout" 2> "$EXPORT_DIR/count-omg-$phase.stderr"
+        "$BASH" "$count_wrapper" "$distro" > "$EXPORT_DIR/count-native-$phase.stdout" 2> "$EXPORT_DIR/count-native-$phase.stderr"
+        for output in "$EXPORT_DIR/count-omg-$phase.stdout" "$EXPORT_DIR/count-native-$phase.stdout"; do
+            awk -v expected="$count_expected" '
+              NF != 1 || $1 !~ /^[0-9]+$/ || $1 != expected {exit 1}
+              END {if (NR != 1) exit 1}' "$output"
+        done
+    }
+    capture_counts before
+    printf -v count_omg_command '%q ' "$BASH" "$count_wrapper" omg "$OMG"
+    printf -v count_native_command '%q ' "$BASH" "$count_wrapper" "$distro"
+    {
+        command_json OMG "$BASH" "$count_wrapper" omg "$OMG"
+        command_json "$explicit_name" "$BASH" "$count_wrapper" "$distro"
+    } | jq -s . > "$EXPORT_DIR/explicit.commands.json"
+    run_hyperfine "$EXPORT_DIR/explicit.json" "$EXPORT_DIR/explicit.md" \
+        --command-name OMG "$count_omg_command" --command-name "$explicit_name" "$count_native_command"
+    capture_counts after
+    capture_explicit after
+    cmp "$EXPORT_DIR/explicit-omg-before.names" "$EXPORT_DIR/explicit-omg-after.names"
+    cmp "$EXPORT_DIR/explicit-native-before.names" "$EXPORT_DIR/explicit-native-after.names"
+    jq -n --arg distro "$distro" --argjson search_equivalent "$search_equivalent" \
+        --slurpfile info "$EXPORT_DIR/info.commands.json" \
+        --slurpfile search "$EXPORT_DIR/search.commands.json" \
+        --slurpfile explicit "$EXPORT_DIR/explicit.commands.json" \
+        --argjson warmup "$WARMUP" --argjson minimum "$MIN_RUNS" --argjson maximum "$MAX_RUNS" \
+        '{schema_version:2, complete:true, distro:$distro,
+          operations:["info","search","explicit"], daemon:"disabled",
+          cache:"warm after preflight and warmups", warmup:$warmup, min_runs:$minimum, max_runs:$maximum,
+          comparisons:{info:{equivalent:true, scope:"freshly installed tree identity/version; extra fields differ"},
+            search:{equivalent:$search_equivalent, scope:"ripgrep package-name sets, official repositories, no truncation"},
+            explicit:{equivalent:true, scope:"installed manual package-name sets and counts; common Bash wrapper"}},
+          commands:{info:$info[0],search:$search[0],explicit:$explicit[0]}}' > "$EXPORT_DIR/summary.json"
+    exit 0
 fi
 if [ ! -x "$OMGD" ]; then
     echo -e "${RED}❌ omgd binary not found next to omg: $OMGD${NC}" >&2
@@ -446,13 +872,13 @@ if [ -f "$source_cache/sync_db.bin" ]; then
 fi
 
 echo "Starting OMG Daemon..."
-$OMGD > "$DAEMON_LOG" 2>&1 &
+"$OMGD" > "$DAEMON_LOG" 2>&1 &
 DAEMON_PID=$!
 
 echo -n "Waiting for daemon to be ready..."
 daemon_ready=0
 for _ in $(seq 1 80); do
-    if $OMG status > /dev/null 2>&1; then
+    if "$OMG" status > /dev/null 2>&1; then
         daemon_ready=1
         echo " status ok"
         break
@@ -468,7 +894,7 @@ fi
 echo -n "Waiting for search index (firefox)..."
 search_ready=0
 for _ in $(seq 1 100); do
-    if $OMG search firefox --no-aur 2>/dev/null | grep -qi firefox; then
+    if "$OMG" search firefox --no-aur 2>/dev/null | grep -qi firefox; then
         search_ready=1
         echo " ready"
         break
@@ -575,9 +1001,7 @@ run_hyperfine "$EXPORT_DIR/explicit.json" "$EXPORT_DIR/explicit.md" "${explicit_
 if [ "$FAST_MODE" != true ] && [ "${OMG_BENCH_SKIP_UPDATE:-}" != 1 ]; then
     echo -e "\n${BLUE}🔄 Benchmark: UPDATE DISCOVERY${NC}"
     echo "-------------------------------"
-    if ! run_update_benchmark; then
-        echo -e "${YELLOW}Update discovery benchmark skipped or failed; query results still stand.${NC}"
-    fi
+    run_update_benchmark
 fi
 
 echo ""

@@ -7,8 +7,10 @@ staged_dir=
 arch=
 print_pins=false
 benchmark=false
+transaction_samples=0
 inventory_tiers=
 inventory_mutations=false
+report_inventory='[]'
 root="$HOME/.cache/build-targets/omg-qemu-benchmark"
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 while (($#)); do
@@ -21,9 +23,12 @@ while (($#)); do
       esac
       shift 2 ;;
     --benchmark) benchmark=true; shift ;;
+    --benchmark-transactions)
+      [[ $# -ge 2 && "$2" =~ ^([1-9]|[1-9][0-9]|100)$ ]] || exit 2
+      benchmark=true; transaction_samples=$2; shift 2 ;;
     --print-pins) print_pins=true; shift ;;
     --inventory-allow-mutations) inventory_mutations=true; shift ;;
-    --help) printf 'Usage: scripts/benchmark-qemu.sh [--distro all|arch|debian|ubuntu|fedora] [--arch x86_64|aarch64] [--release vVERSION] [--staged-dir DIR] [--evidence-dir DIR] [--benchmark] [--print-pins] [--inventory-tiers CSV] [--inventory-allow-mutations]\nRuns sequential disposable KVM guests with pinned images, reboot, sudo, package lifecycle and optional warm info timing. Guests run the host architecture by default (--arch overrides, but KVM cannot cross architectures, so a mismatch fails closed instead of silently emulating). With --inventory-tiers, drives tests/cli_behavior_inventory.tsv rows over SSH after a passing lifecycle (see scripts/qemu-inventory.sh). --print-pins lists the pinned guest images without booting anything. Requires Docker, KVM, gh, jq, coreutils. No compilation or host package changes.\n'; exit 0 ;;
+    --help) printf 'Usage: scripts/benchmark-qemu.sh [--distro all|arch|debian|ubuntu|fedora] [--arch x86_64|aarch64] [--release vVERSION] [--staged-dir DIR] [--evidence-dir DIR] [--benchmark] [--benchmark-transactions COUNT] [--print-pins] [--inventory-tiers CSV] [--inventory-allow-mutations]\nRuns sequential disposable KVM guests with pinned images, reboot, sudo, package lifecycle and optional warm read-query timing. Guests run the host architecture by default (--arch overrides, but KVM cannot cross architectures, so a mismatch fails closed instead of silently emulating). With --inventory-tiers, drives tests/cli_behavior_inventory.tsv rows over SSH after a passing lifecycle (see scripts/qemu-inventory.sh). --benchmark-transactions COUNT additionally runs independently reset install/remove trials (1-100 per tool). --print-pins lists the pinned guest images without booting anything. Requires Docker, KVM, jq, coreutils; published downloads need gh and benchmarks need Python 3. No compilation or host package changes.\n'; exit 0 ;;
     *) printf 'error: unknown argument %s\n' "$1" >&2; exit 2 ;;
   esac
 done
@@ -42,6 +47,14 @@ tsv="$here/../tests/cli_behavior_inventory.tsv"
 if [[ -n "$inventory_tiers" && ! -f "$tsv" ]]; then
   printf 'error: --inventory-tiers needs %s\n' "$tsv" >&2
   exit 2
+fi
+if [[ -n "$inventory_tiers" ]]; then
+  [[ "$inventory_tiers" =~ ^[a-z,-]+$ ]] || exit 2
+  [[ "$inventory_tiers" != ,* && "$inventory_tiers" != *, && "$inventory_tiers" != *,,* ]] || exit 2
+  IFS=',' read -ra selected_tiers <<< "$inventory_tiers"
+  for tier in "${selected_tiers[@]}"; do
+    case "$tier" in hermetic|container|qemu|network|credentialed|pty|nested-container) ;; *) exit 2 ;; esac
+  done
 fi
 command -v jq >/dev/null || exit 3
 source_kind=published
@@ -142,6 +155,7 @@ if [[ "$distro" == all ]]; then
   args=(--release "$tag" --arch "$arch")
   [[ -z "$staged_dir" ]] || args+=(--staged-dir "$staged_dir")
   [[ "$benchmark" == false ]] || args+=(--benchmark)
+  [[ "$transaction_samples" == 0 ]] || args+=(--benchmark-transactions "$transaction_samples")
   [[ -z "$inventory_tiers" ]] || args+=(--inventory-tiers "$inventory_tiers")
   [[ "$inventory_mutations" == false ]] || args+=(--inventory-allow-mutations)
   jq -n --arg source "$source_kind" --arg suffix "$case_suffix" '["arch", "debian", "ubuntu", "fedora"] | map({case_id:("qemu-"+.+$suffix+"-lifecycle"), distro:., result:"NOT_RUN", artifact_source:$source, exit_code:null, elapsed_seconds:0})' > "$suite/results.json"
@@ -165,22 +179,37 @@ controller="omg-qemu-${work##*/}"
 printf 'Starting %s (%s). Evidence: %s\n' "$distro" "$arch" "$work"
 result=HARNESS_ERROR
 cleanup() {
-  local rc=$? remaining
+  local rc=$? remaining safe_to_remove=true
   trap - EXIT
   if [[ ${started:-false} == true ]]; then
+    safe_to_remove=false
     timeout --kill-after=5s 60s docker rm --force "$controller" >> "$work/cleanup.log" 2>&1 || { rc=3; result=HARNESS_ERROR; }
     if remaining=$(timeout 15 docker ps -aq --filter "name=^/${controller}$") && [[ -z "$remaining" ]]; then
       printf 'verified absent: %s\n' "$controller" >> "$work/cleanup.log"
+      safe_to_remove=true
     else rc=3; result=HARNESS_ERROR; fi
   fi
+  if [[ "$safe_to_remove" == true ]]; then
+  # Only the stopped controller's owned disposable disks live here, not evidence.
+  rm -rf "$work/guest/transaction-disks" || { rc=3; result=HARNESS_ERROR; }
+  [[ ! -e "$work/guest/transaction-disks" ]] || { rc=3; result=HARNESS_ERROR; }
   rm -f "$work/guest"/{client-key,guest-host-key,user-data,seed.img,overlay.qcow2,base.qcow2,vars.fd,qemu.pid} || { rc=3; result=HARNESS_ERROR; }
   for file in client-key guest-host-key user-data seed.img overlay.qcow2 base.qcow2 vars.fd qemu.pid; do
     if [[ -e "$work/guest/$file" ]]; then rc=3; result=HARNESS_ERROR; fi
   done
+  else
+    printf 'Controller absence unverified; preserving guest disks and keys\n' >> "$work/cleanup.log"
+  fi
   if [[ "$rc" -ne 0 && "$result" == PASS ]]; then result=HARNESS_ERROR; fi
   jq -n --arg distro "$distro" --arg case_id "$case_id" --arg result "$result" --arg source "$source_kind" --argjson rc "$rc" --argjson elapsed "$SECONDS" \
     '[{case_id:$case_id,distro:$distro,result:$result,artifact_source:$source,exit_code:$rc,elapsed_seconds:$elapsed}]' > "$work/results.json"
-  timeout --kill-after=2s 12s env OMG_SMOKE_RELEASE="$tag" OMG_SMOKE_ENVIRONMENT=qemu-matrix "$repo_root/scripts/report-smoke-sentry.sh" "$work/results.json" > "$work/reporting.log" 2>&1 || true
+  report_input="$work/results.json"
+  if jq --argjson inventory "$report_inventory" '. + $inventory' "$work/results.json" > "$work/sentry-results.json"; then
+    report_input="$work/sentry-results.json"
+  else
+    printf 'Inventory telemetry projection failed; reporting lifecycle result only\n' >> "$work/cleanup.log"
+  fi
+  timeout --kill-after=2s 12s env OMG_SMOKE_RELEASE="$tag" OMG_SMOKE_ENVIRONMENT=qemu-matrix "$repo_root/scripts/report-smoke-sentry.sh" "$report_input" > "$work/reporting.log" 2>&1 || true
   printf '%s %s. Evidence: %s\n' "$distro" "$result" "$work"
   exit "$rc"
 }
@@ -224,6 +253,7 @@ if [[ "$arch" == aarch64 && -z "$staged_dir" ]]; then
   exit 3
 fi
 for tool in docker timeout sha256sum; do command -v "$tool" >/dev/null || exit 3; done
+[[ "$benchmark" == false ]] || { command -v python3 >/dev/null || exit 3; }
 [[ -n "$staged_dir" ]] || { command -v gh >/dev/null || exit 3; }
 timeout --kill-after=2s 15s docker version --format '{{.Server.Version}}' > "$work/engine-preflight.log" 2>&1 || exit 3
 { date -u; uname -a; cat /proc/loadavg; grep -E 'MemTotal|MemAvailable|SwapFree' /proc/meminfo; } > "$work/host-metadata.txt"
@@ -242,12 +272,23 @@ started=true
 timeout 120 docker run -d --name "$controller" --cpus 2 --memory 3g --memory-swap 3g --device /dev/kvm \
   --mount "type=bind,src=$work,dst=/work" --workdir /work \
   "$controller_image" sleep infinity > "$work/controller-id.txt"
-timeout 300 docker exec "$controller" sh -c "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $qemu_pkg qemu-utils cloud-image-utils openssh-client curl ca-certificates $firmware_pkg jq" > "$work/controller-setup.log" 2>&1
+timeout --kill-after=5s 600 docker exec "$controller" sh -c "apt-get -o APT::Update::Error-Mode=any -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update && DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends $qemu_pkg qemu-utils cloud-image-utils openssh-client curl ca-certificates $firmware_pkg jq" > "$work/controller-setup.log" 2>&1
 timeout 360 docker exec "$controller" bash -c 'set -e; cd /work/guest; curl --fail --location --max-time 300 -o base.qcow2 "$1"; printf "%s  base.qcow2\n" "$2" | "$3" -c -; "$4" --version; qemu-img info base.qcow2' _ "$image_url" "$image_hash" "$hash_tool" "$qemu_bin" > "$work/image-setup.log" 2>&1
 cat > "$work/boot.sh" <<'BOOT'
 #!/usr/bin/env bash
 set -euo pipefail
 cd /work/guest
+initial=true
+vm_disk=overlay.qcow2; vm_vars=vars.fd; vm_serial=serial.log
+if [[ $# == 9 ]]; then
+  initial=false
+  vm_disk=$7; vm_vars=$8; vm_serial=$9
+  [[ "$vm_disk" =~ ^/work/guest/transaction-disks/[a-z0-9-]+\.qcow2$ && -f "$vm_disk" ]] || exit 2
+  [[ "$vm_vars" =~ ^/work/guest/transaction-disks/[a-z0-9-]+\.fd$ ]] || exit 2
+  [[ "$vm_serial" == /work/transactions/* && "$vm_serial" != *'/../'* ]] || exit 2
+elif [[ $# != 6 ]]; then exit 2; fi
+[[ ! -e qemu.pid ]] || exit 2
+if [[ "$initial" == true ]]; then
 ssh-keygen -q -t ed25519 -N '' -f client-key
 ssh-keygen -q -t ed25519 -N '' -f guest-host-key
 {
@@ -265,14 +306,16 @@ cat guest-host-key.pub >> known_hosts
 cloud-localds seed.img user-data meta-data
 qemu-img create -f qcow2 -F qcow2 -b /work/guest/base.qcow2 overlay.qcow2
 qemu-img resize overlay.qcow2 12G
+fi
 firmware=()
 if [[ "$1" == uefi ]]; then
-  cp "$4" vars.fd
-  firmware=(-drive if=pflash,format=raw,readonly=on,file="$3" -drive if=pflash,format=raw,file=vars.fd)
+  if [[ "$initial" == true ]]; then cp "$4" "$vm_vars"; fi
+  [[ -f "$vm_vars" ]] || exit 2
+  firmware=(-drive if=pflash,format=raw,readonly=on,file="$3" -drive if=pflash,format=raw,file="$vm_vars")
 fi
 "$5" -machine "$6,accel=kvm" -cpu host -smp 2 -m 1536 \
-  "${firmware[@]}" -display none -serial file:serial.log \
-  -drive file=overlay.qcow2,if=virtio,format=qcow2 -drive file=seed.img,if=virtio,format=raw \
+  "${firmware[@]}" -display none -serial "file:$vm_serial" \
+  -drive "file=$vm_disk,if=virtio,format=qcow2" -drive file=seed.img,if=virtio,format=raw \
   -netdev user,id=n,ipv6=off,hostfwd=tcp:127.0.0.1:2222-:22 -device virtio-net-pci,netdev=n \
   -daemonize -pidfile qemu.pid
 opts=(-i client-key -p 2222 -o BatchMode=yes -o ConnectTimeout=2 -o ServerAliveInterval=5 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=yes -o UserKnownHostsFile=known_hosts)
@@ -285,7 +328,8 @@ wait_ssh() {
   return 1
 }
 wait_ssh
-timeout 180 ssh "${opts[@]}" bench@127.0.0.1 'cloud-init status --wait; cat /etc/os-release; uname -r; sudo -n true'
+timeout 180 ssh "${opts[@]}" bench@127.0.0.1 'cloud-init status --wait && cat /etc/os-release && uname -r && sudo -n true'
+if [[ "$initial" == false ]]; then exit 0; fi
 ssh "${opts[@]}" bench@127.0.0.1 "sudo -n systemctl enable '$2'"
 before=$(ssh "${opts[@]}" bench@127.0.0.1 cat /proc/sys/kernel/random/boot_id)
 ssh "${opts[@]}" bench@127.0.0.1 'sudo -n systemctl reboot' || true
@@ -306,16 +350,41 @@ if [[ -n "$inventory_tiers" ]]; then
   cp "$here/qemu-inventory.sh" "$work/qemu-inventory.sh"
   cp "$tsv" "$work/cases.tsv"
 fi
+if [[ "$benchmark" == true ]]; then
+  cp "$here/../benchmark-hyperfine.sh" "$work/benchmark-hyperfine.sh"
+  cp "$here/record-benchmark-run.py" "$work/record-benchmark-run.py"
+  if [[ "$transaction_samples" != 0 ]]; then
+    cp "$here/qemu-transactions.sh" "$work/qemu-transactions.sh"
+    sha256sum "$work/qemu-transactions.sh" > "$work/transaction-runner-sha256.txt"
+  fi
+  sha256sum "$work/benchmark-hyperfine.sh" "$work/record-benchmark-run.py" > "$work/benchmark-driver-sha256.txt"
+fi
 cat > "$work/guest-check.sh" <<'GUEST'
 #!/usr/bin/env bash
 set -euo pipefail
 export LC_ALL=C NO_COLOR=1
 cd "$HOME"
-distro=$1; tag=$2; digest=$3; benchmark=$4; guest_arch=$5; expected_uname=$6
+distro=$1; tag=$2; digest=$3; benchmark=$4; guest_arch=$5; expected_uname=$6; inventory_tiers=$7
 actual_id=$(awk -F= '$1 == "ID" {gsub(/"/, "", $2); print $2}' /etc/os-release)
 [[ "$actual_id" == "$distro" && $(uname -m) == "$expected_uname" ]] || exit 120
 mkdir -p evidence
-trap 'status=$?; printf "%s\n" "$status" > evidence/exit-code' EXIT
+capture_audit_metadata() {
+  timeout --kill-after=2s 5s sudo -n bash -c '
+    for path in /var/log /var/log/omg /var/lib /var/lib/omg /var/lib/omg/audit; do
+      if [[ -e "$path" || -L "$path" ]]; then
+        stat -c "%n uid=%u gid=%g mode=%a type=%F" "$path"
+      else
+        printf "%s absent\n" "$path"
+      fi
+    done
+  ' > evidence/audit-directory-after.txt 2>&1
+}
+trap 'status=$?; printf "%s\n" "$status" > evidence/exit-code; capture_audit_metadata || true' EXIT
+# Preserve directory trust evidence before a privileged operation can fail.
+stat -c '%n uid=%u gid=%g mode=%a type=%F' / /var /var/log > evidence/audit-directory-metadata.txt
+if [[ -e /var/log/omg || -L /var/log/omg ]]; then
+  stat -c '%n uid=%u gid=%g mode=%a type=%F' /var/log/omg >> evidence/audit-directory-metadata.txt
+fi
 printf '%s  release.tar.gz\n' "$digest" | sha256sum -c -
 tar -xzf release.tar.gz
 bin="$HOME/omg-${tag}-${guest_arch}-linux-${distro}/omg"
@@ -349,12 +418,12 @@ version=$("${version_cmd[@]}")
 [[ $(awk '$1 == "Version:" {print $2}' evidence/omg-info.txt) == "$version" ]]
 if [[ "$benchmark" == true ]]; then
   case "$distro" in
-    arch) sudo -n pacman -S --noconfirm --needed hyperfine || exit 120 ;;
-    debian|ubuntu) sudo -n env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends hyperfine || exit 120 ;;
-    fedora) sudo -n dnf install -y hyperfine || exit 120 ;;
+    arch) sudo -n pacman -S --noconfirm --needed hyperfine jq || exit 120 ;;
+    debian|ubuntu) sudo -n env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends hyperfine jq || exit 120 ;;
+    fedora) sudo -n dnf install -y hyperfine jq || exit 120 ;;
   esac
-  hyperfine --shell=none --output=pipe --warmup 3 --runs 30 --export-json evidence/info.json \
-    --command-name 'OMG installed info' "$bin info tree" --command-name 'Native info' "${native[*]}"
+  OMG_BENCH_BINARY="$bin" OMG_BENCH_EXPORT_DIR="$HOME/evidence/benchmarks" \
+    bash "$HOME/benchmark-hyperfine.sh" --guest || exit 120
 fi
 sudo -n "$bin" remove --yes tree
 if installed >/dev/null 2>&1; then echo 'package remains installed' >&2; exit 1; fi
@@ -372,19 +441,41 @@ if [[ "$distro" == debian || "$distro" == ubuntu ]]; then
   sudo -n "$bin" remove --yes tree
   if installed >/dev/null 2>&1; then echo 'local package remains installed' >&2; exit 1; fi
 fi
+sudo -n test -s /var/lib/omg/audit/audit.jsonl
+sudo -n env OMG_DATA_DIR=/var/lib/omg "$bin" audit verify > evidence/system-audit-verify.txt 2>&1
 case "$distro" in
   arch) pacman -Q > evidence/installed-after.txt; sha256sum /var/lib/pacman/sync/*.db > evidence/repository-hashes.txt ;;
   debian|ubuntu) dpkg-query -W > evidence/installed-after.txt; find /var/lib/apt/lists -maxdepth 1 -type f ! -name lock -exec sha256sum {} + > evidence/repository-hashes.txt ;;
   fedora) rpm -qa > evidence/installed-after.txt; find /var/cache/libdnf5 -type f -name repomd.xml -exec sha256sum {} + > evidence/repository-hashes.txt ;;
 esac
 { cat /etc/os-release; uname -a; sha256sum "$bin"; printf 'native_version=%s\n' "$version"; } > evidence/guest-metadata.txt
+# Inventory fixtures need these tools; missing tools are setup failures,
+# never acceptable product refusals. Keep this after the lifecycle probe.
+if [[ -n "$inventory_tiers" ]]; then
+  case "$distro" in
+    arch) sudo -n pacman -S --noconfirm --needed git make curl python ;;
+    debian|ubuntu) sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git make curl python3 ;;
+    fedora) sudo -n dnf install -y git make curl python3 podman ;;
+  esac > evidence/inventory-setup.txt 2>&1 || exit 120
+  if [[ "$distro" == fedora ]]; then
+    command -v podman > evidence/container-engine.txt || exit 120
+    podman --version >> evidence/container-engine.txt || exit 120
+    if command -v docker >> evidence/container-engine.txt; then exit 120; fi
+  else
+    printf 'fixture requires no container engine\n' > evidence/container-engine.txt
+    if command -v docker >> evidence/container-engine.txt || command -v podman >> evidence/container-engine.txt; then exit 120; fi
+  fi
+fi
 echo 'PASS: package lifecycle and native version parity'
 GUEST
 opts=(-i client-key -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=known_hosts)
 timeout 60 docker exec -w /work/guest "$controller" scp "${opts[@]}" -P 2222 "/work/release/$archive" bench@127.0.0.1:release.tar.gz
 timeout 60 docker exec -w /work/guest "$controller" scp "${opts[@]}" -P 2222 /work/guest-check.sh bench@127.0.0.1:guest-check.sh
+if [[ "$benchmark" == true ]]; then
+  timeout 60 docker exec -w /work/guest "$controller" scp "${opts[@]}" -P 2222 /work/benchmark-hyperfine.sh bench@127.0.0.1:benchmark-hyperfine.sh
+fi
 rc=0
-timeout 600 docker exec -w /work/guest "$controller" ssh "${opts[@]}" -p 2222 bench@127.0.0.1 "bash guest-check.sh '$distro' '$tag' '$digest' '$benchmark' '$arch' '$guest_uname'" > "$work/guest-check.log" 2>&1 || rc=$?
+timeout 600 docker exec -w /work/guest "$controller" ssh "${opts[@]}" -p 2222 bench@127.0.0.1 "bash guest-check.sh '$distro' '$tag' '$digest' '$benchmark' '$arch' '$guest_uname' '$inventory_tiers'" > "$work/guest-check.log" 2>&1 || rc=$?
 timeout 60 docker exec -w /work/guest "$controller" scp -r "${opts[@]}" -P 2222 bench@127.0.0.1:evidence /work/guest/ > "$work/evidence-copy.log" 2>&1
 if [[ ! -f "$work/guest/evidence/exit-code" ]]; then
   printf 'Guest evidence receipt is missing (transport exit %s); see %s/evidence-copy.log and %s/guest-check.log\n' "$rc" "$work" "$work" >&2
@@ -395,24 +486,160 @@ if [[ ! "$guest_rc" =~ ^[0-9]+$ || "$guest_rc" != "$rc" ]]; then
   printf 'Guest exit %s differs from transport exit %s\n' "$guest_rc" "$rc" >&2
   exit 3
 fi
+if [[ "$benchmark" == true && "$rc" == 0 ]]; then
+  case "$distro" in
+    arch) expected_commands='{"info":["OMG","pacman"],"search":["OMG","pacman"],"explicit":["OMG","pacman"]}' ;;
+    debian|ubuntu) expected_commands='{"info":["OMG","apt-cache","apt"],"search":["OMG","apt-cache","apt"],"explicit":["OMG","apt-mark"]}' ;;
+    fedora) expected_commands='{"info":["OMG","rpm","dnf"],"search":["OMG","dnf"],"explicit":["OMG","dnf"]}' ;;
+  esac
+  benchmark_evidence="$work/guest/evidence/benchmarks"
+  if ! (
+    [[ -f "$benchmark_evidence/summary.json" && $(wc -c < "$benchmark_evidence/summary.json") -le 1048576 ]] || exit 1
+    python3 "$work/record-benchmark-run.py" --validate-only --scenario info --scenario search \
+      --scenario explicit --source "$benchmark_evidence" || exit 1
+    jq -e --arg distro "$distro" --argjson expected "$expected_commands" '
+      .schema_version == 2 and .complete == true and .distro == $distro and
+      .operations == ["info","search","explicit"] and .daemon == "disabled" and
+      (.commands | with_entries(.value |= map(.label))) == $expected and
+      all(.commands[][]; (.argv|type == "array" and length > 0 and all(.[]; type == "string"))) and
+      .comparisons.info.equivalent == true and .comparisons.explicit.equivalent == true and
+      (.comparisons.search.equivalent|type == "boolean") and
+      (.min_runs|type == "number" and floor == . and . > 0) and
+      (.max_runs|type == "number" and floor == . and . >= 1 and . <= 10000) and
+      .min_runs <= .max_runs' "$benchmark_evidence/summary.json" >/dev/null || exit 1
+    for scenario in info search explicit; do
+      jq -e --argjson expected "$expected_commands" --arg scenario "$scenario" \
+        --slurpfile summary "$benchmark_evidence/summary.json" '
+        [.results[].command] == $expected[$scenario] and
+        all(.results[]; (.times|length) >= $summary[0].min_runs and
+          (.times|length) <= $summary[0].max_runs)' "$benchmark_evidence/$scenario.json" >/dev/null || exit 1
+    done
+  ) > "$work/benchmark-validation.log" 2>&1; then
+    printf 'Benchmark evidence rejected; see %s/benchmark-validation.log\n' "$work" >&2
+    rc=120
+  fi
+fi
+if [[ "$transaction_samples" != 0 && "$rc" == 0 ]]; then
+  transaction_rc=0
+  timeout --kill-after=10s 21600 docker exec -w /work "$controller" bash /work/qemu-transactions.sh \
+    "$distro" "$tag" "$arch" "$transaction_samples" "$firmware" "$ssh_service" \
+    "$firmware_code" "$firmware_vars_src" "$qemu_bin" "$qemu_machine" \
+    > "$work/transactions.log" 2>&1 || transaction_rc=$?
+  if [[ "$transaction_rc" != 0 ]]; then
+    rc=120
+  elif ! (
+    summary="$work/transactions/summary.json"
+    [[ -f "$summary" && $(wc -c < "$summary") -le 1048576 ]] || exit 1
+    jq -e --arg distro "$distro" --argjson count "$transaction_samples" '
+      . as $s |
+      ([range(1;$count+1) as $round |
+        ["install-omg-","install-native-","remove-omg-","remove-native-"][] |
+        .+(("000"+($round|tostring))[-3:])] | sort) as $expected |
+      .schema_version==1 and .kind=="transaction-suite" and .complete==true and
+      .distro==$distro and .samples_per_tool==$count and .expected_trials==($count*4) and
+      (.bases.install|test("^[0-9a-f]{64}$")) and (.bases.remove|test("^[0-9a-f]{64}$")) and
+      ([.results[].id]|sort)==$expected and
+      ([.results[].boot_id]|unique|length)==($count*4) and
+      all(.results[];.result=="PASS" and .exit_code==0 and
+        (.boot_id|test("^[0-9a-f-]{36}$")) and .base_sha256==$s.bases[.operation] and
+        .id==(.operation+"-"+.tool+"-"+(("000"+(.round|tostring))[-3:])))
+    ' "$summary" >/dev/null || exit 1
+    expected_version=$(awk '$1=="Version:" {print $2}' "$work/guest/evidence/omg-info.txt")
+    [[ "$(<"$work/transactions/expected-version.txt")" == "$expected_version" ]] || exit 1
+    read -r expected_binary _ < "$work/guest/evidence/benchmarks/binary-sha256.txt"
+    for operation in install remove; do
+      for tool in omg native; do
+        label_name=OMG
+        if [[ "$tool" == native ]]; then
+          case "$distro" in arch) label_name=pacman ;; debian|ubuntu) label_name=apt ;; fedora) label_name=dnf ;; esac
+        fi
+        for ((round=1;round<=transaction_samples;round++)); do
+          printf -v trial_id '%s-%s-%03d' "$operation" "$tool" "$round"
+          evidence="$work/transactions/trials/$trial_id/transaction-trial"
+          python3 "$work/record-benchmark-run.py" --validate-only --scenario "$operation" --source "$evidence" || exit 1
+          read -r actual_binary _ < "$evidence/binary-sha256.txt"
+          [[ "$actual_binary" == "$expected_binary" ]] || exit 1
+          jq -e --arg label_name "$label_name" '
+            .results|length==1 and .[0].command==$label_name and (.[0].times|length)==1
+          ' "$evidence/$operation.json" >/dev/null || exit 1
+          jq -e --arg distro "$distro" --arg operation "$operation" --arg tool "$tool" \
+            --arg version "$expected_version" --arg label_name "$label_name" --arg id "$trial_id" \
+            --slurpfile suite "$summary" '
+            .schema_version==1 and .kind=="transaction-trial" and .complete==true and
+            .distro==$distro and .operation==$operation and .tool==$tool and .expected_version==$version and
+            .boot_id==([$suite[0].results[]|select(.id==$id)][0].boot_id) and
+            .state_change_verified==true and .samples==1 and .warmup==0 and .command.label==$label_name and
+            (.command.argv|type=="array" and length>0 and all(.[];type=="string"))
+          ' "$evidence/summary.json" >/dev/null || exit 1
+        done
+      done
+    done
+  ) > "$work/transaction-validation.log" 2>&1; then
+    rc=120
+  fi
+fi
+inventory_harness_error=false
+if [[ -n "$inventory_tiers" ]]; then
+  expected_ids=$(jq -Rn --arg tiers "$inventory_tiers" --arg distro "$distro" '
+    ($tiers | split(",")) as $wanted |
+    [inputs | split("\t") | select(.[0] != "case") |
+      select((.[6] | split(",")) as $row | any($row[]; . as $t | $wanted | index($t))) |
+      "qemu-" + $distro + "-" + .[0]] | sort' < "$tsv")
+fi
 if [[ -n "$inventory_tiers" && "$rc" == 0 ]]; then
   # TSV-driven rows run only on a healthy guest, inside the controller
   # (same netns; /work is bind-mounted). Evidence lands in $work/inventory.
   inv_args=(--work /work --distro "$distro" --tiers "$inventory_tiers" --tag "$tag"
     --binary "/home/bench/omg-${tag}-${arch}-linux-${distro}/omg" --tsv /work/cases.tsv)
   [[ "$inventory_mutations" == false ]] || inv_args+=(--allow-mutations)
-  if ! timeout 1800 docker exec -w /work "$controller" bash /work/qemu-inventory.sh "${inv_args[@]}" > "$work/inventory.log" 2>&1; then
-    printf 'Inventory rows failed; see %s/inventory\n' "$work" >&2
-    rc=1
+  inventory_rc=0
+  timeout --kill-after=5s 3600 docker exec -w /work "$controller" bash /work/qemu-inventory.sh "${inv_args[@]}" > "$work/inventory.log" 2>&1 || inventory_rc=$?
+  # Validate identity and values even for interrupted reports. Partial
+  # reports may prove failures but can never prove a passing selection.
+  inventory_snapshot='null'
+  if [[ -f "$work/inventory/results.json" && $(wc -c < "$work/inventory/results.json") -le 1048576 ]]; then
+    inventory_snapshot=$(<"$work/inventory/results.json")
   fi
+  if ! jq -e --arg distro "$distro" --argjson expected "$expected_ids" '
+    type == "array" and length > 0 and
+    ([.[].case_id] | length == (unique | length)) and
+    all(.[];
+      .distro == $distro and .artifact_source == "inventory" and
+      (.case_id as $id | $expected | index($id) != null) and
+      (.result == "PASS" or .result == "FAIL" or .result == "BLOCKED" or .result == "HARNESS_ERROR" or .result == "SKIPPED") and
+      (.exit_code | type == "number" and floor == . and . >= -1 and . <= 255) and
+      (.elapsed_seconds | type == "number" and . >= 0 and . <= 86400))' <<< "$inventory_snapshot" >/dev/null 2>&1; then
+    printf 'Inventory evidence missing or invalid; see %s/inventory.log\n' "$work" >&2
+    inventory_harness_error=true
+  else
+    report_inventory=$(jq -c 'map({case_id,distro,result,exit_code,elapsed_seconds})' <<< "$inventory_snapshot")
+    if jq -e 'any(.[]; .result == "FAIL")' <<< "$inventory_snapshot" >/dev/null; then
+      rc=1
+    elif [[ "$inventory_rc" != 0 ]] ||
+      ! jq -e '.complete == true' "$work/inventory/summary.json" >/dev/null 2>&1 ||
+      ! jq -e --argjson expected "$expected_ids" '
+        ([.[].case_id] | sort) == $expected and
+        any(.[]; .result == "PASS") and
+        all(.[]; .result == "PASS" or .result == "SKIPPED")' <<< "$inventory_snapshot" >/dev/null; then
+      inventory_harness_error=true
+    fi
+  fi
+  [[ "$inventory_harness_error" == false ]] || rc=3
+elif [[ -n "$inventory_tiers" ]]; then
+  # A lifecycle failure must not make the requested inventory disappear.
+  mkdir -p "$work/inventory"
+  jq -n --argjson ids "$expected_ids" --arg distro "$distro" '
+    $ids | map({case_id:., distro:$distro, artifact_source:"inventory",
+      result:"BLOCKED", exit_code:-1, elapsed_seconds:0})' > "$work/inventory/results.json"
+  printf '{"complete":false,"reason":"guest lifecycle failed"}\n' > "$work/inventory/summary.json"
 fi
 # Verdict map: only proven-rig codes are HARNESS_ERROR. Per the GNU
 # coreutils manual, timeout exits 124 when the managed command times out
 # and 125/126/127 when timeout/the-exec itself fails
 # (https://www.gnu.org/software/coreutils/manual/html_node/timeout-invocation.html):
-# a 124 here means the guest product hung, and 137 (128+SIGKILL, the
-# OOM-killer signature) means the guest product was killed — both are
-# PRODUCT signals unless guest logs prove rig failure. 120 is this
+# A deadline or SIGKILL is a failed execution, not proof of its cause.
+# Status 137 alone cannot distinguish a killed command from killed timeout. 120 is this
 # pipeline's own fixture marker; 125/126/127/255 are exec/transport.
 case "$rc" in 0) result=PASS ;; 120|125|126|127|255) result=HARNESS_ERROR ;; *) result=PRODUCT_FAIL ;; esac
+[[ "$inventory_harness_error" == false ]] || result=HARNESS_ERROR
 exit "$rc"
