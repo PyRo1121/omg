@@ -55,6 +55,47 @@ const CLIENT_BURST_SIZE: u32 = 100;
 /// ever triggers.
 const MAX_CONCURRENT_CONNECTIONS: usize = 128;
 
+#[derive(Debug, PartialEq, Eq)]
+enum BackgroundEvent {
+    Shutdown,
+    Maintenance,
+    SocketHealth,
+}
+
+/// Own the worker's deadlines independently of the work performed at each tick.
+struct BackgroundSchedule {
+    maintenance: tokio::time::Interval,
+    socket_health: tokio::time::Interval,
+}
+
+impl BackgroundSchedule {
+    fn new() -> Self {
+        let now = tokio::time::Instant::now();
+        let mut maintenance =
+            tokio::time::interval_at(now + STATUS_REFRESH_INTERVAL, STATUS_REFRESH_INTERVAL);
+        maintenance.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut socket_health = tokio::time::interval_at(
+            now + SOCKET_HEALTH_CHECK_INTERVAL,
+            SOCKET_HEALTH_CHECK_INTERVAL,
+        );
+        socket_health.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        Self {
+            maintenance,
+            socket_health,
+        }
+    }
+
+    async fn next(&mut self, shutdown: &CancellationToken) -> BackgroundEvent {
+        tokio::select! {
+            biased;
+            () = shutdown.cancelled() => BackgroundEvent::Shutdown,
+            // Interval ticks retain their deadlines when another branch wins.
+            _ = self.maintenance.tick() => BackgroundEvent::Maintenance,
+            _ = self.socket_health.tick() => BackgroundEvent::SocketHealth,
+        }
+    }
+}
+
 async fn wait_for_termination_signal() -> Result<()> {
     #[cfg(unix)]
     {
@@ -265,21 +306,15 @@ async fn run_with_status_path(
 
         // Track last cleanup time for periodic mmap cleanup
         let mut last_cleanup = std::time::Instant::now();
-        let mut socket_health = tokio::time::interval(SOCKET_HEALTH_CHECK_INTERVAL);
-        socket_health.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        // Consume the immediate first tick; the listener was just bound.
-        socket_health.tick().await;
+        let mut schedule = BackgroundSchedule::new();
 
         loop {
-            tokio::select! {
-                // biased: always check cancellation first to ensure prompt shutdown
-                biased;
-
-                () = worker_token.cancelled() => {
+            match schedule.next(&worker_token).await {
+                BackgroundEvent::Shutdown => {
                     tracing::info!("Background worker shutting down");
                     break;
                 }
-                () = tokio::time::sleep(STATUS_REFRESH_INTERVAL) => {
+                BackgroundEvent::Maintenance => {
                     tracing::debug!("Refreshing system status cache...");
                     refresh_status(&state_worker, &fast_status_path).await;
                     // Independent of status publication: a failed scan must
@@ -296,7 +331,7 @@ async fn run_with_status_path(
                         last_cleanup = std::time::Instant::now();
                     }
                 }
-                _ = socket_health.tick() => {
+                BackgroundEvent::SocketHealth => {
                     if !socket_path.exists() {
                         let failure = format!(
                             "Daemon socket {} was removed externally",
@@ -1024,6 +1059,46 @@ mod tests {
         await_client_write(std::future::ready(Ok(())), Duration::from_secs(1))
             .await
             .expect("completed write must succeed");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn background_maintenance_survives_intervening_health_ticks() {
+        let start = tokio::time::Instant::now();
+        let mut schedule = BackgroundSchedule::new();
+        let shutdown = CancellationToken::new();
+
+        for minute in 1..5 {
+            assert_eq!(
+                schedule.next(&shutdown).await,
+                BackgroundEvent::SocketHealth
+            );
+            assert_eq!(start.elapsed(), Duration::from_secs(minute * 60));
+        }
+        assert_eq!(schedule.next(&shutdown).await, BackgroundEvent::Maintenance);
+        assert_eq!(start.elapsed(), STATUS_REFRESH_INTERVAL);
+
+        // A health check due at the same instant must still run afterwards.
+        assert_eq!(
+            schedule.next(&shutdown).await,
+            BackgroundEvent::SocketHealth
+        );
+        for _ in 6..10 {
+            assert_eq!(
+                schedule.next(&shutdown).await,
+                BackgroundEvent::SocketHealth
+            );
+        }
+        assert_eq!(schedule.next(&shutdown).await, BackgroundEvent::Maintenance);
+        assert_eq!(start.elapsed(), STATUS_REFRESH_INTERVAL * 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn background_shutdown_takes_priority_over_due_ticks() {
+        let mut schedule = BackgroundSchedule::new();
+        let shutdown = CancellationToken::new();
+        tokio::time::advance(STATUS_REFRESH_INTERVAL).await;
+        shutdown.cancel();
+        assert_eq!(schedule.next(&shutdown).await, BackgroundEvent::Shutdown);
     }
 
     #[test]
