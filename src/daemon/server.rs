@@ -16,10 +16,7 @@ use tokio_util::codec::{FramedWrite, LengthDelimitedCodec};
 use tokio_util::sync::CancellationToken;
 
 use super::handlers::{DaemonState, handle_request};
-use super::protocol::{
-    ExplicitResult, Request, Response, ResponseResult, SearchResult, SecurityAuditResult,
-    error_codes,
-};
+use super::protocol::{Request, Response, ResponseResult, SearchResult, error_codes};
 use crate::core::metrics::GLOBAL_METRICS;
 use crate::core::security::{
     AuditEventType, AuditSeverity, audit_log_nonblocking, init_audit_logger,
@@ -54,6 +51,47 @@ const CLIENT_BURST_SIZE: u32 = 100;
 /// exhaust memory/file descriptors before the accept-loop EMFILE backoff
 /// ever triggers.
 const MAX_CONCURRENT_CONNECTIONS: usize = 128;
+
+#[derive(Debug, PartialEq, Eq)]
+enum BackgroundEvent {
+    Shutdown,
+    Maintenance,
+    SocketHealth,
+}
+
+/// Own the worker's deadlines independently of the work performed at each tick.
+struct BackgroundSchedule {
+    maintenance: tokio::time::Interval,
+    socket_health: tokio::time::Interval,
+}
+
+impl BackgroundSchedule {
+    fn new() -> Self {
+        let now = tokio::time::Instant::now();
+        let mut maintenance =
+            tokio::time::interval_at(now + STATUS_REFRESH_INTERVAL, STATUS_REFRESH_INTERVAL);
+        maintenance.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut socket_health = tokio::time::interval_at(
+            now + SOCKET_HEALTH_CHECK_INTERVAL,
+            SOCKET_HEALTH_CHECK_INTERVAL,
+        );
+        socket_health.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        Self {
+            maintenance,
+            socket_health,
+        }
+    }
+
+    async fn next(&mut self, shutdown: &CancellationToken) -> BackgroundEvent {
+        tokio::select! {
+            biased;
+            () = shutdown.cancelled() => BackgroundEvent::Shutdown,
+            // Interval ticks retain their deadlines when another branch wins.
+            _ = self.maintenance.tick() => BackgroundEvent::Maintenance,
+            _ = self.socket_health.tick() => BackgroundEvent::SocketHealth,
+        }
+    }
+}
 
 async fn wait_for_termination_signal() -> Result<()> {
     #[cfg(unix)]
@@ -265,21 +303,15 @@ async fn run_with_status_path(
 
         // Track last cleanup time for periodic mmap cleanup
         let mut last_cleanup = std::time::Instant::now();
-        let mut socket_health = tokio::time::interval(SOCKET_HEALTH_CHECK_INTERVAL);
-        socket_health.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        // Consume the immediate first tick; the listener was just bound.
-        socket_health.tick().await;
+        let mut schedule = BackgroundSchedule::new();
 
         loop {
-            tokio::select! {
-                // biased: always check cancellation first to ensure prompt shutdown
-                biased;
-
-                () = worker_token.cancelled() => {
+            match schedule.next(&worker_token).await {
+                BackgroundEvent::Shutdown => {
                     tracing::info!("Background worker shutting down");
                     break;
                 }
-                () = tokio::time::sleep(STATUS_REFRESH_INTERVAL) => {
+                BackgroundEvent::Maintenance => {
                     tracing::debug!("Refreshing system status cache...");
                     refresh_status(&state_worker, &fast_status_path).await;
                     // Independent of status publication: a failed scan must
@@ -296,7 +328,7 @@ async fn run_with_status_path(
                         last_cleanup = std::time::Instant::now();
                     }
                 }
-                _ = socket_health.tick() => {
+                BackgroundEvent::SocketHealth => {
                     if !socket_path.exists() {
                         let failure = format!(
                             "Daemon socket {} was removed externally",
@@ -491,8 +523,8 @@ async fn await_client_write(
     Ok(())
 }
 
-/// Halve a list-bearing response result so an oversized response can be
-/// degraded gracefully instead of failing.
+/// Halve a discovery response so an oversized result can fit the frame budget.
+/// Exhaustive audit and inventory results must fail rather than omit entries.
 ///
 /// Bitcode frames cannot be byte-truncated (the client's decode would fail),
 /// so truncation happens at the semantic level: list payloads are cut to a
@@ -524,49 +556,10 @@ fn shrink_result(result: &ResponseResult) -> Option<(ResponseResult, usize)> {
             let dropped = v.len() - keep;
             Some((ResponseResult::DebianSearch(v[..keep].to_vec()), dropped))
         }
-        ResponseResult::Explicit(r) if truncatable(r.packages.len()) => {
-            let keep = halve(r.packages.len());
-            let dropped = r.packages.len() - keep;
-            Some((
-                ResponseResult::Explicit(ExplicitResult {
-                    packages: r.packages[..keep].to_vec(),
-                }),
-                dropped,
-            ))
-        }
-        ResponseResult::ListUpdates(v) if truncatable(v.len()) => {
-            let keep = halve(v.len());
-            let dropped = v.len() - keep;
-            Some((ResponseResult::ListUpdates(v[..keep].to_vec()), dropped))
-        }
         ResponseResult::Suggest(v) if truncatable(v.len()) => {
             let keep = halve(v.len());
             let dropped = v.len() - keep;
             Some((ResponseResult::Suggest(v[..keep].to_vec()), dropped))
-        }
-        ResponseResult::SecurityAudit(r) if truncatable(r.vulnerabilities.len()) => {
-            let keep = halve(r.vulnerabilities.len());
-            let dropped = r.vulnerabilities.len() - keep;
-            let kept = &r.vulnerabilities[..keep];
-            let total_vulnerabilities: usize = kept.iter().map(|(_, v)| v.len()).sum();
-            let high_severity = kept
-                .iter()
-                .flat_map(|(_, vulns)| vulns)
-                .filter(|v| {
-                    v.score
-                        .as_deref()
-                        .and_then(super::handlers::vulnerability_score)
-                        .is_some_and(|score| score >= 7.0)
-                })
-                .count();
-            Some((
-                ResponseResult::SecurityAudit(SecurityAuditResult {
-                    total_vulnerabilities,
-                    high_severity,
-                    vulnerabilities: kept.to_vec(),
-                }),
-                dropped,
-            ))
         }
         _ => None,
     }
@@ -578,7 +571,7 @@ fn encode_bounded_response(response: &Response, request_id: u64) -> Result<Vec<u
         return Ok(response_bytes);
     }
 
-    // Graceful degradation: shrink list-bearing results until the encoded
+    // Graceful degradation: shrink discovery results until the encoded
     // frame fits the budget. Halving keeps the loop logarithmic; the frame
     // stays valid `Response` wire data the client decodes normally.
     if let Response::Success { result, .. } = response {
@@ -603,8 +596,8 @@ fn encode_bounded_response(response: &Response, request_id: u64) -> Result<Vec<u
         }
     }
 
-    // Nothing left to truncate (or an untruncatable result type): a single
-    // entry alone exceeds the budget. Degrade to a dedicated limit error —
+    // Exhaustive results and discovery results that cannot shrink enough
+    // must return a dedicated limit error rather than a partial success —
     // still valid `Response` semantics the client understands — never
     // INTERNAL_ERROR, which would misreport a size limit as a daemon bug.
     tracing::error!(
@@ -833,8 +826,102 @@ async fn handle_client_with_idle_timeout(
 
 #[cfg(test)]
 mod tests {
-    use super::super::protocol::{PackageInfo, WirePackageSource};
+    use super::super::protocol::{
+        ExplicitResult, PackageInfo, SecurityAuditResult, WirePackageSource,
+    };
     use super::*;
+
+    fn assert_oversized_inventory_is_rejected(result: ResponseResult) {
+        let response = Response::Success { id: 91, result };
+        let raw = crate::daemon::protocol::encode_frame(&response).expect("encode inventory");
+        assert!(raw.len() > MAX_RESPONSE_SIZE, "fixture must exceed budget");
+        let encoded = encode_bounded_response(&response, 91).expect("bounded response");
+        assert!(encoded.len() <= MAX_RESPONSE_SIZE);
+        let (_, payload) = crate::daemon::protocol::split_frame(&encoded).expect("frame header");
+        let decoded: Response = bitcode::deserialize(payload).expect("response payload");
+        assert!(
+            matches!(
+                decoded,
+                Response::Error {
+                    id: 91,
+                    code: error_codes::RESPONSE_TOO_LARGE,
+                    ..
+                }
+            ),
+            "an exhaustive inventory must not become an incomplete successful response"
+        );
+    }
+
+    #[test]
+    fn oversized_security_audits_are_rejected_without_losing_findings() {
+        let vulnerability = super::super::protocol::Vulnerability {
+            id: "CVE-fixture".to_string(),
+            summary: "v".repeat(MAX_RESPONSE_SIZE / 2 + 1024),
+            score: Some("9.8".to_string()),
+        };
+        assert_oversized_inventory_is_rejected(ResponseResult::SecurityAudit(
+            SecurityAuditResult {
+                total_vulnerabilities: 2,
+                high_severity: 2,
+                vulnerabilities: vec![
+                    ("first".to_string(), vec![vulnerability.clone()]),
+                    ("second".to_string(), vec![vulnerability]),
+                ],
+            },
+        ));
+    }
+
+    #[test]
+    fn oversized_explicit_inventories_are_rejected_without_losing_packages() {
+        assert_oversized_inventory_is_rejected(ResponseResult::Explicit(ExplicitResult {
+            packages: vec!["p".repeat(MAX_RESPONSE_SIZE / 2 + 1024); 2],
+        }));
+    }
+
+    #[test]
+    fn oversized_update_inventories_are_rejected_without_losing_updates() {
+        let update = super::super::protocol::UpdateEntry {
+            name: "p".repeat(MAX_RESPONSE_SIZE / 2 + 1024),
+            old_version: "1".to_string(),
+            new_version: "2".to_string(),
+            repo: "fixture".to_string(),
+        };
+        assert_oversized_inventory_is_rejected(ResponseResult::ListUpdates(vec![update; 2]));
+    }
+
+    #[test]
+    fn exhaustive_responses_within_budget_are_preserved_byte_for_byte() {
+        let results = [
+            ResponseResult::SecurityAudit(SecurityAuditResult {
+                total_vulnerabilities: 1,
+                high_severity: 1,
+                vulnerabilities: vec![(
+                    "package".to_string(),
+                    vec![super::super::protocol::Vulnerability {
+                        id: "CVE-fixture".to_string(),
+                        summary: "fixture".to_string(),
+                        score: Some("9.8".to_string()),
+                    }],
+                )],
+            }),
+            ResponseResult::Explicit(ExplicitResult {
+                packages: vec!["package".to_string()],
+            }),
+            ResponseResult::ListUpdates(vec![super::super::protocol::UpdateEntry {
+                name: "package".to_string(),
+                old_version: "1".to_string(),
+                new_version: "2".to_string(),
+                repo: "fixture".to_string(),
+            }]),
+        ];
+        for result in results {
+            let response = Response::Success { id: 92, result };
+            assert_eq!(
+                encode_bounded_response(&response, 92).expect("bounded response"),
+                crate::daemon::protocol::encode_frame(&response).expect("original response"),
+            );
+        }
+    }
 
     #[test]
     fn untruncatable_oversized_responses_use_a_dedicated_limit_error() {
@@ -1026,6 +1113,46 @@ mod tests {
             .expect("completed write must succeed");
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn background_maintenance_survives_intervening_health_ticks() {
+        let start = tokio::time::Instant::now();
+        let mut schedule = BackgroundSchedule::new();
+        let shutdown = CancellationToken::new();
+
+        for minute in 1..5 {
+            assert_eq!(
+                schedule.next(&shutdown).await,
+                BackgroundEvent::SocketHealth
+            );
+            assert_eq!(start.elapsed(), Duration::from_secs(minute * 60));
+        }
+        assert_eq!(schedule.next(&shutdown).await, BackgroundEvent::Maintenance);
+        assert_eq!(start.elapsed(), STATUS_REFRESH_INTERVAL);
+
+        // A health check due at the same instant must still run afterwards.
+        assert_eq!(
+            schedule.next(&shutdown).await,
+            BackgroundEvent::SocketHealth
+        );
+        for _ in 6..10 {
+            assert_eq!(
+                schedule.next(&shutdown).await,
+                BackgroundEvent::SocketHealth
+            );
+        }
+        assert_eq!(schedule.next(&shutdown).await, BackgroundEvent::Maintenance);
+        assert_eq!(start.elapsed(), STATUS_REFRESH_INTERVAL * 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn background_shutdown_takes_priority_over_due_ticks() {
+        let mut schedule = BackgroundSchedule::new();
+        let shutdown = CancellationToken::new();
+        tokio::time::advance(STATUS_REFRESH_INTERVAL).await;
+        shutdown.cancel();
+        assert_eq!(schedule.next(&shutdown).await, BackgroundEvent::Shutdown);
+    }
+
     #[test]
     fn fast_status_reader_ttl_matches_daemon_writer_cadence() {
         // If the reader TTL is shorter than the writer interval, the
@@ -1073,10 +1200,12 @@ mod tests {
     #[tokio::test]
     #[serial_test::serial]
     async fn startup_prewarms_every_common_search_query() -> Result<()> {
-        let names: Vec<String> = (0..120).map(|i| format!("python-{i:03}")).collect();
-        let records: Vec<(&str, &str, &str)> = names
+        let names: Vec<_> = (0..120)
+            .map(|index| format!("python-package-{index:03}"))
+            .collect();
+        let records: Vec<_> = names
             .iter()
-            .map(|name| (name.as_str(), "1.0", "Python package"))
+            .map(|name| (name.as_str(), "1.0", "Python fixture"))
             .collect();
         let index = super::super::index::PackageIndex::from_records(&records);
         let directory = tempfile::tempdir()?;
@@ -1133,20 +1262,33 @@ mod tests {
         })
         .await;
         server.abort();
-
-        let frame = response.context("startup search request timed out")??;
-        let (_, payload) = crate::daemon::protocol::split_frame(&frame)?;
-        let response: Response = bitcode::deserialize(payload)?;
-        let Response::Success {
-            id,
-            result: ResponseResult::Search(result),
-        } = response
-        else {
-            anyhow::bail!("expected search response, got {response:?}");
-        };
-        assert_eq!(id, 1);
-        assert_eq!(result.packages.len(), 100);
-        assert_eq!(result.total, 120);
+        for limit in [75, 120] {
+            let response = handle_request(
+                Arc::clone(&state),
+                Request::Search {
+                    id: 1,
+                    query: "python".to_string(),
+                    limit: Some(limit),
+                },
+            )
+            .await;
+            let Response::Success {
+                result: ResponseResult::Search(results),
+                ..
+            } = response
+            else {
+                anyhow::bail!("prewarmed search must succeed");
+            };
+            assert_eq!(
+                results.total, 120,
+                "prewarming must retain the backing inventory"
+            );
+            assert_eq!(
+                results.packages.len(),
+                limit,
+                "request limits apply after cache lookup"
+            );
+        }
         Ok(())
     }
 }

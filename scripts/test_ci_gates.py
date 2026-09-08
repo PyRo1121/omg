@@ -1,6 +1,9 @@
+# pyright: strict
 from __future__ import annotations
 
 import re
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -32,7 +35,8 @@ class QuickGateOfflineTests(unittest.TestCase):
             "quick-gate must not run the interactive zsh completion test",
         )
         m = re.search(r"timeout-minutes:\s*(\d+)", gate)
-        self.assertIsNotNone(m, "quick-gate must declare timeout-minutes")
+        if m is None:
+            self.fail("quick-gate must declare timeout-minutes")
         self.assertLessEqual(
             int(m.group(1)),
             10,
@@ -77,6 +81,49 @@ class LocalCiGateExecutesTests(unittest.TestCase):
             r"run:\s*make ci-local-quick",
             "quick-gate must really execute `make ci-local-quick`",
         )
+
+
+class ShellSyntaxGateTests(unittest.TestCase):
+    def test_gate_checks_every_file_without_executing_scripts(self) -> None:
+        makefile = CI_YML.parents[2] / "Makefile"
+        scripts = [
+            "install.sh",
+            "benchmark.sh",
+            "benchmark-hyperfine.sh",
+            "scripts/last.sh",
+        ]
+        for broken in [None, *scripts]:
+            with (
+                self.subTest(broken=broken),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                root = Path(directory)
+                (root / "scripts").mkdir()
+                for name in scripts:
+                    content = (
+                        "if then\n" if name == broken else "touch should-not-run\n"
+                    )
+                    (root / name).write_text(content, encoding="utf-8")
+                result = subprocess.run(
+                    [
+                        "make",
+                        "--no-print-directory",
+                        "-f",
+                        str(makefile),
+                        "check-shell-syntax",
+                    ],
+                    cwd=root,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    check=False,
+                )
+                if broken is None:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                else:
+                    self.assertNotEqual(result.returncode, 0, f"gate ignored {broken}")
+                    self.assertIn(broken, result.stderr)
+                self.assertFalse((root / "should-not-run").exists())
 
 
 if __name__ == "__main__":
