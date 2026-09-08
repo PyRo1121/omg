@@ -288,7 +288,7 @@ impl PythonManager {
         println!("{} Extracting (pure Rust)...", style::informative("→"));
         let staging = begin_staged_install(&self.versions_dir)?;
         extract_tar_gz(&download_path, staging.path(), 1).await?;
-        complete_staged_install(&staging, &version_dir, &version)?;
+        self.publish_install(&staging, &version)?;
 
         remove_file_best_effort(&download_path, "runtime archive");
 
@@ -296,6 +296,11 @@ impl PythonManager {
         self.use_version(&version)?;
 
         Ok(())
+    }
+
+    fn publish_install(&self, staging: &tempfile::TempDir, version: &str) -> Result<()> {
+        super::common::require_internal_runtime_binary(staging.path(), Path::new("bin/python3"))?;
+        complete_staged_install(staging, &self.versions_dir.join(version), version)
     }
 
     /// Resolve a partial version request (`3`, `3.12`) to the newest matching
@@ -737,6 +742,36 @@ mod tests {
             "3.10",
             "x86_64-unknown-linux-gnu"
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn python_publication_rejects_missing_and_external_launchers() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let manager = PythonManager {
+            versions_dir: directory.path().to_path_buf(),
+            client: download_client(),
+        };
+        let staging = begin_staged_install(directory.path())?;
+        assert!(manager.publish_install(&staging, "3.12.0").is_err());
+        assert!(!directory.path().join("3.12.0").exists());
+        assert!(manager.list_installed()?.is_empty());
+
+        fs::create_dir(staging.path().join("bin"))?;
+        let outside = directory.path().join("outside-python");
+        fs::write(&outside, "fixture")?;
+        let launcher = staging.path().join("bin/python3");
+        std::os::unix::fs::symlink(&outside, &launcher)?;
+        assert!(manager.publish_install(&staging, "3.12.0").is_err());
+        assert!(!directory.path().join("3.12.0").exists());
+
+        fs::remove_file(&launcher)?;
+        fs::write(staging.path().join("bin/python3.12"), "fixture")?;
+        std::os::unix::fs::symlink("python3.12", &launcher)?;
+        manager.publish_install(&staging, "3.12.0")?;
+        manager.use_version("3.12.0")?;
+        assert_eq!(manager.list_installed()?, vec!["3.12.0"]);
+        Ok(())
     }
 
     #[cfg(unix)]
