@@ -176,11 +176,29 @@ fn rc_file_for_shell(shell: &str) -> Result<PathBuf> {
 
 /// Remove OMG shell integration lines from the shell's rc file, keeping a
 /// `.omg-backup` copy. Returns whether anything was removed.
+///
+/// Refuses symlink-managed rc files instead of replacing their link with a copy.
 pub fn remove_hook(shell: &str) -> Result<bool> {
     let rc = rc_file_for_shell(shell)?;
-    let Ok(content) = fs::read_to_string(&rc) else {
-        return Ok(false);
+    let metadata = match fs::symlink_metadata(&rc) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(error).with_context(|| format!("Failed to inspect {}", rc.display()));
+        }
     };
+    anyhow::ensure!(
+        !metadata.file_type().is_symlink(),
+        "Refusing to replace symlink-managed shell config {}. Remove the OMG hook lines from its managed source instead.",
+        rc.display()
+    );
+    anyhow::ensure!(
+        metadata.is_file(),
+        "Shell config must be a regular file: {}",
+        rc.display()
+    );
+    let content = fs::read_to_string(&rc)
+        .with_context(|| format!("Failed to read shell config {}", rc.display()))?;
     let owned = hook_lines(shell);
     let kept: Vec<&str> = content
         .lines()
@@ -1005,6 +1023,55 @@ mod tests {
             assert!(!kept.contains("OMG Package Manager"), "{kept}");
             assert!(home.path().join(".bashrc.omg-backup").exists());
             assert!(!remove_hook("bash").unwrap());
+        });
+    }
+
+    #[cfg(unix)]
+    #[serial_test::serial]
+    #[test]
+    fn hook_uninstall_preserves_symlink_managed_rc_files() {
+        use std::os::unix::fs::symlink;
+
+        let home = tempdir().unwrap();
+        temp_env::with_var("HOME", Some(home.path()), || {
+            for (shell, relative) in [
+                ("bash", ".bashrc"),
+                ("zsh", ".zshrc"),
+                ("fish", ".config/fish/config.fish"),
+            ] {
+                let target = home.path().join(format!("managed-{shell}"));
+                let content = format!("# OMG Package Manager\n{}\n", hook_lines(shell)[0]);
+                fs::write(&target, &content).unwrap();
+                let rc = home.path().join(relative);
+                fs::create_dir_all(rc.parent().unwrap()).unwrap();
+                symlink(&target, &rc).unwrap();
+
+                let error = remove_hook(shell).expect_err("refuse to replace a managed symlink");
+                assert!(error.to_string().contains("symlink"));
+                assert_eq!(fs::read_link(&rc).unwrap(), target);
+                assert_eq!(fs::read_to_string(&target).unwrap(), content);
+
+                fs::remove_file(&target).unwrap();
+                assert!(
+                    remove_hook(shell).is_err(),
+                    "dangling links are not absent rc files"
+                );
+                assert!(fs::symlink_metadata(&rc).unwrap().file_type().is_symlink());
+            }
+        });
+    }
+
+    #[serial_test::serial]
+    #[test]
+    fn hook_uninstall_distinguishes_missing_and_non_regular_rc_files() {
+        let home = tempdir().unwrap();
+        temp_env::with_var("HOME", Some(home.path()), || {
+            assert!(!remove_hook("bash").unwrap());
+            fs::create_dir(home.path().join(".bashrc")).unwrap();
+            assert!(
+                remove_hook("bash").is_err(),
+                "a directory must not be reported as an absent hook"
+            );
         });
     }
 
