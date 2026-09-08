@@ -1525,6 +1525,13 @@ mod tests {
 
     #[test]
     fn deno_two_component_request_selects_newest_installed_patch() {
+        if crate::core::is_root() {
+            // Elevated processes resolve data paths to real system directories
+            // regardless of OMG_DATA_DIR, so this fixture test only applies
+            // to unprivileged runs.
+            eprintln!("skipped: elevated processes ignore caller path overrides");
+            return;
+        }
         let data = tempdir().unwrap();
         for version in ["1.40.1", "1.40.9", "1.41.0"] {
             fs::create_dir_all(data.path().join("versions/deno").join(version).join("bin"))
@@ -1637,6 +1644,12 @@ mod tests {
 
     #[test]
     fn full_version_pin_does_not_select_a_newer_patch() {
+        if crate::core::is_root() {
+            // Same elevated-path isolation as
+            // deno_two_component_request_selects_newest_installed_patch.
+            eprintln!("skipped: elevated processes ignore caller path overrides");
+            return;
+        }
         let data = tempdir().unwrap();
         let exact = data.path().join("versions/python/3.12.0/bin");
         fs::create_dir_all(&exact).unwrap();

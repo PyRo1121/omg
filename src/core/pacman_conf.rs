@@ -341,6 +341,12 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn missing_pacman_config_is_not_replaced_with_fabricated_repositories() {
+        if crate::core::is_root() {
+            // Elevated processes ignore OMG_PACMAN_* overrides, so this
+            // fixture test only applies to unprivileged runs.
+            eprintln!("skipped: elevated processes ignore caller path overrides");
+            return;
+        }
         let directory = tempfile::tempdir().expect("temp dir");
         let missing = directory.path().join("missing-pacman.conf");
 

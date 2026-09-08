@@ -839,6 +839,12 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn pacman_paths_honor_rootdir_and_dbpath_from_configuration() {
+        if crate::core::is_root() {
+            // Elevated processes ignore OMG_PACMAN_* overrides, so this
+            // fixture test only applies to unprivileged runs.
+            eprintln!("skipped: elevated processes ignore caller path overrides");
+            return;
+        }
         let directory = tempfile::tempdir().expect("temporary config directory");
         let config = directory.path().join("pacman.conf");
         std::fs::write(&config, "[options]\nRootDir = /srv/arch-root\n")
