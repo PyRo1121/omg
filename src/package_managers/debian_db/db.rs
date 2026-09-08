@@ -2509,6 +2509,95 @@ mod tests {
     /// env vars are shared by all parallel test threads.
     static ENV_LOCK: LazyLock<std::sync::Mutex<()>> = LazyLock::new(|| std::sync::Mutex::new(()));
 
+    /// Application-cold readers, warm OS page cache; not a disk-cold benchmark.
+    #[test]
+    #[ignore = "bounded synthetic benchmark; run optimized with --ignored --nocapture"]
+    fn snapshot_load_benchmark() -> Result<()> {
+        for count in [10_000, 50_000] {
+            let directory = tempfile::tempdir()?;
+            let mut index = DebianPackageIndex::new();
+            index.updated_at = 42;
+            let description = "Synthetic package metadata for snapshot loading. ".repeat(6);
+            for number in 0..count {
+                index.add_package(parse_paragraph_str(&format!(
+                    "Package: fixture-{number:06}\nVersion: 1.2.3-1\nArchitecture: amd64\nDescription: {description}\nDepends: libc6 (>= 2.34), libgcc-s1, zlib1g\nFilename: pool/main/f/fixture-{number:06}.deb\nInstalled-Size: 1024\nSize: 524288\n",
+                ), "main", "stable", "fixture")?);
+            }
+            let raw = rkyv::to_bytes::<rkyv::rancor::Error>(&index)?;
+            let mut compressed = b"ODXI".to_vec();
+            compressed.extend_from_slice(&2_u32.to_le_bytes());
+            compressed.extend_from_slice(&lz4_flex::compress_prepend_size(&raw));
+            let mmap_path = directory.path().join("index.mmap");
+            let legacy_path = directory.path().join("index.lz4");
+            fs::write(&mmap_path, &raw)?;
+            fs::write(&legacy_path, &compressed)?;
+            let raw_bytes = raw.len();
+            let compressed_bytes = compressed.len();
+            drop((raw, compressed, index));
+
+            let measure = |legacy: bool| -> Result<u128> {
+                let start = std::time::Instant::now();
+                let (index, mapped) = if legacy {
+                    // Reproduce the retired v8 reader, including validation,
+                    // separate mmap opening and the old generation check.
+                    let index = {
+                        let framed = fs::read(&legacy_path)?;
+                        anyhow::ensure!(
+                            framed.get(..8) == Some(b"ODXI\x02\x00\x00\x00"),
+                            "fixture header"
+                        );
+                        let bytes = lz4_flex::decompress_size_prepended(&framed[8..])?;
+                        rkyv::from_bytes::<DebianPackageIndex, rkyv::rancor::Error>(&bytes)?
+                    };
+                    let mapped = DebianMmapIndex::open(&mmap_path)?;
+                    anyhow::ensure!(
+                        mapped.generation() == index.updated_at,
+                        "fixture generation"
+                    );
+                    (index, mapped)
+                } else {
+                    let mapped = DebianMmapIndex::open(&mmap_path)?;
+                    (mapped.deserialize()?, mapped)
+                };
+                assert_eq!(index.packages.len(), count);
+                assert_eq!(
+                    index
+                        .get("fixture-000000")
+                        .context("fixture lookup")?
+                        .version,
+                    "1.2.3-1"
+                );
+                let mut cache = DebianIndexCache::default();
+                hydrate_index_cache(&mut cache, index, HashMap::new());
+                // Include destruction in both timings; prevent dead-code removal.
+                drop(std::hint::black_box((cache, mapped)));
+                Ok(start.elapsed().as_micros())
+            };
+            measure(true)?;
+            measure(false)?;
+            let mut legacy_us = Vec::new();
+            let mut snapshot_us = Vec::new();
+            for sample in 0..7 {
+                if sample % 2 == 0 {
+                    legacy_us.push(measure(true)?);
+                    snapshot_us.push(measure(false)?);
+                } else {
+                    snapshot_us.push(measure(false)?);
+                    legacy_us.push(measure(true)?);
+                }
+            }
+            println!(
+                "SNAPSHOT_BENCH {}",
+                serde_json::json!({
+                    "packages": count, "raw_bytes": raw_bytes, "compressed_bytes": compressed_bytes,
+                    "legacy_us": legacy_us, "snapshot_us": snapshot_us,
+                    "cache_state": "fresh readers; warm OS page cache; one warmup per path",
+                })
+            );
+        }
+        Ok(())
+    }
+
     #[test]
     fn native_and_mmap_views_use_the_same_snapshot() -> Result<()> {
         let directory = tempfile::tempdir()?;
