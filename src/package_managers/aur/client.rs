@@ -3573,7 +3573,7 @@ impl AurClient {
         let _review_guard = REVIEW_LOCK.lock().await;
         if !console::user_attended() {
             anyhow::bail!(
-                "PKGBUILD review requires an interactive terminal. Re-run without --review, or set aur.review_pkgbuild=false."
+                "PKGBUILD review requires an interactive terminal. Run in an interactive terminal to review each PKGBUILD, or set aur.review_pkgbuild=false if you accept unreviewed AUR code."
             );
         }
 

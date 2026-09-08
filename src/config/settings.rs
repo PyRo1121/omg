@@ -180,7 +180,7 @@ pub struct AurBuildSettings {
     /// Maximum concurrent AUR builds
     pub build_concurrency: usize,
     /// Require interactive PKGBUILD review before building.
-    /// Off by default; enable with `omg update --review` or this setting.
+    /// On by default; disable with `aur.review_pkgbuild = false` (CI only).
     pub review_pkgbuild: bool,
     /// Use stricter makepkg flags (cleanbuild/verifysource)
     pub secure_makepkg: bool,
