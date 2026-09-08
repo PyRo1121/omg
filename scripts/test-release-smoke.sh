@@ -344,11 +344,28 @@ case "$1" in
         fi
         exit "${FAKE_INVENTORY_EXIT:-0}"
       fi
+      if [[ "$argument" == /work/qemu-transactions.sh && ${FAKE_QEMU_TRANSACTION_SHAPE:-} == partial ]]; then
+        work=$(<"$FAKE_QEMU_STATE")
+        mkdir -p "$work/transactions"
+        printf '%s\n' '{"schema_version":2,"kind":"transaction-suite","complete":true,"distro":"arch","samples_per_tool":1,"expected_trials":4,"results":[],"bases":{"install":null,"remove":null}}' > "$work/transactions/summary.json"
+      fi
       [[ "$argument" != ssh ]] || exit "${FAKE_QEMU_TRANSPORT_EXIT:-${FAKE_QEMU_GUEST_EXIT:-0}}"
       if [[ "$argument" == bench@127.0.0.1:evidence && ${FAKE_QEMU_MISSING_RECEIPT:-0} == 0 ]]; then
         work=$(<"$FAKE_QEMU_STATE")
         mkdir -p "$work/guest/evidence"
         printf '%s\n' "${FAKE_QEMU_GUEST_EXIT:-0}" > "$work/guest/evidence/exit-code"
+        if [[ ${FAKE_QEMU_BENCHMARK:-0} == 1 ]]; then
+          benchmark="$work/guest/evidence/benchmarks"
+          mkdir -p "$benchmark"
+          for scenario in info search explicit; do
+            jq -n '{results:(["OMG","pacman"]|map({command:.,times:[1,1],exit_codes:[0,0],
+              mean:1,median:1,min:1,max:1,stddev:0,user:0,system:0}))}' > "$benchmark/$scenario.json"
+          done
+          jq -n '(["OMG","pacman"]|map({label:.,argv:["fixture"]})) as $commands |
+            {schema_version:2,complete:true,distro:"arch",daemon:"disabled",min_runs:2,max_runs:2,
+             operations:["info","search","explicit"],commands:{info:$commands,search:$commands,explicit:$commands},
+             comparisons:{info:{equivalent:true},search:{equivalent:true},explicit:{equivalent:true}}}' > "$benchmark/summary.json"
+        fi
       fi
     done ;;
   rm)
@@ -410,6 +427,19 @@ for scenario in pass product-failure product-exit-three timeout cleanup-failure 
 done
 export FAKE_QEMU_GUEST_EXIT=0 FAKE_QEMU_CLEANUP_FAIL=0 FAKE_QEMU_MISSING_RECEIPT=0
 unset FAKE_QEMU_TRANSPORT_EXIT
+export FAKE_QEMU_BENCHMARK=1
+for shape in missing partial; do
+  export FAKE_QEMU_TRANSACTION_SHAPE="$shape"
+  evidence="$scratch/qemu-transaction-$shape"
+  assert_rc 120 "$qemu_runner" --distro arch --release v9.9.9 --staged-dir "$scratch/valid" \
+    --evidence-dir "$evidence" --benchmark-transactions 1
+  qemu_result=$(results_file "$evidence")
+  work=${qemu_result%/results.json}
+  grep -q 'Measurement validation passed' "$work/benchmark-validation.log" || fail 'read evidence did not reach the transaction gate'
+  [[ -f "$work/transaction-validation.log" ]] || fail 'transaction evidence was not checked'
+  jq -e '.[0].result=="HARNESS_ERROR"' "$qemu_result" >/dev/null || fail 'missing transaction coverage passed'
+done
+unset FAKE_QEMU_BENCHMARK FAKE_QEMU_TRANSACTION_SHAPE
 for scenario in missing PASS FAIL HARNESS_ERROR BLOCKED SKIPPED partial mixed incomplete; do
   export FAKE_INVENTORY_RESULT="$scenario" FAKE_INVENTORY_EXIT=0
   expected_rc=3

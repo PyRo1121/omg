@@ -14,6 +14,9 @@ output=/work/transactions
 disks=/work/guest/transaction-disks
 [[ ! -e "$output" && ! -e "$disks" ]] || exit 2
 mkdir -p "$output/trials" "$disks"
+# The host owns teardown after the controller stops. File ownership need not be
+# weakened: ownership of this directory is sufficient to unlink its disks.
+chown --reference=/work/guest "$disks"
 opts=(-i client-key -p 2222 -o BatchMode=yes -o ConnectTimeout=5
   -o ServerAliveInterval=5 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=yes
   -o UserKnownHostsFile=known_hosts)
@@ -21,6 +24,8 @@ scp_opts=(-i client-key -P 2222 -o BatchMode=yes -o ConnectTimeout=5
   -o StrictHostKeyChecking=yes -o UserKnownHostsFile=known_hosts)
 bin="/home/bench/omg-${tag}-${arch}-linux-${distro}/omg"
 current_id=
+failure_result=HARNESS_ERROR
+failure_exit=
 phase=preparation
 jq -n --argjson count "$samples" '
   [range(1;$count+1) as $round | ["install","remove"][] as $operation |
@@ -51,7 +56,7 @@ finish() {
   trap - EXIT
   if [[ $code != 0 ]]; then
     if [[ -n "$current_id" ]]; then
-      set_result HARNESS_ERROR "$code" || printf 'Could not record failed trial\n' >&2
+      set_result "$failure_result" "${failure_exit:-$code}" || printf 'Could not record failed trial\n' >&2
     fi
     write_summary false || printf 'Could not update incomplete summary\n' >&2
   fi
@@ -93,7 +98,10 @@ freeze_base() {
   [[ ! -e qemu.pid ]] || return 1
   qemu-img convert -f qcow2 -O qcow2 "$source" "$disks/$operation-base.qcow2"
   qemu-img check "$disks/$operation-base.qcow2" > "$output/$operation-base-check.log"
-  if [[ "${boot_args[0]}" == uefi ]]; then cp "$vars" "$disks/$operation-vars.fd"; fi
+  if [[ "${boot_args[0]}" == uefi ]]; then
+    cp "$vars" "$disks/$operation-vars.fd"
+    sha256sum "${boot_args[2]}" "$disks/$operation-vars.fd" > "$output/$operation-firmware.sha256"
+  fi
   chmod 444 "$disks/$operation-base.qcow2"
   local digest
   digest=$(sha256sum "$disks/$operation-base.qcow2")
@@ -190,6 +198,7 @@ for operation in install remove; do
       trial="$output/trials/$current_id"
       mkdir "$trial"
       phase=boot
+      failure_result=HARNESS_ERROR; failure_exit=
       set_result INCOMPLETE null
       write_summary false
       disk="$disks/$current_id.qcow2"
@@ -219,9 +228,29 @@ for operation in install remove; do
       printf '%s\n' "$code" > "$trial/driver.exit"
       timeout --kill-after=5s 120 scp "${scp_opts[@]}" -r \
         bench@127.0.0.1:/home/bench/evidence/transaction-trial "$trial/" > "$trial/copy.log" 2>&1
-      [[ "$code" == 0 ]] || exit 1
-      phase=verification
       evidence="$trial/transaction-trial"
+      if [[ "$code" != 0 ]]; then
+        expected_label=OMG
+        if [[ "$tool" == native ]]; then
+          case "$distro" in arch) expected_label=pacman ;; debian|ubuntu) expected_label=apt ;; fedora) expected_label=dnf ;; esac
+        fi
+        # Only an identified command receipt proves a workload failure. Reserved
+        # execution/timeout/signal codes and missing evidence remain harness errors.
+        raw="$evidence/$operation.json"
+        if [[ -f "$raw" && $(wc -c < "$raw") -le 1048576 ]] &&
+           jq -e --arg expected "$expected_label" '
+             .results|length==1 and .[0].command==$expected and
+             (.[0].times|length==1) and (.[0].exit_codes|length==1) and
+             (.[0].exit_codes[0]|type=="number" and floor==. and .>0 and .<124)
+           ' "$raw" >/dev/null; then
+          failure_result=FAIL
+          failure_exit=$(jq -r '.results[0].exit_codes[0]' "$raw")
+          phase=measurement-command
+          exit 10
+        fi
+        exit 1
+      fi
+      phase=verification
       python3 /work/record-benchmark-run.py --validate-only --scenario "$operation" --source "$evidence" > "$trial/validation.log" 2>&1
       jq -e --arg distro "$distro" --arg operation "$operation" --arg tool "$tool" --arg boot "$boot_id" \
         '.schema_version==2 and .kind=="transaction-trial" and .complete==true and

@@ -527,6 +527,19 @@ if [[ "$transaction_samples" != 0 && "$rc" == 0 ]]; then
     > "$work/transactions.log" 2>&1 || transaction_rc=$?
   if [[ "$transaction_rc" != 0 ]]; then
     rc=120
+    summary="$work/transactions/summary.json"
+    if [[ "$transaction_rc" == 10 && -f "$summary" && $(wc -c < "$summary") -le 1048576 ]] &&
+       jq -e --arg distro "$distro" --argjson count "$transaction_samples" '
+         .schema_version==2 and .kind=="transaction-suite" and .distro==$distro and
+         .complete==false and .phase=="measurement-command" and
+         (.results|length)==($count*4) and
+         ([.results[]|select(.result=="FAIL")]|length)==1 and
+         all(.results[]|select(.result=="FAIL");
+           (.id|test("^(install|remove)-(omg|native)-[0-9]{3}$")) and
+           (.exit_code|type=="number" and floor==. and .>0 and .<124))
+       ' "$summary" >/dev/null; then
+      rc=1
+    fi
   elif ! (
     summary="$work/transactions/summary.json"
     [[ -f "$summary" && $(wc -c < "$summary") -le 1048576 ]] || exit 1
