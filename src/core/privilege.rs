@@ -88,8 +88,16 @@ fn elevation_executable() -> anyhow::Result<std::path::PathBuf> {
 /// Environment variables stripped from every sudo child. One list so a new
 /// scrub variable cannot be added in one elevation path and missed in another.
 const PRIVILEGED_ENV_SCRUB: &[&str] = &[
-    // APT configuration can define root-executed transaction hooks.
+    // Package-manager configuration can define root-executed transaction hooks.
     "APT_CONFIG",
+    "OMG_PACMAN_CONF",
+    "OMG_PACMAN_ROOT",
+    "OMG_PACMAN_DB_DIR",
+    "OMG_PACMAN_SYNC_DIR",
+    "OMG_PACMAN_LOCAL_DIR",
+    "OMG_PACMAN_CACHE_DIR",
+    "OMG_PACMAN_CACHE_ROOT_DIR",
+    "OMG_PACMAN_MIRRORLIST",
     // Force terminal-based password prompt, never GUI askpass
     "SUDO_ASKPASS",
     "SSH_ASKPASS",
@@ -936,6 +944,14 @@ mod tests {
             .collect();
         for name in [
             "APT_CONFIG",
+            "OMG_PACMAN_CONF",
+            "OMG_PACMAN_ROOT",
+            "OMG_PACMAN_DB_DIR",
+            "OMG_PACMAN_SYNC_DIR",
+            "OMG_PACMAN_LOCAL_DIR",
+            "OMG_PACMAN_CACHE_DIR",
+            "OMG_PACMAN_CACHE_ROOT_DIR",
+            "OMG_PACMAN_MIRRORLIST",
             "LD_PRELOAD",
             "LD_LIBRARY_PATH",
             "DYLD_INSERT_LIBRARIES",

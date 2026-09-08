@@ -31,9 +31,11 @@ OMG protects against:
 - **Supply Chain Attacks**: SLSA provenance verification via Sigstore/Rekor
 - **Leaked Credentials**: Secret scanning for 20+ credential types
 - **Compliance Violations**: SBOM generation for FDA, FedRAMP, SOC2
-- **Privilege Escalation**: User-level operations only
+- **Privilege separation**: System package mutations require root authority; runtime and project operations normally run as the user.
 - **Network Attacks**: Certificate validation for HTTPS requests and rejection of HTTPS-to-HTTP redirects
 - **Data Tampering**: Checksum verification and hash-chained audit logs
+
+Root processes ignore `OMG_PACMAN_*` environment overrides, including overrides preserved by a permissive sudo policy. Configure privileged pacman operations through the administrator-controlled `/etc/pacman.conf`, not caller-provided environment paths. OMG also removes these variables and `APT_CONFIG` when launching privileged child commands. Unprivileged path overrides remain available for read-only inspection.
 
 ### Security Grades
 
