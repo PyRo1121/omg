@@ -87,6 +87,7 @@ omg install [packages...] [OPTIONS]
 |--------|-------|-------------|
 | `--yes` | `-y` | Skip confirmation prompt |
 | `--dry-run` | | Show what would be installed without making changes |
+| `--review` | | Force PKGBUILD review for each AUR build (on by default; see `aur.review_pkgbuild`) |
 
 **Examples:**
 
@@ -181,6 +182,7 @@ omg update [OPTIONS]
 | `--dry-run` | | Show what would be updated without making changes |
 | `--fast` | `-f` | Fast mode: sync + upgrade in a single operation (no preview) |
 | `--turbo` | `-T` | Turbo mode: skip sync, use cached data, parallel extraction (fastest) |
+| `--review` | | Force PKGBUILD review for each AUR build (on by default; see `aur.review_pkgbuild`) |
 
 **Examples:**
 
@@ -463,6 +465,57 @@ omg use <runtime> [version]
 | `ruby` | | `.ruby-version` |
 | `java` | | `.java-version` |
 | `pi` | | `.tool-versions` |
+| `deno` | | `.deno-version`, `.dvmrc` |
+| `zig` | `ziglang` | `.zig-version` |
+| `dotnet` | | `global.json` |
+
+Plus 54 GitHub-release tools managed through one generic backend
+(`ripgrep`, `fd`, `bat`, `eza`, `fzf`, `starship`, `just`, `task`, `jq`,
+`yq`, `gh`, `lazygit`, `delta`, `neovim`, `helix`, `zellij`, `helm`, `k9s`,
+`terraform`, `opentofu`, `vault`, `consul`, `minikube`, `kind`,
+`kustomize`, `tilt`, `skaffold`, `lazydocker`, `glow`, `pandoc`,
+`shellcheck`, `shfmt`, `hadolint`, `actionlint`, `hyperfine`, `tokei`,
+`dust`, `duf`, `procs`, `ruff`, `uv`, `fnm`, `protoc`, `terragrunt`,
+`packer`, `dive`, `golangci-lint`, `delve`, `stylua`, `kotlin`, `scala`,
+`elixir`, `ghcup`) plus the `dotnet` SDK, Erlang/OTP, and PHP managers —
+67 managed runtimes/tools in total. Each installs checksum-verified release
+assets into `<data-dir>/versions/<tool>/<version>/bin` (flat-layout SDKs
+like .NET expose their host binary at the version root instead), so `use`,
+`list`, `hook-env`, and version-file detection work exactly like the
+language runtimes.
+
+Erlang/OTP installs Hex bob prebuilds on Linux using the archive SHA-256
+from `builds.txt`, followed by `./Install -minimal` and an `erl` smoke test.
+Older index rows without archive checksums are not installable. It uses
+erlef/otp_builds on macOS with SHA-256 from the published CSV; override the
+Ubuntu build with `OMG_ERLANG_UBUNTU_RELEASE`. Elixir needs Erlang/OTP on
+`PATH` (its prebuilt zips are BEAM bytecode; when a release ships per-OTP
+variants OMG picks the lowest for the widest compatibility) — install both
+with `omg use erlang` then `omg use elixir`. PHP installs
+[shivammathur/php-builder](https://github.com/shivammathur/php-builder)
+prebuilts (SHA-256 GitHub asset digests, `php -v` smoke test) on
+Debian/Ubuntu; override detection with `OMG_PHP_DISTRO`. Upstream
+publishes one rolling build per minor, so versions are channels (`8.5`),
+not exact patches — reinstalling refreshes to the latest patch, and
+`.php-version` pins work via the phpenv convention. Haskell is covered
+through `ghcup`, which installs and manages GHC/cabal/HLS itself. Not
+covered, with reasons: Swift (official Linux toolchains target Ubuntu only
+and are ~800 MB with no machine-readable version index).
+
+**mise compatibility (no mise required):** OMG reads `mise.toml` /
+`.mise.toml` `[tools]` pins, `[env]` variables, and `[tasks.*]` entries
+natively, so projects already using mise work without installing it.
+`[env]` supports plain values, `false` (unset), `{ default = … }`,
+`{ value/tools/redact = … }`, `{ required = true }`, top-level
+`redactions`, `_.path` (PATH prepend), `_.file` (dotenv/JSON/TOML —
+YAML is rejected), `_.source` (evaluated only for explicit `run`/tasks),
+`{{env.NAME}}`/`{{config_root}}`
+templates, and per-task `env` (including task `_.file`/`_.path`/`_.source`).
+Automatic hooks reject `_.source` because entering a repository does not
+constitute permission to execute its scripts. Missing env files and unmet
+required variables are skipped in hooks; malformed configuration is rejected.
+`run` and task execution fail closed on missing files and unmet
+`required` entries.
 
 Unsupported runtime names fail explicitly.
 
@@ -675,10 +728,13 @@ omg workspace <SUBCOMMAND>
 | `add <path> [--name]` | Add a project to the workspace |
 | `remove <project>` | Remove a project from the workspace |
 | `list` | List all projects in the workspace |
-| `run <command> [-p] [--filter]` | Run a command across all projects |
+| `run <command> [-p] [--filter] [--yes]` | Run a command across all projects |
 | `diff [branch]` | Show environment diff across workspace vs a branch (default: main) |
 | `check` | Check all project environments without changing them |
 | `status` | Show workspace status |
+
+Running a repo-defined command prompts for confirmation when a terminal is
+attached (default No) and refuses without one unless `--yes` is passed.
 
 ---
 

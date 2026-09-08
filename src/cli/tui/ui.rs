@@ -886,9 +886,11 @@ fn draw_runtimes(f: &mut Frame, area: Rect, app: &App) {
                 "󰟈"
             } else if name.eq_ignore_ascii_case("deno") {
                 "󰛦"
-            } else if ["node", "python", "rust", "go", "ruby", "java", "zig"]
-                .iter()
-                .any(|runtime| name.eq_ignore_ascii_case(runtime))
+            } else if [
+                "node", "python", "rust", "go", "ruby", "java", "zig", "dotnet", "erlang", "php",
+            ]
+            .iter()
+            .any(|runtime| name.eq_ignore_ascii_case(runtime))
             {
                 ""
             } else {

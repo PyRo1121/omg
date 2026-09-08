@@ -9,28 +9,43 @@ static DATA_DIR: std::sync::LazyLock<PathBuf> = std::sync::LazyLock::new(paths::
 pub(crate) mod bun;
 pub(crate) mod common;
 pub(crate) mod deno;
+pub(crate) mod dotnet;
+pub(crate) mod erlang;
+pub(crate) mod github_tool;
 pub(crate) mod go;
 pub(crate) mod java;
 pub(crate) mod node;
+pub(crate) mod php;
 pub(crate) mod pi;
 pub(crate) mod python;
 pub(crate) mod ruby;
 pub(crate) mod rust;
+pub(crate) mod tool_registry;
+pub(crate) mod zig;
 
 pub(crate) use bun::BunManager;
 pub(crate) use deno::DenoManager;
+pub(crate) use dotnet::DotnetManager;
+pub(crate) use erlang::ErlangManager;
+pub(crate) use github_tool::GenericToolManager;
 pub(crate) use go::GoManager;
 pub(crate) use java::JavaManager;
 pub(crate) use node::NodeManager;
+pub(crate) use php::PhpManager;
 pub(crate) use pi::PiManager;
 pub(crate) use python::PythonManager;
 pub(crate) use ruby::RubyManager;
 pub(crate) use rust::RustManager;
+pub(crate) use zig::ZigManager;
+
+/// Bespoke language managers with vendor-specific release APIs.
+pub(crate) const NATIVE_RUNTIMES: &[&str] = &[
+    "node", "python", "go", "rust", "ruby", "java", "bun", "pi", "deno", "zig", "dotnet", "erlang",
+    "php",
+];
 
 /// Runtimes managed natively by OMG.
-pub(crate) const SUPPORTED_RUNTIMES: &[&str] = &[
-    "node", "python", "go", "rust", "ruby", "java", "bun", "pi", "deno",
-];
+pub(crate) const SUPPORTED_RUNTIMES: &[&str] = NATIVE_RUNTIMES;
 
 /// Resolve a partial version request (`20`, `20.1`) against known release
 /// names. Exact and non-numeric requests pass through unchanged. One shared

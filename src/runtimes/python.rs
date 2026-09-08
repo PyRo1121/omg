@@ -21,10 +21,14 @@ use crate::{cli::style, core::http::download_client};
 
 const PBS_RELEASES_URL: &str =
     "https://api.github.com/repos/indygreg/python-build-standalone/releases";
-const PBS_LIST_PER_PAGE: u32 = 10;
+/// Release metadata grew past the 16MiB control-plane bound at 10
+/// releases per page (~1.9MB per release with ~1000 assets each), so pages
+/// stay at 5 (~9.5MB worst case) and the install walk runs twice as many
+/// pages to keep the same 200-release history depth.
+const PBS_LIST_PER_PAGE: u32 = 5;
 const PBS_LIST_MAX_PAGES: u32 = 1;
-const PBS_INSTALL_PER_PAGE: u32 = 10;
-const PBS_INSTALL_MAX_PAGES: u32 = 20;
+const PBS_INSTALL_PER_PAGE: u32 = 5;
+const PBS_INSTALL_MAX_PAGES: u32 = 40;
 
 /// Python version info for available versions
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -446,12 +450,123 @@ mod tests {
         .await
         .context("Release discovery did not finish within its fixture deadline")?;
         let releases = fetched.context("Bounded release discovery must succeed")?;
-        assert_eq!(served?, 20);
+        // Same 200-release history as before, reached in twice as many
+        // half-size pages now that one 10-release page exceeds the 16MiB
+        // control-plane bound.
+        assert_eq!(served?, 40);
         assert_eq!(releases.len(), 200);
         assert!(
             releases
                 .last()
                 .is_some_and(|release| release.tag_name == "199")
+        );
+        Ok(())
+    }
+
+    /// python-build-standalone releases carry ~1000 assets each (~1.9MB of
+    /// release metadata per release), so a 10-release page no longer fits
+    /// the 16MiB control-plane bound and `use python` fails before any
+    /// download. Discovery pages must stay small enough that one fat page
+    /// fits the bound while still reaching deep history.
+    #[tokio::test]
+    async fn install_discovery_survives_realistic_asset_counts() -> Result<()> {
+        use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+        const RELEASES: usize = 50;
+        const FILLER_ASSETS: usize = 1000;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let url = format!("http://{}/releases", listener.local_addr()?);
+        let client = reqwest::Client::builder().no_proxy().build()?;
+        let server = async {
+            let mut requests = 0;
+            loop {
+                let (mut stream, _) = listener.accept().await?;
+                let request = {
+                    let mut reader = BufReader::new(&mut stream).take(8192);
+                    let mut first = String::new();
+                    reader.read_line(&mut first).await?;
+                    loop {
+                        let mut line = String::new();
+                        anyhow::ensure!(
+                            reader.read_line(&mut line).await? > 0,
+                            "Incomplete fixture request"
+                        );
+                        if line == "\r\n" {
+                            break;
+                        }
+                    }
+                    first
+                };
+                let target = request
+                    .split_whitespace()
+                    .nth(1)
+                    .context("Missing request target")?;
+                let parsed = reqwest::Url::parse(&format!("http://localhost{target}"))?;
+                let query: std::collections::HashMap<_, _> =
+                    parsed.query_pairs().into_owned().collect();
+                let size: usize = query
+                    .get("per_page")
+                    .context("Missing page size")?
+                    .parse()?;
+                let page: usize = query.get("page").context("Missing page number")?.parse()?;
+                requests += 1;
+                anyhow::ensure!(size > 0 && page > 0, "Invalid pagination request");
+                let end = (page * size).min(RELEASES);
+                let releases: Vec<_> = ((page - 1) * size..end)
+                    .map(|index| {
+                        let mut assets: Vec<_> = (0..FILLER_ASSETS)
+                            .map(|filler| {
+                                serde_json::json!({"name": format!("bulk-filler-{filler:06}-{:-<1900}", "")})
+                            })
+                            .collect();
+                        if index == RELEASES - 1 {
+                            assets.push(serde_json::json!({"name": "cpython-3.12.0+20231002-x86_64-unknown-linux-gnu-install_only.tar.gz"}));
+                        }
+                        serde_json::json!({"tag_name": index.to_string(), "assets": assets})
+                    })
+                    .collect();
+                let body = serde_json::to_vec(&releases)?;
+                stream
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            body.len()
+                        )
+                        .as_bytes(),
+                    )
+                    .await?;
+                stream.write_all(&body).await?;
+                if end == RELEASES {
+                    return Ok::<_, anyhow::Error>(requests);
+                }
+            }
+        };
+        let discovery = fetch_github_releases(
+            &client,
+            &url,
+            PBS_INSTALL_PER_PAGE,
+            PBS_INSTALL_MAX_PAGES,
+            |release| {
+                release.assets.iter().any(|asset| {
+                    PythonManager::asset_matches_version(
+                        &asset.name,
+                        "3.12.0",
+                        "x86_64-unknown-linux-gnu",
+                    )
+                })
+            },
+        );
+        let (fetched, served) = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+            tokio::join!(discovery, server)
+        })
+        .await
+        .context("Release discovery did not finish within its fixture deadline")?;
+        let releases = fetched.context("Fat-page discovery must stay under the metadata bound")?;
+        assert_eq!(served?, RELEASES / PBS_INSTALL_PER_PAGE as usize);
+        assert!(
+            releases
+                .iter()
+                .any(|release| release.tag_name == (RELEASES - 1).to_string()),
+            "deep history must still be reachable with small pages"
         );
         Ok(())
     }
