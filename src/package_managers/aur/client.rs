@@ -4412,7 +4412,8 @@ mod tests {
         let source = ReviewedSource::capture(directory.path())?;
         let archive_dir = tempfile::tempdir()?;
         let archive = archive_dir.path().join("demo-1-1-any.pkg.tar.gz");
-        let info = "pkgname = demo\npkgbase = demo\npkgver = 1-1\narch = any\n";
+        // write_pkg_archive supplies the fixture's single `arch = any` field.
+        let info = "pkgname = demo\npkgbase = demo\npkgver = 1-1\n";
         write_pkg_archive(&archive, info, Some("post_install() { :; }\n"));
         let accepted = AurClient::authorize_archives(
             std::slice::from_ref(&archive),
