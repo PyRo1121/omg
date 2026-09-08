@@ -536,24 +536,31 @@ fi
             );
         }
 
+        let changed = Command::new("git")
+            .args(["diff", "--cached", "--quiet", "--", "omg.lock"])
+            .current_dir(&self.root)
+            .output()
+            .context("Failed to inspect staged omg.lock")?;
+        match changed.status.code() {
+            Some(0) => return Ok(()),
+            Some(1) => {}
+            _ => anyhow::bail!(
+                "git diff failed: {}",
+                String::from_utf8_lossy(&changed.stderr).trim()
+            ),
+        }
+
         let commit = Command::new("git")
-            .args(["commit", "-m", message])
+            .args(["commit", "--only", "-m", message, "--", "omg.lock"])
             .current_dir(&self.root)
             .output()
             .context("Failed to run git commit for omg.lock")?;
         if !commit.status.success() {
-            // An unchanged lock is not an error: pushing the same environment
-            // twice must succeed. git-commit(1) exits non-zero with "nothing to
-            // commit" in that case:
-            // https://git-scm.com/docs/git-commit#_description
             let output = format!(
                 "{}{}",
                 String::from_utf8_lossy(&commit.stdout),
                 String::from_utf8_lossy(&commit.stderr)
             );
-            if output.contains("nothing to commit") {
-                return Ok(());
-            }
             anyhow::bail!("git commit failed: {}", output.trim());
         }
 
@@ -564,6 +571,111 @@ fi
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn git(root: &Path, args: &[&str]) -> Vec<u8> {
+        let result = std::process::Command::new("git")
+            .current_dir(root)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        result.stdout
+    }
+
+    fn git_workspace() -> tempfile::TempDir {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        git(root, &["init", "--quiet"]);
+        git(root, &["config", "user.name", "OMG regression"]);
+        git(root, &["config", "user.email", "test@example.invalid"]);
+        git(root, &["config", "commit.gpgsign", "false"]);
+        git(root, &["config", "core.hooksPath", ".git/hooks"]);
+        std::fs::write(root.join("seed"), "initial\n").unwrap();
+        git(root, &["add", "--", "seed"]);
+        git(root, &["commit", "--quiet", "-m", "Initial fixture"]);
+        directory
+    }
+
+    #[test]
+    fn team_lock_commit_preserves_unrelated_staged_and_unstaged_changes() {
+        let directory = git_workspace();
+        let root = directory.path();
+        let workspace = TeamWorkspace::new(root).unwrap();
+        std::fs::write(root.join("other.txt"), "staged secret\n").unwrap();
+        git(root, &["add", "--", "other.txt"]);
+        std::fs::write(root.join("other.txt"), "unstaged work\n").unwrap();
+        std::fs::write(root.join("intent.txt"), "not staged\n").unwrap();
+        git(root, &["add", "--intent-to-add", "--", "intent.txt"]);
+        let staged = git(
+            root,
+            &["ls-files", "--stage", "-v", "--", "other.txt", "intent.txt"],
+        );
+
+        for contents in ["first lock\n", "updated lock\n"] {
+            std::fs::write(root.join("omg.lock"), contents).unwrap();
+            workspace.git_commit_lock("Team lock update").unwrap();
+            assert_eq!(
+                git(root, &["show", "--format=", "--name-only", "HEAD"]),
+                b"omg.lock\n"
+            );
+            assert_eq!(git(root, &["show", "HEAD:omg.lock"]), contents.as_bytes());
+            assert_eq!(
+                git(
+                    root,
+                    &["ls-files", "--stage", "-v", "--", "other.txt", "intent.txt"]
+                ),
+                staged
+            );
+            assert_eq!(
+                std::fs::read(root.join("other.txt")).unwrap(),
+                b"unstaged work\n"
+            );
+            let head = git(root, &["rev-parse", "HEAD"]);
+            workspace.git_commit_lock("Unchanged team lock").unwrap();
+            assert_eq!(git(root, &["rev-parse", "HEAD"]), head);
+            assert_eq!(
+                git(
+                    root,
+                    &["ls-files", "--stage", "-v", "--", "other.txt", "intent.txt"]
+                ),
+                staged
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejected_team_lock_commit_preserves_unrelated_index_entries() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = git_workspace();
+        let root = directory.path();
+        let workspace = TeamWorkspace::new(root).unwrap();
+        std::fs::write(root.join("other.txt"), "staged secret\n").unwrap();
+        git(root, &["add", "--", "other.txt"]);
+        let staged = git(root, &["ls-files", "--stage", "--", "other.txt"]);
+        let head = git(root, &["rev-parse", "HEAD"]);
+        std::fs::write(root.join("omg.lock"), "new lock\n").unwrap();
+        let hook = root.join(".git/hooks/pre-commit");
+        std::fs::write(&hook, "#!/bin/sh\necho 'nothing to commit' >&2\nexit 1\n").unwrap();
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+        assert!(workspace.git_commit_lock("Rejected update").is_err());
+        assert_eq!(git(root, &["rev-parse", "HEAD"]), head);
+        assert_eq!(
+            git(root, &["ls-files", "--stage", "--", "other.txt"]),
+            staged
+        );
+        assert_eq!(std::fs::read(root.join("omg.lock")).unwrap(), b"new lock\n");
+        assert_eq!(
+            std::fs::read(root.join("other.txt")).unwrap(),
+            b"staged secret\n"
+        );
+    }
 
     #[test]
     fn gist_remote_accepts_https_gist_host() {
