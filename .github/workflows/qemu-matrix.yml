@@ -396,12 +396,14 @@ jobs:
 
       - name: Resolve release tag
         id: tag
+        env:
+          REQUESTED_RELEASE_TAG: ${{ inputs.tag }}
         run: |
           if [[ "${{ github.event_name }}" == 'pull_request' || "${{ inputs.staged }}" == 'true' ]]; then
             VERSION=$(awk -F'"' '/^version =/ {print $2; exit}' Cargo.toml)
             tag="v$VERSION"
-          elif [[ -n "${{ inputs.tag }}" ]]; then
-            tag="${{ inputs.tag }}"
+          elif [[ -n "$REQUESTED_RELEASE_TAG" ]]; then
+            tag="$REQUESTED_RELEASE_TAG"
           else
             tag=$(gh release view --json tagName --jq .tagName --repo PyRo1121/omg)
           fi
@@ -418,7 +420,7 @@ jobs:
 
       - name: Run disposable guest lifecycle + read benchmarks + inventory rows
         # inputs is null on schedule/PR: event checks first so those run.
-        # PRs run the fast container tier; nightlies run everything the
+        # PRs run hermetic and container tiers; nightlies run everything the
         # disposable guest can safely do (mutations on, credentials off).
         # The arch input gates dispatch runs (x64 legs skip arm64-only runs).
         if: >-
@@ -427,11 +429,11 @@ jobs:
         run: |
           args=(--distro "${{ matrix.distro }}" --release "${{ steps.tag.outputs.value }}" --benchmark)
           if [[ "${{ github.event_name }}" == 'pull_request' || "${{ inputs.staged }}" == 'true' ]]; then
-            args+=(--staged-dir staged --inventory-tiers hermetic,container --inventory-allow-mutations)
+            args+=(--staged-dir staged --inventory-tiers "hermetic,container" --inventory-allow-mutations)
           else
             # No nested-container: guests have no docker-in-guest (yet).
             # Declared-ux rows (self-update-*, daemon-foreground) self-skip.
-            args+=(--inventory-tiers hermetic,qemu,container,network,pty --inventory-allow-mutations)
+            args+=(--inventory-tiers "hermetic,qemu,container,network,pty" --inventory-allow-mutations)
           fi
           ./scripts/benchmark-qemu.sh "${args[@]}"
 
@@ -503,7 +505,7 @@ jobs:
           echo "value=$tag" >> "$GITHUB_OUTPUT"
 
       - name: Run disposable ARM guest lifecycle + read benchmarks + inventory rows
-        # Match x64 staged coverage, including the 167-row CLI inventory.
+        # Match x64 staged coverage, including the selected CLI inventory.
         if: >-
           (github.event_name != 'workflow_dispatch' || inputs.distro == 'all' || inputs.distro == matrix.distro) &&
           (github.event_name != 'workflow_dispatch' || inputs.arch == 'all' || inputs.arch == 'arm64')
