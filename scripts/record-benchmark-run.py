@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
 
-SCENARIOS = ("search", "info", "status", "explicit", "update")
+SCENARIOS = ("search", "info", "status", "explicit", "update", "install", "remove")
 
 
 def repo_root() -> Path:

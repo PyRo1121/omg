@@ -56,10 +56,42 @@ class BenchmarkAdmissionTests(unittest.TestCase):
             json.dumps({"results": results}), encoding="utf-8"
         )
 
+    def test_transaction_mode_refuses_unmarked_host(self) -> None:
+        script = Path(__file__).resolve().parents[1] / "benchmark-hyperfine.sh"
+        result = subprocess.run(
+            ["/bin/bash", str(script), "--guest-transaction", "install", "omg"],
+            cwd=self.source,
+            env={
+                **os.environ,
+                "OMG_BENCH_DISPOSABLE_GUEST": "",
+                "OMG_BENCH_EXPORT_DIR": str(self.source / "output"),
+            },
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("marked disposable QEMU guest", result.stderr)
+        self.assertFalse((self.source / "output").exists())
+
+    def test_transaction_mode_rejects_unknown_operation(self) -> None:
+        script = Path(__file__).resolve().parents[1] / "benchmark-hyperfine.sh"
+        result = subprocess.run(
+            ["/bin/bash", str(script), "--guest-transaction", "upgrade", "omg"],
+            cwd=self.source,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("install or remove", result.stderr)
+
     def test_command_metadata_preserves_every_argument(self) -> None:
         script = Path(__file__).resolve().parents[1] / "benchmark-hyperfine.sh"
-        body = script.read_text(encoding="utf-8").split("    command_json() {\n", 1)[1]
-        body = body.split("\n    }\n", 1)[0]
+        body = script.read_text(encoding="utf-8").split("command_json() {\n", 1)[1]
+        body = body.split("\n}\n", 1)[0]
         invocation = "command_json() {\n" + body + '\n}\ncommand_json "$@"\n'
         arguments = [
             "program",
@@ -81,6 +113,38 @@ class BenchmarkAdmissionTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         payload: object = json.loads(result.stdout)
         self.assertEqual(payload, {"label": "fixture label", "argv": arguments})
+
+    def test_single_transaction_sample_requires_successful_exit(self) -> None:
+        script = Path(__file__).resolve().parents[1] / "scripts/record-benchmark-run.py"
+        sample = measurement("OMG", 0.1)
+        sample.update(times=[0.1], exit_codes=[0], stddev=None)
+        for scenario in ("install", "remove"):
+            path = self.source / f"{scenario}.json"
+            for exit_code in (0, 7):
+                sample["exit_codes"] = [exit_code]
+                path.write_text(json.dumps({"results": [sample]}), encoding="utf-8")
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        str(script),
+                        "--validate-only",
+                        "--scenario",
+                        scenario,
+                        "--source",
+                        str(self.source),
+                    ],
+                    cwd=self.source,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=10,
+                )
+                self.assertEqual(
+                    result.returncode,
+                    0 if exit_code == 0 else 1,
+                    result.stdout + result.stderr,
+                )
+            path.unlink()
 
     def test_scoped_validation_does_not_create_records(self) -> None:
         scripts = self.source / "scripts"
