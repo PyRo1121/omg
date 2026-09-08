@@ -11,7 +11,7 @@ We provide security updates for the following versions of OMG:
 
 ## Reporting a Vulnerability
 
-We take security seriously. If you discover a security vulnerability in OMG, please report it privately.
+Report suspected vulnerabilities privately so maintainers can investigate before details become public.
 
 ### How to Report
 
@@ -27,6 +27,8 @@ Include:
 - Suggested fix (if you have one)
 
 ### What to Expect
+
+The following are response targets, not a support SLA:
 
 - **Initial Response:** Within 48 hours
 - **Status Update:** Within 7 days
@@ -52,8 +54,8 @@ OMG includes built-in security features:
 - **PGP Verification:** Automatic package signature verification
 - **Vulnerability Scanning:** CVE detection for installed packages
 - **SBOM Generation:** Software Bill of Materials in CycloneDX format
-- **Security Grading:** Risk assessment for every package install
-- **Audit Logging:** Tamper-proof logs of all package operations
+- **Security Grading:** Source-based policy grades, not proof of package safety or SLSA levels
+- **Audit Logging:** Local hash-chain consistency checks, not authenticated or complete history
 
 ### System Security
 
@@ -65,7 +67,7 @@ OMG includes built-in security features:
 ### Supply Chain Security
 
 - **Dependency Pinning:** Lockfiles for reproducible builds
-- **SLSA Provenance:** Build attestations (where available)
+- **Release Attestations:** GitHub Actions provenance for release archives and the Cargo dependency SBOM; no claimed SLSA build level
 - **Signature Verification:** PGP signatures on official packages
 - **Mirror Verification:** Checksum validation on downloads
 
@@ -91,14 +93,14 @@ OMG requires sudo access for:
 
 - Installing/removing system packages
 - Modifying system files
-- Running AUR builds (when not in user-space)
+- Installing AUR build outputs and preparing privileged build environments. Package build scripts run unprivileged.
 
 **Mitigation:**
 
 - Sudoloop limits password prompts
 - Dry-run mode (`--dry-run`) shows what would happen
 - Policy enforcement prevents unauthorized operations
-- Audit logs track all privileged operations
+- Privileged OMG backends persist attempt and outcome records. Interrupted operations and external tools require separate investigation.
 
 ### AUR Package Security
 
@@ -132,7 +134,7 @@ AUR packages are community-maintained and not officially verified.
 
    ```toml
    # ~/.config/omg/policy.toml
-   minimum_grade = "Verified"  # Require PGP signatures
+   minimum_grade = "Verified"  # Require the official-source policy grade
    require_pgp = true
    allow_aur = false  # Disable AUR if not needed
    ```
@@ -148,7 +150,7 @@ AUR packages are community-maintained and not officially verified.
 
    ```bash
    omg audit scan
-   omg audit fix  # Auto-upgrade vulnerable packages
+   omg audit fix --dry-run  # Preview available updates on Arch
    ```
 
 ### For Developers
@@ -184,23 +186,15 @@ AUR packages are community-maintained and not officially verified.
 Security updates are announced via:
 
 - GitHub Security Advisories
-- Release notes (CHANGELOG.md)
-- Email to <olen@latham.cloud> subscribers
+- [Release notes](docs/changelog.md)
 
 ## Compliance
 
-OMG supports compliance requirements for:
+OMG provides inventory and audit inputs, not compliance certification. It does not implement HIPAA controls.
 
-- SOC2
-- ISO27001
-- FedRAMP (future)
+`omg audit export --framework soc2` generates evidence on supported Arch systems with a running daemon. Other framework names on that command return unimplemented errors. `omg enterprise audit-export` generates the same generic inventory bundle for every accepted framework name; selecting HIPAA does not add HIPAA evidence. Period labels do not filter audit history.
 
-Features:
-
-- Audit log export (`omg enterprise audit-export`)
-- SBOM generation (`omg audit sbom`)
-- Vulnerability reporting (`omg --json audit scan`)
-- Policy enforcement (`policy.toml`)
+Exports are plaintext JSON or CSV. Some use owner-only permissions, but that is not encryption. Restrict destinations, inspect contents and permissions, and encrypt externally when required. SBOMs do not include a resolved dependency graph. See [security evidence limits](docs/security.md) and [enterprise exports](docs/enterprise.md).
 
 ## Release Incident Response
 
@@ -227,7 +221,7 @@ If a published release is (or may be) compromised, follow this runbook.
 ### Recovery
 
 6. Fix the root cause on `main` and let CI go green.
-7. Re-tag and let the full pipeline rebuild, attest, verify, and publish.
+7. Publish a new version tag and let the full pipeline rebuild, attest, verify, and publish. Do not move an existing published tag.
 8. Publish a security advisory (and a changelog entry) describing the incident, affected versions, and remediation.
 9. File a post-mortem; add regression tests where the failure slipped through.
 
@@ -244,7 +238,7 @@ We thank security researchers who responsibly disclose vulnerabilities. Credits 
 
 ---
 
-**Last Updated:** 2026-02-01
+Current implementation details are documented in [the security reference](docs/security.md).
 
 ## Security boundaries and retained trust
 
@@ -261,8 +255,10 @@ attestation does not retroactively authenticate the bootstrap script.
 Runtime downloads trust their documented upstream publishers. A digest delivered
 by that publisher detects corruption but cannot protect against compromise of the
 publisher and its metadata together. OMG does not claim independent provenance
-for every runtime. SLSA artifact verification requires an explicit certificate
-identity; a valid signature from an arbitrary signer is insufficient.
+for every runtime. The SLSA-named artifact command requires an exact certificate
+identity and verifies supported Rekor artifact signatures, not in-toto build
+provenance. Even successful checks return SLSA level `None`. A valid signature
+from an arbitrary signer is insufficient.
 
 AUR review covers the complete local regular-file source manifest, including
 `.SRCINFO`, patches and install hooks. Source symlinks are rejected; replace them
@@ -291,7 +287,8 @@ Local audit verification establishes internal hash-chain consistency only. The
 owner can rewrite and rehash a user-owned collection, remove entries, or delete
 its incompleteness marker; successful verification is not proof of authenticity
 or completeness. Operations executed inside privileged OMG backends additionally persist attempt
-and outcome records synchronously under root-controlled `/var/log/omg`. Direct
+and outcome records synchronously under root-controlled `/var/lib/omg/audit`.
+Trusted legacy `/var/log/omg` storage is migrated atomically without discarding history. Direct
 external native launches record their attempt/outcome in the invoking user’s
 collection. An
 abruptly terminated operation may have an attempt without a completion record.

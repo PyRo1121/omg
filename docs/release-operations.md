@@ -11,7 +11,7 @@ tag push (v*) or manual dispatch
 gate-on-ci ──▶ build-arch / build-debian / build-ubuntu / build-fedora / build-macos
    (1)                  │  (digest-pinned distro containers, 1.95.0 toolchain)
                         ▼
-                   release (SBOM → attest → checksum-verified collection → GitHub Release)
+                   release (SBOM → checksum-verified collection → attest → GitHub Release)
                         │
                         ▼
                    sync-r2  (environment: production)
@@ -20,11 +20,12 @@ gate-on-ci ──▶ build-arch / build-debian / build-ubuntu / build-fedora / b
                          3. publish `latest-version` marker (LAST)
 ```
 
-Hard guarantees enforced in `.github/workflows/release.yml`:
+Checks configured in `.github/workflows/release.yml`:
 
 - **No publish from a red commit.** `gate-on-ci` requires successful `CI` and
   `Benchmark` runs for the exact release commit; in-progress runs are *watched
-  to completion* rather than raced. The only bypass is a no-op dry run.
+  to completion* rather than raced. A nonpublishing dry run skips this gate.
+  Existing-tag R2 sync follows a separate published-release verification path.
 - **Reproducible dependency set.** Every build uses `--locked` against
   `Cargo.lock`; the SBOM job fails if generation mutates the lockfile.
 - **Artifact allowlist.** `scripts/collect-release-artifacts.sh` refuses
@@ -44,6 +45,10 @@ Hard guarantees enforced in `.github/workflows/release.yml`:
   7-day dwell time), containers are digest-pinned, and `wrangler` is installed
   with `npm ci` from a committed lockfile (`.github/deps/release-tools`), so
   downloaded npm packages are checked against their locked integrity hashes.
+
+The dependency SBOM is real generated output from pinned `cargo-cyclonedx`, using all Cargo features and targets. It is published with the GitHub Release and attested alongside the archives. It is not an installed-system SBOM or an exact per-platform binary dependency subset. The current R2 upload loops publish archives and checksum sidecars, not the SBOM.
+
+GitHub Actions attestations do not by themselves establish SLSA Levels 1–3 or hardened-builder compliance. The separate `omg audit slsa` implementation does not verify these in-toto build attestations. Use the release-specific `gh attestation verify` checks instead.
 
 ## Recovering an R2 sync
 
@@ -65,13 +70,14 @@ Clients never trust the release bucket alone:
 | Latest resolution | R2 `latest-version` marker only: bounded bare-SemVer text, fail-closed; exact `OMG_VERSION` installs use the given tag verbatim | R2 `latest-version` marker only (R2-only, fail-closed) |
 | Checksum | mandatory `.sha256` sidecar | pinned digest verified before extraction |
 | Downgrade protection | installs only the resolved latest or the exact requested version | refuses older versions without `--force` |
-| Build provenance | `gh attestation verify`; missing `gh` causes refusal unless `OMG_INSTALL_ALLOW_UNVERIFIED_PROVENANCE=1` explicitly opts out | `gh attestation verify`; missing `gh` causes refusal unless `OMG_SELF_UPDATE_ALLOW_UNVERIFIED_PROVENANCE=1` explicitly opts out |
+| Build provenance | `gh attestation verify`; missing `gh` causes refusal, with no supported installer opt-out | `gh attestation verify`; missing `gh` causes refusal unless `OMG_SELF_UPDATE_ALLOW_UNVERIFIED_PROVENANCE=1` explicitly opts out |
 | Size bounds | curl + disk constraints | 256 MiB streaming cap, 16 MiB prealloc cap |
 
 The provenance layer exists precisely because a compromise of the R2
 credentials could rewrite binaries **and** checksum sidecars together;
-Sigstore attestations are anchored outside the bucket and cannot be forged
-without the CI runner itself.
+GitHub attestations are verified outside the bucket against the selected source
+and workflow identity. This retains trust in GitHub, the repository, the release
+workflow, and its build environment; it does not eliminate supply-chain risk.
 
 Both clients download archives and sidecars from the R2 release domain
 (`https://releases.omg.latham.cloud`). GitHub Releases remains the documented
