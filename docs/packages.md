@@ -8,7 +8,7 @@ description: Search, install, update, and remove packages
 
 **Complete Guide to Searching, Installing, and Managing Packages**
 
-OMG provides unified package management for official repositories and AUR on Arch Linux, with experimental Debian/Ubuntu support.
+OMG has alpha backends for Arch, Debian/Ubuntu, Fedora, and macOS. AUR support is Arch-specific. Release availability and backend limitations are listed in [installation](./installation.md).
 
 ---
 
@@ -16,11 +16,11 @@ OMG provides unified package management for official repositories and AUR on Arc
 
 OMG's package management features:
 
-- **12-24x faster searches** than pacman (5-11ms vs 133ms)
+- **Daemon-backed searches** with [artifact-specific benchmark evidence](../benchmarks/README.md)
 - **Unified AUR integration** — no separate AUR helper needed — see [AUR Support](./aur.md)
-- **Security grading** — packages rated before installation
-- **Policy enforcement** — organization-wide installation rules
-- **Transaction history** — full audit trail with rollback
+- **Security grading** — source/advisory classification, not a safety certification
+- **Policy enforcement** — local configured rules with backend-specific coverage
+- **Transaction history** — recorded operations where supported and enabled; rollback has backend and artifact limits
 
 ---
 
@@ -44,11 +44,7 @@ omg search --no-aur firefox
 
 ### Search Performance
 
-| Mode | Latency | Notes |
-| ------ | --------- | ------- |
-| With daemon (cached) | ~5-11ms | Instant feel |
-| With daemon (fresh) | ~200ms | Still fast |
-| Without daemon | ~500ms | Direct libalpm |
+Use the [benchmark records](../benchmarks/README.md) for artifact-specific measurements. Query, sources, backend, and cache state must match before comparing timings.
 
 ### Fuzzy Matching
 
@@ -124,7 +120,7 @@ enable_sccache = false
 omg remove firefox
 
 # Remove with orphaned dependencies
-omg remove firefox -r
+omg remove firefox -r  # Arch backend only
 
 # Remove multiple packages
 omg remove pkg1 pkg2 pkg3
@@ -189,10 +185,7 @@ omg info firefox
 
 ### Performance
 
-| Mode | Latency |
-|------|---------|
-| With daemon (cached) | ~3-6ms |
-| Without daemon | ~150ms |
+Info-query timings depend on backend, cache state, and remote metadata. Search benchmarks do not establish info-query latency.
 
 ---
 
@@ -254,12 +247,12 @@ omg sync
 
 ### Security Grades
 
-Every package is assigned a security grade:
+Policy grades describe classification, not a guarantee of package safety or an independent signature receipt. Core package names do not establish SLSA provenance. See [security grades](./security.md#security-grades):
 
 | Grade | Meaning | Examples |
 | ------- | --------- | ---------- |
-| **LOCKED** | SLSA Level 3 + PGP | glibc, linux, pacman |
-| **VERIFIED** | PGP signature verified | Official repo packages |
+| **LOCKED** | Policy enum value, not an established SLSA level | Not assigned by current source classification |
+| **VERIFIED** | Official repository source classification | Official repo packages |
 | **COMMUNITY** | AUR/unsigned | AUR packages |
 | **RISK** | Known vulnerabilities | CVE-affected packages |
 
@@ -381,7 +374,7 @@ omg install pkg3
 
 - Official repositories via libalpm
 - AUR with full build support
-- All features available
+- ALPM and AUR workflows; security evidence and policy limits still apply
 
 ### Debian/Ubuntu (Experimental)
 
