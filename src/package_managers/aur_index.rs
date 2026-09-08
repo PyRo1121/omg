@@ -1,15 +1,15 @@
 //! Persistent rkyv-based index for AUR metadata
 //!
 //! This module provides a fast, zero-copy binary index for AUR package metadata,
-//! allowing sub-millisecond lookups by memory mapping the index file.
+//! reading the cache into an owned, aligned snapshot before accessing entries.
 
 use std::fs::File;
-use std::io::{BufReader, Write as _};
+use std::io::{BufReader, Read, Write as _};
 use std::path::Path;
 
 use anyhow::{Context, Result};
 use flate2::read::GzDecoder;
-use memmap2::Mmap;
+use rkyv::util::AlignedVec;
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use tempfile::NamedTempFile;
 
@@ -38,8 +38,10 @@ pub struct AurArchive {
     pub entries: Vec<AurEntry>,
 }
 
+const MAX_AUR_INDEX_BYTES: u64 = 512 * 1024 * 1024;
+
 pub struct AurIndex {
-    mmap: Mmap,
+    bytes: AlignedVec,
 }
 
 impl std::fmt::Debug for AurIndex {
@@ -49,35 +51,40 @@ impl std::fmt::Debug for AurIndex {
 }
 
 impl AurIndex {
-    /// Open an existing AUR index using memory mapping
+    /// Read and validate an owned snapshot before exposing archived references.
     pub fn open(path: &Path) -> Result<Self> {
-        let file = File::open(path)
+        use std::os::unix::fs::OpenOptionsExt;
+
+        let mut file = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK)
+            .open(path)
             .with_context(|| format!("Failed to open index at {}", path.display()))?;
+        let metadata = file.metadata()?;
+        anyhow::ensure!(metadata.is_file(), "AUR index must be a regular file");
+        anyhow::ensure!(
+            metadata.len() <= MAX_AUR_INDEX_BYTES,
+            "AUR index exceeds size limit"
+        );
 
-        // SAFETY: `Mmap::map` creates a read-only mapping; the mapping itself
-        // never writes to the file. Reading rkyv archived types through the
-        // mapping is sound only while no writer mutates the mapped bytes.
-        // That precondition holds because omg publishes indexes exclusively
-        // via `build_index`, which writes a temp file and installs it with
-        // `NamedTempFile::persist` (an atomic rename): an existing mapping
-        // keeps pinning the old inode, whose bytes are final before the swap.
-        // The file at `path` must therefore never be written in place — only
-        // replaced by rename — which is true for all writers in this crate.
-        #[expect(unsafe_code)]
-        let mmap = unsafe { Mmap::map(&file)? };
-
-        Ok(Self { mmap })
+        let mut bytes = AlignedVec::new();
+        bytes.extend_from_reader(&mut Read::by_ref(&mut file).take(MAX_AUR_INDEX_BYTES))?;
+        let mut extra = [0];
+        anyhow::ensure!(file.read(&mut extra)? == 0, "AUR index exceeds size limit");
+        let index = Self { bytes };
+        index.archive()?;
+        Ok(index)
     }
 
     /// Access the archived data with validation
     fn archive(&self) -> Result<&ArchivedAurArchive> {
-        rkyv::access::<rkyv::Archived<AurArchive>, rkyv::rancor::Error>(&self.mmap)
+        rkyv::access::<rkyv::Archived<AurArchive>, rkyv::rancor::Error>(&self.bytes)
             .map_err(|e| anyhow::anyhow!("Corrupted AUR index: {e}"))
     }
 
     /// Get metadata for a specific package (zero-copy)
     ///
-    /// Returns a reference to the archived entry in the memory-mapped file.
+    /// Returns a reference into the owned snapshot, independent of later file writes.
     pub fn get(&self, name: &str) -> Result<Option<&ArchivedAurEntry>> {
         let archive = self.archive()?;
         let Ok(idx) = archive
@@ -287,6 +294,55 @@ mod tests {
         build_index(&json_path, &index_path)?;
         let index = AurIndex::open(&index_path)?;
         Ok((temp_dir, index))
+    }
+
+    #[test]
+    fn index_open_rejects_unsafe_or_oversized_inputs() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("index");
+        std::fs::write(&path, b"invalid archive")?;
+        assert!(AurIndex::open(&path).is_err());
+        assert_eq!(std::fs::read(&path)?, b"invalid archive");
+        File::create(&path)?.set_len(MAX_AUR_INDEX_BYTES + 1)?;
+        let error = AurIndex::open(&path).unwrap_err();
+        assert!(error.to_string().contains("exceeds"));
+        let link = directory.path().join("link");
+        std::os::unix::fs::symlink(&path, &link)?;
+        assert!(AurIndex::open(&link).is_err());
+        assert!(AurIndex::open(directory.path()).is_err());
+        let fifo = directory.path().join("fifo");
+        nix::unistd::mkfifo(&fifo, nix::sys::stat::Mode::S_IRWXU)?;
+        assert!(AurIndex::open(&fifo).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn index_retains_owned_entries_after_external_mutation() -> Result<()> {
+        let (directory, index) =
+            open_test_index(r#"[{"Name":"demo","Version":"1.0","LastModified":1}]"#)?;
+        let (replacement_directory, _replacement_index) =
+            open_test_index(r#"[{"Name":"demo","Version":"2.0","LastModified":1}]"#)?;
+        let path = directory.path().join("metadata.rkyv");
+        let replacement = std::fs::read(replacement_directory.path().join("metadata.rkyv"))?;
+        assert_eq!(std::fs::metadata(&path)?.len(), replacement.len() as u64);
+        let mut writer = std::fs::OpenOptions::new().write(true).open(&path)?;
+        let entry = index.get("demo")?.expect("fixture entry");
+        assert_eq!(entry.version.as_str(), "1.0");
+        writer.write_all(&replacement)?;
+        assert_eq!(entry.version.as_str(), "1.0");
+        assert_eq!(
+            AurIndex::open(&path)?
+                .get("demo")?
+                .unwrap()
+                .version
+                .as_str(),
+            "2.0"
+        );
+        writer.set_len(0)?;
+        assert_eq!(entry.version.as_str(), "1.0");
+        assert_eq!(index.search("demo", 1)?.len(), 1);
+        assert!(AurIndex::open(&path).is_err());
+        Ok(())
     }
 
     #[test]
