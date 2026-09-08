@@ -69,8 +69,6 @@ struct DebianIndexCache {
     search_buffer: Vec<u8>,
     /// Offsets into the search buffer
     package_offsets: Vec<usize>,
-    /// Cached set of installed package names
-    installed_set: AHashSet<String>,
     /// Last access time for TTL-based eviction (unix seconds; `0` = never)
     last_accessed: u64,
 }
@@ -555,7 +553,6 @@ fn hydrate_index_cache(
     cache: &mut DebianIndexCache,
     index: DebianPackageIndex,
     file_mtimes: HashMap<PathBuf, std::time::SystemTime>,
-    installed_set: AHashSet<String>,
 ) {
     let estimated_size = index
         .packages
@@ -583,7 +580,6 @@ fn hydrate_index_cache(
     cache.file_mtimes = file_mtimes;
     cache.search_buffer = search_buffer;
     cache.package_offsets = package_offsets;
-    cache.installed_set = installed_set;
     cache.last_accessed = unix_now_secs();
 }
 
@@ -675,12 +671,8 @@ pub fn ensure_index_loaded() -> Result<()> {
             .filter(|mmap| mmap.generation() == index.updated_at);
         *crate::core::sync::write_cache(&DEBIAN_MMAP_INDEX) = mmap;
         *crate::core::sync::write_cache(&DEBIAN_FST_INDEX) = None;
-        let installed_set = list_installed_fast()?
-            .into_iter()
-            .map(|package| package.name)
-            .collect();
         let mut cache = crate::core::sync::write_cache(&DEBIAN_INDEX_CACHE);
-        hydrate_index_cache(&mut cache, index, current_files, installed_set);
+        hydrate_index_cache(&mut cache, index, current_files);
         return Ok(());
     }
 
@@ -829,12 +821,8 @@ pub fn ensure_index_loaded() -> Result<()> {
         }
     }
 
-    let installed_set = list_installed_fast()?
-        .into_iter()
-        .map(|package| package.name)
-        .collect();
     let mut cache = crate::core::sync::write_cache(&DEBIAN_INDEX_CACHE);
-    hydrate_index_cache(&mut cache, index, current_files, installed_set);
+    hydrate_index_cache(&mut cache, index, current_files);
 
     Ok(())
 }
@@ -1419,8 +1407,9 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
         drop(fst_guard);
     }
 
-    // Fallback: load full index (needed for empty queries or when FST/mmap unavailable)
+    // Repository and installed inventories have independent freshness rules.
     ensure_index_loaded()?;
+    let installed_set = installed_names()?;
 
     let guard = crate::core::sync::read_cache(&DEBIAN_INDEX_CACHE);
     let index = guard.index.as_ref().context(
@@ -1431,7 +1420,7 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
         return Ok(index
             .packages
             .iter()
-            .map(|pkg| package_with_installed_state(pkg, &guard.installed_set))
+            .map(|pkg| package_with_installed_state(pkg, &installed_set))
             .collect());
     }
 
@@ -1439,7 +1428,7 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
     if let Some(exact_pkg) = index.get_query(query) {
         return Ok(vec![package_with_installed_state(
             exact_pkg,
-            &guard.installed_set,
+            &installed_set,
         )]);
     }
 
@@ -1449,7 +1438,7 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
     {
         return Ok(vec![package_with_installed_state(
             exact_pkg,
-            &guard.installed_set,
+            &installed_set,
         )]);
     }
 
@@ -1463,7 +1452,7 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
             &fst_index.map,
             index,
             &query_lower,
-            &guard.installed_set,
+            &installed_set,
         ));
     }
     drop(fst_guard);
@@ -1474,7 +1463,7 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
         &query_lower,
         &guard.search_buffer,
         &guard.package_offsets,
-        &guard.installed_set,
+        &installed_set,
     ))
 }
 
@@ -1689,15 +1678,13 @@ pub fn get_info_fast(name: &str) -> Result<Option<Package>> {
     }
 
     ensure_index_loaded()?;
+    let installed_set = installed_names()?;
     let guard = crate::core::sync::read_cache(&DEBIAN_INDEX_CACHE);
     let index = guard.index.as_ref().context(
         "Debian package index not loaded. Run 'omg sync' to refresh the package database",
     )?;
     if let Some(pkg) = index.get_query(name) {
-        Ok(Some(package_with_installed_state(
-            pkg,
-            &guard.installed_set,
-        )))
+        Ok(Some(package_with_installed_state(pkg, &installed_set)))
     } else {
         Ok(None)
     }
@@ -2533,7 +2520,7 @@ mod tests {
         ]);
         let mut cache = DebianIndexCache::default();
         assert_eq!(cache.refresh_requirement(&sources), IndexRefresh::Disk);
-        hydrate_index_cache(&mut cache, before, sources.clone(), AHashSet::new());
+        hydrate_index_cache(&mut cache, before, sources.clone());
         assert_eq!(cache.refresh_requirement(&sources), IndexRefresh::Memory);
 
         fs::remove_file(&removed)?;
@@ -2549,7 +2536,7 @@ mod tests {
                 .get_name_arch_component("removed", "amd64", "main")
                 .is_none()
         );
-        hydrate_index_cache(&mut cache, after, sources.clone(), AHashSet::new());
+        hydrate_index_cache(&mut cache, after, sources.clone());
         assert_eq!(cache.refresh_requirement(&sources), IndexRefresh::Memory);
         fs::remove_file(kept)?;
         sources.clear();
@@ -2563,7 +2550,7 @@ mod tests {
                 .get_name_arch_component("kept", "amd64", "main")
                 .is_none()
         );
-        hydrate_index_cache(&mut cache, empty, sources.clone(), AHashSet::new());
+        hydrate_index_cache(&mut cache, empty, sources.clone());
         assert_eq!(cache.refresh_requirement(&sources), IndexRefresh::Memory);
         Ok(())
     }
@@ -2999,19 +2986,15 @@ mod tests {
     }
 
     #[test]
-    fn test_ensure_index_loaded_missing_status_is_an_error() {
-        if !Path::new("/var/lib/apt/lists").exists() {
-            ensure_index_loaded().expect("missing apt lists is still a no-op");
-            return;
-        }
+    fn installed_names_missing_status_is_an_error() {
         if Path::new("/var/lib/dpkg/status").exists() {
-            ensure_index_loaded().expect("existing dpkg status must load");
+            installed_names().expect("existing dpkg status must load");
             return;
         }
-        let error = ensure_index_loaded()
+        let error = installed_names()
             .expect_err("missing dpkg status must not look like an empty installed set");
         assert!(
-            error.to_string().contains("dpkg status file not found"),
+            error.to_string().contains("/var/lib/dpkg/status"),
             "got: {error}"
         );
     }
@@ -3358,19 +3341,77 @@ mod tests {
             PathBuf::from("/var/lib/apt/lists/example_Packages"),
             std::time::UNIX_EPOCH,
         )]);
-        let installed_set = AHashSet::from_iter(["bash".to_string()]);
         let mut cache = DebianIndexCache::default();
 
-        hydrate_index_cache(&mut cache, index, current_files.clone(), installed_set);
+        hydrate_index_cache(&mut cache, index, current_files.clone());
 
         assert_eq!(cache.file_mtimes, current_files);
         assert_eq!(cache.search_buffer, b"bash gnu shell\0");
         assert_eq!(cache.package_offsets, vec![0, cache.search_buffer.len()]);
-        assert!(cache.installed_set.contains("bash"));
         assert_eq!(
             cache.index.as_ref().map(|index| index.packages.len()),
             Some(1)
         );
+    }
+
+    #[test]
+    fn search_results_follow_status_without_rebuilding_repository() -> Result<()> {
+        let mut index = DebianPackageIndex::new();
+        index.add_package(parse_paragraph_str(
+            "Package: bash\nVersion: 1\nArchitecture: amd64\nDescription: GNU shell\n",
+            "main",
+            "stable",
+            "fixture",
+        )?);
+        let sources = HashMap::new();
+        let mut cache = DebianIndexCache::default();
+        hydrate_index_cache(&mut cache, index, sources.clone());
+
+        let directory = tempfile::tempdir()?;
+        let fst_path = directory.path().join("index.fst");
+        let mut builder = fst::MapBuilder::memory();
+        builder.insert("bash", 0)?;
+        fs::write(&fst_path, builder.into_inner()?)?;
+        fs::write(FstIndex::generation_sidecar(&fst_path), b"0")?;
+        let fst = FstIndex::open(&fst_path)?;
+
+        for (status, expected) in [
+            ("install ok installed", true),
+            ("deinstall ok config-files", false),
+            ("install ok installed", true),
+        ] {
+            let content =
+                format!("Package: bash\nStatus: {status}\nVersion: 1\nArchitecture: amd64\n\n");
+            let installed: AHashSet<String> = status_paragraphs(&content)
+                .filter(|paragraph| status_paragraph_is_installed(paragraph))
+                .filter_map(parse_status_paragraph)
+                .map(|(name, _, _, _)| name)
+                .collect();
+            assert_eq!(cache.refresh_requirement(&sources), IndexRefresh::Memory);
+            let index = cache.index.as_ref().context("repository index")?;
+            for query in ["bash", "ba", "ash"] {
+                for results in [
+                    simd_search_fallback(
+                        index,
+                        query,
+                        &cache.search_buffer,
+                        &cache.package_offsets,
+                        &installed,
+                    ),
+                    fst_search(&fst.map, index, query, &installed),
+                ] {
+                    assert_eq!(results.len(), 1, "{query} / {status}");
+                    assert_eq!(results[0].name, "bash");
+                    assert_eq!(results[0].installed, expected, "{query} / {status}");
+                }
+            }
+            let package = index.get_query("bash:amd64").context("qualified package")?;
+            assert_eq!(
+                package_with_installed_state(package, &installed).installed,
+                expected
+            );
+        }
+        Ok(())
     }
 
     #[test]
