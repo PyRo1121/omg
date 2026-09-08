@@ -538,18 +538,22 @@ fn test_explicit_list() {
 /// before consulting a daemon, fast-status snapshot, or host package database.
 #[test]
 fn test_explicit_count_observes_mock_state() {
-    let project = TestProject::new();
-    project.mock_install("git", "2.43.0").unwrap();
-    project.mock_install("wget", "1.21.4").unwrap();
+    for distro in ["arch", "debian"] {
+        let project = TestProject::for_distro(distro);
+        project.mock_install("audit-only-package", "1.0").unwrap();
 
-    let result = project.run(&["explicit", "--count"]);
+        let count = project.run(&["explicit", "--count"]);
+        count.assert_success();
+        assert_eq!(count.stdout.trim(), "1", "isolated count for {distro}");
 
-    result.assert_success();
-    assert_eq!(
-        result.stdout.trim(),
-        "2",
-        "--count must report the isolated mock state, not the host DB"
-    );
+        let list = project.run(&["explicit"]);
+        list.assert_success();
+        assert!(
+            list.stdout.contains("audit-only-package"),
+            "isolated package missing for {distro}: {}",
+            list.stdout
+        );
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
