@@ -233,6 +233,26 @@ No unregistered Criterion target was confirmed: current 12 targets declare `harn
 
 The seven endpoint metadata entries in `contracts/service-api-v1.json` matched inspected Rust callers. `src/core/service_api.rs:25-59` does not establish payload-schema or deployed-server compatibility. Those remain separate verification work.
 
+## Archived discovery output (2026-09-08)
+
+The separate generated discovery run `922db007d1df29270b4e5575654b1b2d26bb371f_20260908T013219Z_qiscu5_o` is preserved losslessly in `deep-discovery-922db007.tar.zst` beside this report. Its manifest marks the run **canceled**, sealed at `2026-09-08T04:07:03.357690Z`; its 81 candidate findings are not a completed or independently verified audit.
+
+- Original: 881 regular files, about 514 MiB, including repeated checkpoints and intermediate outputs.
+- Archive: about 2.49 MiB; all files retained, not merely the final report.
+- SHA-256: `9e3aa605699cc9d1d10e026d02792e7aadf789afcef42d4e21b4470164ec9d08`.
+- Verification: `tar -I zstd -df` compared the archive with the original tree; a complete member-list comparison checked for omitted files. Gitleaks scanned 536,912,826 bytes with recursive decoding disabled and reported no leaks. The earlier scan with default decoding timed out; this is not a claim of exhaustive secret detection.
+- The uncompressed directory was removed after verification to avoid retaining half a gigabyte of duplicate generated output. Do not unpack the whole archive into the repository or `/tmp` for routine review.
+
+Read individual files without materializing the full tree, for example:
+
+```sh
+tar -I zstd -xOf .audit/deep-discovery-922db007.tar.zst \
+  922db007d1df29270b4e5575654b1b2d26bb371f_20260908T013219Z_qiscu5_o/findings.json \
+  | jq '.findings[] | {findingId, title, locations, validation: .validation.status}'
+```
+
+Revalidate candidates against current source and regression tests before acting on them. This archive is historical evidence, not executable instructions or proof of current vulnerabilities.
+
 ## Suggested implementation sequence
 
 ### Slice 1: protect execution and observation
