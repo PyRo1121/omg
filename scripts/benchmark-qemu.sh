@@ -456,20 +456,32 @@ if [[ ! "$guest_rc" =~ ^[0-9]+$ || "$guest_rc" != "$rc" ]]; then
 fi
 if [[ "$benchmark" == true && "$rc" == 0 ]]; then
   case "$distro" in
-    arch) expected_commands='["OMG","pacman"]' ;;
-    debian|ubuntu) expected_commands='["OMG","apt-cache","apt"]' ;;
-    fedora) expected_commands='["OMG","rpm","dnf"]' ;;
+    arch) expected_commands='{"info":["OMG","pacman"],"search":["OMG","pacman"],"explicit":["OMG","pacman"]}' ;;
+    debian|ubuntu) expected_commands='{"info":["OMG","apt-cache","apt"],"search":["OMG","apt-cache","apt"],"explicit":["OMG","apt-mark"]}' ;;
+    fedora) expected_commands='{"info":["OMG","rpm","dnf"],"search":["OMG","dnf"],"explicit":["OMG","dnf"]}' ;;
   esac
   benchmark_evidence="$work/guest/evidence/benchmarks"
   if ! (
     [[ -f "$benchmark_evidence/summary.json" && $(wc -c < "$benchmark_evidence/summary.json") -le 1048576 ]] || exit 1
-    python3 "$work/record-benchmark-run.py" --validate-only --scenario info --source "$benchmark_evidence" || exit 1
+    python3 "$work/record-benchmark-run.py" --validate-only --scenario info --scenario search \
+      --scenario explicit --source "$benchmark_evidence" || exit 1
     jq -e --arg distro "$distro" --argjson expected "$expected_commands" '
-      .schema_version == 1 and .complete == true and .distro == $distro and
-      .operation == "info" and .package == "tree" and .daemon == "disabled" and
-      .commands == $expected' "$benchmark_evidence/summary.json" >/dev/null || exit 1
-    jq -e --argjson expected "$expected_commands" '[.results[].command] == $expected' \
-      "$benchmark_evidence/info.json" >/dev/null
+      .schema_version == 2 and .complete == true and .distro == $distro and
+      .operations == ["info","search","explicit"] and .daemon == "disabled" and
+      (.commands | with_entries(.value |= map(.label))) == $expected and
+      all(.commands[][]; (.argv|type == "array" and length > 0 and all(.[]; type == "string"))) and
+      .comparisons.info.equivalent == true and .comparisons.explicit.equivalent == true and
+      (.comparisons.search.equivalent|type == "boolean") and
+      (.min_runs|type == "number" and floor == . and . > 0) and
+      (.max_runs|type == "number" and floor == . and . >= 1 and . <= 10000) and
+      .min_runs <= .max_runs' "$benchmark_evidence/summary.json" >/dev/null || exit 1
+    for scenario in info search explicit; do
+      jq -e --argjson expected "$expected_commands" --arg scenario "$scenario" \
+        --slurpfile summary "$benchmark_evidence/summary.json" '
+        [.results[].command] == $expected[$scenario] and
+        all(.results[]; (.times|length) >= $summary[0].min_runs and
+          (.times|length) <= $summary[0].max_runs)' "$benchmark_evidence/$scenario.json" >/dev/null || exit 1
+    done
   ) > "$work/benchmark-validation.log" 2>&1; then
     printf 'Benchmark evidence rejected; see %s/benchmark-validation.log\n' "$work" >&2
     rc=120

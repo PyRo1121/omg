@@ -317,11 +317,15 @@ def main() -> int:
     )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument(
-        "--validate-only", action="store_true",
+        "--validate-only",
+        action="store_true",
         help="Check measurements without creating records or changing metadata",
     )
     parser.add_argument(
-        "--scenario", action="append", choices=SCENARIOS, default=[],
+        "--scenario",
+        action="append",
+        choices=SCENARIOS,
+        default=[],
         help="Require this scenario (repeatable); useful for scoped guest measurements",
     )
     mode.add_argument(

@@ -59,15 +59,28 @@ class BenchmarkAdmissionTests(unittest.TestCase):
     def test_scoped_validation_does_not_create_records(self) -> None:
         scripts = self.source / "scripts"
         scripts.mkdir()
-        original = Path(__file__).resolve().parents[1] / "scripts/record-benchmark-run.py"
+        original = (
+            Path(__file__).resolve().parents[1] / "scripts/record-benchmark-run.py"
+        )
         script = scripts / original.name
         shutil.copyfile(original, script)
         self.write_results(measurement("OMG", 0.1), measurement("rpm", 0.01))
         (self.source / "search.json").rename(self.source / "info.json")
         result = subprocess.run(
-            [sys.executable, str(script), "--validate-only", "--scenario", "info",
-             "--source", str(self.source)],
-            cwd=self.source, capture_output=True, text=True, check=False, timeout=10,
+            [
+                sys.executable,
+                str(script),
+                "--validate-only",
+                "--scenario",
+                "info",
+                "--source",
+                str(self.source),
+            ],
+            cwd=self.source,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertFalse((self.source / "benchmarks").exists())

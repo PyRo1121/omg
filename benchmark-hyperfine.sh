@@ -41,8 +41,8 @@ Usage: $0 [OPTIONS]
 
 Options:
   --fast, -f    Run in fast mode (reduced warmup and runs)
-  --guest       Benchmark installed-package info in a prepared Linux guest;
-                requires OMG_BENCH_BINARY and an installed tree fixture
+  --guest       Benchmark info, complete JSON search, and explicit counts in
+                a prepared Linux guest; requires OMG_BENCH_BINARY and tree
   --update      Run ONLY the AUR update discovery benchmark (no daemon,
                 no other benchmarks) and exit
   --help, -h    Show this help message
@@ -238,6 +238,7 @@ if [[ "$GUEST_MODE" == true ]]; then
         echo 'Guest benchmark output must be empty; old evidence is never overwritten.' >&2
         exit 2
     fi
+    date -u +%Y-%m-%dT%H:%M:%SZ > "$EXPORT_DIR/started-at.txt"
     # A private, absent socket prevents accidentally timing another run's daemon.
     export OMG_SOCKET_PATH="$EXPORT_DIR/no-daemon.sock"
     export OMG_CACHE_DIR="$EXPORT_DIR/cache"
@@ -312,13 +313,160 @@ if [[ "$GUEST_MODE" == true ]]; then
             "$EXPORT_DIR/extra-info-after.stdout" > "$EXPORT_DIR/extra-identity-after.tsv"
         cmp "$EXPORT_DIR/extra-identity.tsv" "$EXPORT_DIR/extra-identity-after.tsv"
     fi
-    jq -n --arg distro "$distro" --arg baseline "$native_name" \
-        --slurpfile measurements "$EXPORT_DIR/info.json" \
-        --argjson warmup "$WARMUP" \
-        '{schema_version:1, complete:true, distro:$distro, operation:"info",
-          package:"tree", daemon:"disabled", cache:"warm after preflight and warmups",
-          comparison:"matching package identity/version; output fields and formatting differ",
-          baseline:$baseline, commands:[$measurements[0].results[].command], warmup:$warmup}' > "$EXPORT_DIR/summary.json"
+    command_json() {
+        local label=$1
+        shift
+        printf '%s\0' "$@" | jq -Rs --arg label "$label" \
+            '{label:$label, argv:(split("\u0000")[:-1])}'
+    }
+    {
+        command_json OMG "$OMG" info tree
+        command_json "$native_name" "${native[@]}"
+        if [[ ${#extra_native[@]} -gt 0 ]]; then command_json "$extra_name" "${extra_native[@]}"; fi
+    } | jq -s . > "$EXPORT_DIR/info.commands.json"
+
+    # JSON preserves installable names rather than human-output alias grouping.
+    omg_search=("$OMG" --json search ripgrep --no-aur --limit 100000)
+    extra_search=()
+    case "$distro" in
+        arch) search_native=(pacman --color never -Ss ripgrep); search_name=pacman ;;
+        debian|ubuntu)
+            search_native=(apt-cache search ripgrep); search_name=apt-cache
+            extra_search=(apt search ripgrep) ;;
+        fedora)
+            dnf -q makecache > "$EXPORT_DIR/native-cache-prepare.stdout" 2> "$EXPORT_DIR/native-cache-prepare.stderr"
+            search_native=(dnf -C search ripgrep); search_name=dnf ;;
+    esac
+    omg_names() {
+        jq -er --arg kind "$1" '
+          (if $kind == "search" then map(.name) else .packages end) |
+          if type == "array" and length > 0 and length < 100000 and
+             all(.[]; type == "string" and test("^[A-Za-z0-9][A-Za-z0-9+._:@-]*$"))
+          then .[] else error("invalid or potentially truncated package-name set") end
+        ' "$2" | sort -u
+    }
+    search_names() {
+        case "$1" in
+            pacman) awk '/^[^[:space:]]+\/[^[:space:]]+[[:space:]]/ {split($1,p,"/"); print p[2]}' "$2" ;;
+            apt-cache) awk '$2 == "-" {print $1}' "$2" ;;
+            apt) awk '/^[^[:space:]]+\/[^[:space:]]+[[:space:]]/ {split($1,p,"/"); print p[1]}' "$2" ;;
+            dnf) awk -v arch="$(uname -m)" '
+                $1 ~ /^[A-Za-z0-9][A-Za-z0-9+._-]*\.[A-Za-z0-9_]+$/ {
+                  name=$1; architecture=$1; sub(/^.*\./,"",architecture);
+                  if (architecture != arch && architecture != "noarch") exit 1;
+                  sub(/\.[^.]+$/,"",name); print name;
+                }' "$2" ;;
+        esac | sort -u
+    }
+    capture_search() {
+        local phase=$1
+        "${omg_search[@]}" > "$EXPORT_DIR/search-omg-$phase.stdout" 2> "$EXPORT_DIR/search-omg-$phase.stderr"
+        "${search_native[@]}" > "$EXPORT_DIR/search-native-$phase.stdout" 2> "$EXPORT_DIR/search-native-$phase.stderr"
+        omg_names search "$EXPORT_DIR/search-omg-$phase.stdout" > "$EXPORT_DIR/search-omg-$phase.names"
+        search_names "$search_name" "$EXPORT_DIR/search-native-$phase.stdout" > "$EXPORT_DIR/search-native-$phase.names"
+        grep -Fxq ripgrep "$EXPORT_DIR/search-omg-$phase.names"
+        grep -Fxq ripgrep "$EXPORT_DIR/search-native-$phase.names"
+        if [[ ${#extra_search[@]} -gt 0 ]]; then
+            "${extra_search[@]}" > "$EXPORT_DIR/search-extra-$phase.stdout" 2> "$EXPORT_DIR/search-extra-$phase.stderr"
+            search_names apt "$EXPORT_DIR/search-extra-$phase.stdout" > "$EXPORT_DIR/search-extra-$phase.names"
+            grep -Fxq ripgrep "$EXPORT_DIR/search-extra-$phase.names"
+        fi
+    }
+    capture_search before
+    search_equivalent=true
+    cmp -s "$EXPORT_DIR/search-omg-before.names" "$EXPORT_DIR/search-native-before.names" || search_equivalent=false
+    printf -v search_omg_command '%q ' "${omg_search[@]}"
+    printf -v search_native_command '%q ' "${search_native[@]}"
+    search_commands=(--command-name OMG "$search_omg_command" --command-name "$search_name" "$search_native_command")
+    if [[ ${#extra_search[@]} -gt 0 ]]; then
+        cmp -s "$EXPORT_DIR/search-omg-before.names" "$EXPORT_DIR/search-extra-before.names" || search_equivalent=false
+        printf -v search_extra_command '%q ' "${extra_search[@]}"
+        search_commands+=(--command-name apt "$search_extra_command")
+    fi
+    {
+        command_json OMG "${omg_search[@]}"
+        command_json "$search_name" "${search_native[@]}"
+        if [[ ${#extra_search[@]} -gt 0 ]]; then command_json apt "${extra_search[@]}"; fi
+    } | jq -s . > "$EXPORT_DIR/search.commands.json"
+    run_hyperfine "$EXPORT_DIR/search.json" "$EXPORT_DIR/search.md" "${search_commands[@]}"
+    capture_search after
+    if [[ "$search_equivalent" == false ]]; then
+        echo 'NON-COMPARABLE search: package-name sets differ; timings are observations, not speedup evidence.' >&2
+    fi
+    cmp "$EXPORT_DIR/search-omg-before.names" "$EXPORT_DIR/search-omg-after.names"
+    cmp "$EXPORT_DIR/search-native-before.names" "$EXPORT_DIR/search-native-after.names"
+    if [[ ${#extra_search[@]} -gt 0 ]]; then cmp "$EXPORT_DIR/search-extra-before.names" "$EXPORT_DIR/search-extra-after.names"; fi
+
+    case "$distro" in
+        arch) explicit_native=(pacman -Qqe); explicit_name=pacman ;;
+        debian|ubuntu) explicit_native=(apt-mark showmanual); explicit_name=apt-mark ;;
+        fedora) explicit_native=(dnf -C repoquery --userinstalled --qf '%{name}\n'); explicit_name=dnf ;;
+    esac
+    capture_explicit() {
+        local phase=$1
+        "$OMG" --json explicit > "$EXPORT_DIR/explicit-omg-$phase.stdout" 2> "$EXPORT_DIR/explicit-omg-$phase.stderr"
+        "${explicit_native[@]}" > "$EXPORT_DIR/explicit-native-$phase.stdout" 2> "$EXPORT_DIR/explicit-native-$phase.stderr"
+        omg_names explicit "$EXPORT_DIR/explicit-omg-$phase.stdout" > "$EXPORT_DIR/explicit-omg-$phase.names"
+        sort -u "$EXPORT_DIR/explicit-native-$phase.stdout" > "$EXPORT_DIR/explicit-native-$phase.names"
+        cmp "$EXPORT_DIR/explicit-omg-$phase.names" "$EXPORT_DIR/explicit-native-$phase.names"
+    }
+    capture_explicit before
+    if [[ "$distro" == debian || "$distro" == ubuntu ]]; then
+        dpkg --print-foreign-architectures > "$EXPORT_DIR/foreign-architectures.txt"
+        [[ ! -s "$EXPORT_DIR/foreign-architectures.txt" ]]
+        dpkg-query -W '-f=${Package}\t${db:Status-Status}\n' |
+            awk -F '\t' '$2 == "installed" {print $1}' | sort -u > "$EXPORT_DIR/installed.names"
+        comm -23 "$EXPORT_DIR/explicit-native-before.names" "$EXPORT_DIR/installed.names" > "$EXPORT_DIR/uninstalled-manual.names"
+        [[ ! -s "$EXPORT_DIR/uninstalled-manual.names" ]]
+    fi
+    count_wrapper="$EXPORT_DIR/count-command.sh"
+    cat > "$count_wrapper" <<'COUNT'
+#!/bin/bash
+set -euo pipefail
+case "$1" in
+    omg) exec "$2" ec ;;
+    arch) pacman -Qqe | wc -l ;;
+    debian|ubuntu) apt-mark showmanual | wc -l ;;
+    fedora) dnf -C repoquery --userinstalled --qf '%{name}\n' | wc -l ;;
+    *) exit 2 ;;
+esac
+COUNT
+    count_expected=$(wc -l < "$EXPORT_DIR/explicit-omg-before.names")
+    capture_counts() {
+        local phase=$1
+        "$BASH" "$count_wrapper" omg "$OMG" > "$EXPORT_DIR/count-omg-$phase.stdout" 2> "$EXPORT_DIR/count-omg-$phase.stderr"
+        "$BASH" "$count_wrapper" "$distro" > "$EXPORT_DIR/count-native-$phase.stdout" 2> "$EXPORT_DIR/count-native-$phase.stderr"
+        for output in "$EXPORT_DIR/count-omg-$phase.stdout" "$EXPORT_DIR/count-native-$phase.stdout"; do
+            awk -v expected="$count_expected" '
+              NF != 1 || $1 !~ /^[0-9]+$/ || $1 != expected {exit 1}
+              END {if (NR != 1) exit 1}' "$output"
+        done
+    }
+    capture_counts before
+    printf -v count_omg_command '%q ' "$BASH" "$count_wrapper" omg "$OMG"
+    printf -v count_native_command '%q ' "$BASH" "$count_wrapper" "$distro"
+    {
+        command_json OMG "$BASH" "$count_wrapper" omg "$OMG"
+        command_json "$explicit_name" "$BASH" "$count_wrapper" "$distro"
+    } | jq -s . > "$EXPORT_DIR/explicit.commands.json"
+    run_hyperfine "$EXPORT_DIR/explicit.json" "$EXPORT_DIR/explicit.md" \
+        --command-name OMG "$count_omg_command" --command-name "$explicit_name" "$count_native_command"
+    capture_counts after
+    capture_explicit after
+    cmp "$EXPORT_DIR/explicit-omg-before.names" "$EXPORT_DIR/explicit-omg-after.names"
+    cmp "$EXPORT_DIR/explicit-native-before.names" "$EXPORT_DIR/explicit-native-after.names"
+    jq -n --arg distro "$distro" --argjson search_equivalent "$search_equivalent" \
+        --slurpfile info "$EXPORT_DIR/info.commands.json" \
+        --slurpfile search "$EXPORT_DIR/search.commands.json" \
+        --slurpfile explicit "$EXPORT_DIR/explicit.commands.json" \
+        --argjson warmup "$WARMUP" --argjson minimum "$MIN_RUNS" --argjson maximum "$MAX_RUNS" \
+        '{schema_version:2, complete:true, distro:$distro,
+          operations:["info","search","explicit"], daemon:"disabled",
+          cache:"warm after preflight and warmups", warmup:$warmup, min_runs:$minimum, max_runs:$maximum,
+          comparisons:{info:{equivalent:true, scope:"freshly installed tree identity/version; extra fields differ"},
+            search:{equivalent:$search_equivalent, scope:"ripgrep package-name sets, official repositories, no truncation"},
+            explicit:{equivalent:true, scope:"installed manual package-name sets and counts; common Bash wrapper"}},
+          commands:{info:$info[0],search:$search[0],explicit:$explicit[0]}}' > "$EXPORT_DIR/summary.json"
     exit 0
 fi
 if [ ! -x "$OMGD" ]; then

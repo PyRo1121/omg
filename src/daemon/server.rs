@@ -360,22 +360,6 @@ async fn run_with_status_path(
             // new connections after shutdown was requested
             biased;
 
-            Some(result) = workers.join_next() => {
-                if let Err(error) = result {
-                    state.inc_background_worker_failures();
-                    internal_failure = Some(format!("Background status worker failed: {error}"));
-                } else if !shutdown_token.is_cancelled() {
-                    internal_failure = Some("Background status worker stopped unexpectedly".into());
-                }
-                break;
-            }
-
-            Some(result) = connections.join_next(), if !connections.is_empty() => {
-                if let Err(error) = result {
-                    tracing::error!("Client task failed: {error}");
-                }
-            }
-
             Some(failure) = internal_failure_rx.recv() => {
                 internal_failure = Some(failure);
                 shutdown_token.cancel();
@@ -399,6 +383,22 @@ async fn run_with_status_path(
             () = shutdown_token.cancelled() => {
                 tracing::info!("Shutdown triggered by health monitor, cleaning up...");
                 break;
+            }
+
+            Some(result) = workers.join_next() => {
+                if let Err(error) = result {
+                    state.inc_background_worker_failures();
+                    internal_failure = Some(format!("Background status worker failed: {error}"));
+                } else if !shutdown_token.is_cancelled() {
+                    internal_failure = Some("Background status worker stopped unexpectedly".into());
+                }
+                break;
+            }
+
+            Some(result) = connections.join_next(), if !connections.is_empty() => {
+                if let Err(error) = result {
+                    tracing::error!("Client task failed: {error}");
+                }
             }
 
             result = listener.accept() => {
@@ -446,18 +446,8 @@ async fn run_with_status_path(
                 connections.spawn(async move {
                     // Held until the task completes; Drop releases the permit.
                     let _permit = permit;
-                    tokio::select! {
-                        // biased: check cancellation first for prompt client shutdown
-                        biased;
-
-                        () = client_token.cancelled() => {
-                            tracing::debug!("Client connection closed due to shutdown");
-                        }
-                        result = handle_client(stream, state) => {
-                            if let Err(e) = result {
-                                tracing::error!("Client error: {}", e);
-                            }
-                        }
+                    if let Err(error) = handle_client(stream, state, client_token).await {
+                        tracing::error!("Client error: {error}");
                     }
                 });
             }
@@ -466,6 +456,7 @@ async fn run_with_status_path(
 
     Ok(())
     }.await;
+    drop(listener);
     let shutdown_result = drain_daemon_tasks(
         &shutdown_token,
         &mut workers,
@@ -513,15 +504,14 @@ async fn drain_daemon_tasks(
         }
     })
     .await;
-    match drained {
-        Ok(result) => result,
-        Err(_) => {
-            workers.shutdown().await;
-            connections.shutdown().await;
-            anyhow::bail!(
-                "Daemon shutdown exceeded its deadline; nested blocking work may still be running"
-            )
-        }
+    if let Ok(result) = drained {
+        result
+    } else {
+        workers.shutdown().await;
+        connections.shutdown().await;
+        anyhow::bail!(
+            "Daemon shutdown exceeded its deadline; nested blocking work may still be running"
+        )
     }
 }
 
@@ -640,14 +630,19 @@ async fn send_error_response<W>(
     }
 }
 
-async fn handle_client(stream: tokio::net::UnixStream, state: Arc<DaemonState>) -> Result<()> {
-    handle_client_with_idle_timeout(stream, state, CLIENT_IDLE_TIMEOUT).await
+async fn handle_client(
+    stream: tokio::net::UnixStream,
+    state: Arc<DaemonState>,
+    cancellation: CancellationToken,
+) -> Result<()> {
+    handle_client_with_idle_timeout(stream, state, CLIENT_IDLE_TIMEOUT, cancellation).await
 }
 
 async fn handle_client_with_idle_timeout(
     stream: tokio::net::UnixStream,
     state: Arc<DaemonState>,
     idle_timeout: Duration,
+    cancellation: CancellationToken,
 ) -> Result<()> {
     // METRICS: Track active connections using RAII guard
     let _guard = ConnectionGuard::new();
@@ -674,7 +669,12 @@ async fn handle_client_with_idle_timeout(
     tracing::debug!("New binary client connected");
 
     loop {
-        let request_bytes = match tokio::time::timeout(idle_timeout, framed_read.next()).await {
+        let next_frame = tokio::select! {
+            biased;
+            () = cancellation.cancelled() => break,
+            frame = tokio::time::timeout(idle_timeout, framed_read.next()) => frame,
+        };
+        let request_bytes = match next_frame {
             Ok(Some(request_bytes)) => request_bytes,
             Ok(None) => break,
             Err(_) => {
@@ -1133,8 +1133,9 @@ mod tests {
 
         let task = tokio::spawn(handle_client_with_idle_timeout(
             server,
-            state,
+            Arc::clone(&state),
             Duration::from_millis(20),
+            CancellationToken::new(),
         ));
         tokio::time::timeout(Duration::from_secs(1), task)
             .await
@@ -1145,6 +1146,21 @@ mod tests {
             baseline,
             "idle timeout must release the active connection guard"
         );
+
+        let (server, _idle_client) = tokio::net::UnixStream::pair()?;
+        let cancellation = CancellationToken::new();
+        let client_token = cancellation.clone();
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            started.send(()).unwrap();
+            handle_client(server, state, client_token).await
+        });
+        ready.await?;
+        cancellation.cancel();
+        tokio::time::timeout(Duration::from_secs(1), task)
+            .await
+            .context("shutdown did not close the idle connection")???;
+        assert_eq!(GLOBAL_METRICS.snapshot().active_connections, baseline);
         Ok(())
     }
 

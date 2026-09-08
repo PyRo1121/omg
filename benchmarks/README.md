@@ -18,8 +18,13 @@ and state must pass the equivalence checks before timing, not new measured resul
   Also report `apt-cache search` and `apt-cache --no-all-versions show` as cached
   metadata baselines when comparing offline indexed queries. Do not pick only
   the slower APT invocation. Query installed state with `dpkg-query`, not a
-  repository search. Explicit/manual packages require the installed subset of
-  `apt-mark showmanual`, not a count of every package in the database.
+  repository search. Explicit/manual packages mean installed manual packages,
+  not every package in the database. `apt-mark showmanual` already filters out
+  packages without an installed version: see `ShowAuto` in
+  [APT 2.6.1](https://github.com/Debian/apt/blob/2.6.1/cmdline/apt-mark.cc#L277-L313)
+  and the [Ubuntu APT 2.8.3 source](https://archive.ubuntu.com/ubuntu/pool/main/a/apt/apt_2.8.3.tar.xz).
+  Verify the installed subset during preflight; do not add a redundant timed
+  `dpkg-query` intersection that artificially slows the native comparator.
 - **Fedora.** Use DNF for repository search, information, installation, and removal.
   Record whether the image provides DNF4 or DNF5 and use that version's documented
   syntax. RPM queries such as `rpm -q` and `rpm -qa` measure installed-package
@@ -27,8 +32,9 @@ and state must pass the equivalence checks before timing, not new measured resul
   cannot beat a successful DNF repository search.
 
 For search, normalize package identities, architecture, repository scope, and
-result limits before declaring equivalence. OMG currently defaults to a 50-result
-limit; native commands can return all matches. A shared query string does not
+result limits before declaring equivalence. OMG currently defaults to a 15-result
+limit; native commands can return all matches. JSON search preserves installable
+package names but still honors the requested limit. A shared query string does not
 make fuzzy, regex, name-only, and description searches equivalent. If equivalent
 semantics cannot be established, label the result as non-comparable and do not
 publish a speedup. Do not truncate the native command's output through `head` to
