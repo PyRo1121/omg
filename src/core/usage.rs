@@ -1083,6 +1083,14 @@ mod tests {
 
     #[test]
     fn locked_sync_timestamp_merge_does_not_lose_concurrent_counters() {
+        if cfg!(target_os = "macos") {
+            // Same anchored-walk/symlinked-ancestor limitation as
+            // concurrent_locked_updates_do_not_lose_counters.
+            eprintln!(
+                "skipped: macOS system temp paths contain symlinked ancestors the anchored lock walk refuses"
+            );
+            return;
+        }
         // Regression for the background-sync race: UsageStats::sync used to
         // write its stale snapshot back without the cross-process lock,
         // clobbering counters recorded while the network request was in
