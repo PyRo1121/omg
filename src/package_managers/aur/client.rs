@@ -1102,6 +1102,14 @@ impl AurClient {
             .context("AUR lifecycle lock worker failed")?
     }
 
+    async fn blocking_build_work<T: Send + 'static>(
+        &self,
+        work: impl FnOnce() -> Result<T> + Send + 'static,
+    ) -> Result<T> {
+        let _lease = self.acquire_build_lease().await?;
+        tokio::task::spawn_blocking(work).await.context("AUR blocking worker failed")?
+    }
+
     #[must_use]
     pub fn build_concurrency(&self) -> usize {
         self.settings.aur.build_concurrency.max(1)
@@ -3103,9 +3111,9 @@ impl AurClient {
             .context("Invalid AUR source directory")?;
         crate::core::security::validate_package_name(package)?;
         let pkg_dir = pkg_dir.to_path_buf();
-        tokio::task::spawn_blocking(move || refresh_git_checkout(&pkg_dir))
+        self.blocking_build_work(move || refresh_git_checkout(&pkg_dir))
             .await
-            .context("Git refresh task failed")?
+            .context("Git refresh task failed")
     }
 
     async fn run_build(
@@ -3730,9 +3738,9 @@ impl AurClient {
     async fn makepkg_env(&self, pkg_dir: &Path) -> Result<MakepkgEnv> {
         let client = self.clone();
         let pkg_dir = pkg_dir.to_path_buf();
-        tokio::task::spawn_blocking(move || client.makepkg_env_sync(&pkg_dir))
+        self.blocking_build_work(move || client.makepkg_env_sync(&pkg_dir))
             .await
-            .context("AUR build environment task failed")?
+            .context("AUR build environment task failed")
     }
 
     fn makepkg_env_sync(&self, pkg_dir: &Path) -> Result<MakepkgEnv> {
@@ -5218,6 +5226,36 @@ mod tests {
         assert!(client.acquire_build_lease().await.is_err());
         drop(cleanup);
         assert!(client.acquire_build_lease().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn cancelled_blocking_work_keeps_cache_lease_until_completion() {
+        let directory = tempfile::tempdir().unwrap();
+        let client = AurClient {
+            build_dir: directory.path().join("aur"),
+            settings: Settings::default(),
+            package_base_locks: Arc::new(dashmap::DashMap::new()),
+        };
+        let worker_client = client.clone();
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let (completed_tx, completed_rx) = tokio::sync::oneshot::channel::<()>();
+        let worker = tokio::spawn(async move {
+            worker_client.blocking_build_work(move || {
+                started_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+                Ok(completed_tx)
+            }).await
+        });
+        started_rx.await.unwrap();
+        worker.abort();
+        assert!(worker.await.unwrap_err().is_cancelled());
+        let cleanup_while_running = client.clean_all();
+        release_tx.send(()).unwrap();
+        // A dropped blocking task result releases this sender after its lease.
+        assert!(completed_rx.await.is_err());
+        assert!(cleanup_while_running.is_err(), "cleanup removed an active blocking job's cache");
+        client.clean_all().unwrap();
     }
 
     #[test]

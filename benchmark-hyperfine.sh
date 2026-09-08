@@ -221,10 +221,16 @@ fi
 if [[ "$GUEST_MODE" == true ]]; then
     export LC_ALL=C NO_COLOR=1
     distro=$(awk -F= '$1 == "ID" {gsub(/"/, "", $2); print $2}' /etc/os-release)
+    extra_native=()
+    extra_name=""
     case "$distro" in
         arch) native=(pacman --color never -Qi tree); native_name=pacman ;;
-        debian|ubuntu) native=(apt-cache --no-all-versions show tree); native_name=apt-cache ;;
-        fedora) native=(rpm -qi tree); native_name=rpm ;;
+        debian|ubuntu)
+            native=(apt-cache --no-all-versions show tree); native_name=apt-cache
+            extra_native=(apt show tree); extra_name=apt ;;
+        fedora)
+            native=(rpm -qi tree); native_name=rpm
+            extra_native=(dnf -C info --installed tree); extra_name=dnf ;;
         *) echo "Unsupported guest distro: $distro" >&2; exit 2 ;;
     esac
     command -v jq >/dev/null || exit 3
@@ -260,6 +266,16 @@ if [[ "$GUEST_MODE" == true ]]; then
     normalize_info "$([[ "$distro" == fedora ]] && echo true || echo false)" \
         "$EXPORT_DIR/native-info.stdout" > "$EXPORT_DIR/native-identity.tsv"
     cmp "$EXPORT_DIR/omg-identity.tsv" "$EXPORT_DIR/native-identity.tsv"
+    if [[ ${#extra_native[@]} -gt 0 ]]; then
+        "${extra_native[@]}" > "$EXPORT_DIR/extra-info.stdout" 2> "$EXPORT_DIR/extra-info.stderr"
+        normalize_info "$([[ "$distro" == fedora ]] && echo true || echo false)" \
+            "$EXPORT_DIR/extra-info.stdout" > "$EXPORT_DIR/extra-identity.tsv"
+        cmp "$EXPORT_DIR/omg-identity.tsv" "$EXPORT_DIR/extra-identity.tsv"
+        "$extra_name" --version > "$EXPORT_DIR/extra-version.txt" 2>&1
+    fi
+    cp /proc/cpuinfo "$EXPORT_DIR/cpuinfo.txt"
+    cp /proc/meminfo "$EXPORT_DIR/meminfo.txt"
+    cp /proc/stat "$EXPORT_DIR/proc-stat-before.txt"
     sha256sum "$OMG" > "$EXPORT_DIR/binary-sha256.txt"
     hyperfine --version > "$EXPORT_DIR/hyperfine-version.txt"
     "$native_name" --version > "$EXPORT_DIR/native-version.txt" 2>&1
@@ -268,11 +284,18 @@ if [[ "$GUEST_MODE" == true ]]; then
     cp /etc/os-release "$EXPORT_DIR/os-release"
     printf -v omg_command '%q ' "$OMG" info tree
     printf -v native_command '%q ' "${native[@]}"
-    run_hyperfine "$EXPORT_DIR/info.json" "$EXPORT_DIR/info.md" \
-        --command-name OMG "$omg_command" \
-        --command-name "$native_name" "$native_command"
-    jq -e --argjson minimum "$MIN_RUNS" --argjson maximum "$MAX_RUNS" '
-      (.results|length) == 2 and all(.results[];
+    measured_commands=(--command-name OMG "$omg_command" --command-name "$native_name" "$native_command")
+    expected_commands=2
+    if [[ ${#extra_native[@]} -gt 0 ]]; then
+        printf -v extra_command '%q ' "${extra_native[@]}"
+        measured_commands+=(--command-name "$extra_name" "$extra_command")
+        expected_commands=3
+    fi
+    run_hyperfine "$EXPORT_DIR/info.json" "$EXPORT_DIR/info.md" "${measured_commands[@]}"
+    cp /proc/stat "$EXPORT_DIR/proc-stat-after.txt"
+    jq -e --argjson minimum "$MIN_RUNS" --argjson maximum "$MAX_RUNS" \
+        --argjson expected "$expected_commands" '
+      (.results|length) == $expected and all(.results[];
         (.times|length) >= $minimum and (.times|length) <= $maximum and
         (.times|length) == (.exit_codes|length) and all(.exit_codes[]; . == 0))
     ' "$EXPORT_DIR/info.json" >/dev/null
@@ -283,12 +306,19 @@ if [[ "$GUEST_MODE" == true ]]; then
         "$EXPORT_DIR/native-info-after.stdout" > "$EXPORT_DIR/native-identity-after.tsv"
     cmp "$EXPORT_DIR/omg-identity.tsv" "$EXPORT_DIR/omg-identity-after.tsv"
     cmp "$EXPORT_DIR/native-identity.tsv" "$EXPORT_DIR/native-identity-after.tsv"
+    if [[ ${#extra_native[@]} -gt 0 ]]; then
+        "${extra_native[@]}" > "$EXPORT_DIR/extra-info-after.stdout" 2> "$EXPORT_DIR/extra-info-after.stderr"
+        normalize_info "$([[ "$distro" == fedora ]] && echo true || echo false)" \
+            "$EXPORT_DIR/extra-info-after.stdout" > "$EXPORT_DIR/extra-identity-after.tsv"
+        cmp "$EXPORT_DIR/extra-identity.tsv" "$EXPORT_DIR/extra-identity-after.tsv"
+    fi
     jq -n --arg distro "$distro" --arg baseline "$native_name" \
+        --slurpfile measurements "$EXPORT_DIR/info.json" \
         --argjson warmup "$WARMUP" \
         '{schema_version:1, complete:true, distro:$distro, operation:"info",
           package:"tree", daemon:"disabled", cache:"warm after preflight and warmups",
           comparison:"matching package identity/version; output fields and formatting differ",
-          baseline:$baseline, warmup:$warmup}' > "$EXPORT_DIR/summary.json"
+          baseline:$baseline, commands:[$measurements[0].results[].command], warmup:$warmup}' > "$EXPORT_DIR/summary.json"
     exit 0
 fi
 if [ ! -x "$OMGD" ]; then
