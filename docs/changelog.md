@@ -13,6 +13,8 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ## [Unreleased]
 ### ♻️  Refactoring
 
+- **Client**: Separate synchronous and asynchronous transports ([#324](https://github.com/PyRo1121/omg/issues/324))
+- **Packages**: Unify generic install orchestration ([#322](https://github.com/PyRo1121/omg/issues/322))
 - **Daemon**: Reuse catalog freshness policy ([#319](https://github.com/PyRo1121/omg/issues/319))
 - **Cli**: Unify status output and limit local build jobs
 ### ⚠️  Breaking Changes
@@ -74,6 +76,14 @@ present before the probe runs.
 - **Install**: Add interactive fuzzy package discovery
 ### 🐛 Bug Fixes
 
+- **Aur**: Coordinate cache cleanup with build lifetime ownership ([#332](https://github.com/PyRo1121/omg/issues/332))
+- **Python**: Validate staged launcher before publication ([#331](https://github.com/PyRo1121/omg/issues/331))
+- **Runtimes**: Give Bun and Deno downloads operation-owned paths ([#330](https://github.com/PyRo1121/omg/issues/330))
+- **Node**: Validate staged launcher before publication ([#329](https://github.com/PyRo1121/omg/issues/329))
+- **Ci**: Use standard tuple conversion in Debian version hashing ([#327](https://github.com/PyRo1121/omg/issues/327))
+- **Cli**: Accept Node LTS codename requests ([#325](https://github.com/PyRo1121/omg/issues/325))
+- **Packages**: Align Debian version equality and hashing ([#323](https://github.com/PyRo1121/omg/issues/323))
+- **Packages**: Prefer isolated mock explicit state ([#320](https://github.com/PyRo1121/omg/issues/320))
 - **Daemon**: Guard fallback info cache publication ([#318](https://github.com/PyRo1121/omg/issues/318))
 - **Hooks**: Refuse to replace symlink-managed shell configs ([#317](https://github.com/PyRo1121/omg/issues/317))
 - **Team**: Derive displayed configuration from its authoritative file ([#315](https://github.com/PyRo1121/omg/issues/315))
@@ -511,6 +521,9 @@ surfaced by the stricter toolchain
 
 ### 🧪 Testing
 
+- **Cli**: Exercise missing-package removal instead of confirmation failure ([#328](https://github.com/PyRo1121/omg/issues/328))
+- **Daemon**: Assert the prewarmed search IPC response ([#326](https://github.com/PyRo1121/omg/issues/326))
+- **Cli**: Cover workspace run confirmation in behavior inventory ([#321](https://github.com/PyRo1121/omg/issues/321))
 - **Mock**: Verify empty batches preserve installed state ([#316](https://github.com/PyRo1121/omg/issues/316))
 - **Daemon**: Prove cache clear removes a populated query
 - **Completion**: Log zpty child startup and stop compinit prompting
