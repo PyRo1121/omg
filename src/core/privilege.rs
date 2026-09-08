@@ -781,6 +781,7 @@ mod tests {
         }
     }
 
+    #[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
     #[test]
     fn install_snapshot_follows_global_flags_and_aliases() {
         use crate::core::security::artifact::{ArchiveSnapshot, is_handoff};
