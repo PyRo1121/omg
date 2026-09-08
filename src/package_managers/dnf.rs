@@ -684,6 +684,14 @@ impl DnfPackageManager {
     }
 
     async fn repository_output(query: RepositoryQuery<'_>) -> Result<Vec<u8>> {
+        let args = Self::repository_query_args(query)?;
+        let mut command =
+            tokio::process::Command::from(crate::core::privilege::system_command("dnf")?);
+        command.args(args);
+        Self::query_output(command).await
+    }
+
+    fn repository_query_args(query: RepositoryQuery<'_>) -> Result<Vec<String>> {
         let query_format = Self::repository_query_format(&query);
         let selection = match query {
             RepositoryQuery::Available(_) => "--available",
@@ -694,27 +702,24 @@ impl DnfPackageManager {
             RepositoryQuery::Upgrades => "--upgrades",
             RepositoryQuery::Unneeded => "--unneeded",
         };
-        let mut command =
-            tokio::process::Command::from(crate::core::privilege::system_command("dnf")?);
+        let mut args = Vec::new();
         if matches!(
             query,
             RepositoryQuery::InstalledSizes(_)
                 | RepositoryQuery::InstalledReasons(_)
                 | RepositoryQuery::InstalledDetails(_)
         ) {
-            command.arg("--setopt=disable_excludes=*");
+            args.push("--setopt=disable_excludes=*".to_owned());
         }
-        command
-            .args(["repoquery", selection])
-            .args(["--queryformat", query_format]);
+        args.extend(["repoquery", selection, "--queryformat", query_format].map(str::to_owned));
         if matches!(
             query,
             RepositoryQuery::Available(_) | RepositoryQuery::Installed | RepositoryQuery::Upgrades
         ) {
-            command.arg("--latest-limit=1");
+            args.push("--latest-limit=1".to_owned());
         }
         if matches!(query, RepositoryQuery::Available(_)) {
-            command.arg(format!("--arch={},noarch", std::env::consts::ARCH));
+            args.push(format!("--arch={},noarch", std::env::consts::ARCH));
         }
         let package = match query {
             RepositoryQuery::Available(package) => package,
@@ -722,12 +727,12 @@ impl DnfPackageManager {
             | RepositoryQuery::InstalledReasons(InstalledReasonQuery::Package(package))
             | RepositoryQuery::InstalledDetails(package) => Some(package),
             RepositoryQuery::InstalledSizes(InstalledSizeQuery::RequirementProviders(package)) => {
-                command.arg("--providers-of=requires");
+                args.push("--providers-of=requires".to_owned());
                 Some(package)
             }
             RepositoryQuery::InstalledReasons(InstalledReasonQuery::RequiredBy(package)) => {
                 crate::core::security::validate_package_name(package)?;
-                command.arg(format!("--whatrequires={package}"));
+                args.push(format!("--whatrequires={package}"));
                 None
             }
             RepositoryQuery::Installed
@@ -737,9 +742,9 @@ impl DnfPackageManager {
         };
         if let Some(name) = package {
             crate::core::security::validate_package_name(name)?;
-            command.arg(name);
+            args.push(name.to_owned());
         }
-        Self::query_output(command).await
+        Ok(args)
     }
 
     async fn query_output(mut command: tokio::process::Command) -> Result<Vec<u8>> {
@@ -1503,6 +1508,59 @@ mod tests {
                 .downcast_ref::<crate::core::security::ValidationError>()
                 .is_some()
         );
+        for query in [
+            RepositoryQuery::InstalledSizes(InstalledSizeQuery::Package("--config=untrusted")),
+            RepositoryQuery::InstalledSizes(InstalledSizeQuery::RequirementProviders(
+                "--config=untrusted",
+            )),
+            RepositoryQuery::InstalledReasons(InstalledReasonQuery::Package("--config=untrusted")),
+            RepositoryQuery::InstalledReasons(InstalledReasonQuery::RequiredBy(
+                "--config=untrusted",
+            )),
+            RepositoryQuery::InstalledDetails("--config=untrusted"),
+        ] {
+            let error = DnfPackageManager::repository_output(query)
+                .await
+                .expect_err("invalid operand");
+            assert!(
+                error
+                    .downcast_ref::<crate::core::security::ValidationError>()
+                    .is_some(),
+                "{query:?} must reject the operand before resolving DNF: {error:#}"
+            );
+        }
+    }
+
+    #[test]
+    fn repository_query_arguments_preserve_reverse_dependency_semantics() -> Result<()> {
+        assert_eq!(
+            DnfPackageManager::repository_query_args(RepositoryQuery::InstalledReasons(
+                InstalledReasonQuery::RequiredBy("bash"),
+            ))?,
+            [
+                "--setopt=disable_excludes=*",
+                "repoquery",
+                "--installed",
+                "--queryformat",
+                "%{full_nevra}\t%{reason}\\n",
+                "--whatrequires=bash",
+            ]
+        );
+        assert_eq!(
+            DnfPackageManager::repository_query_args(RepositoryQuery::InstalledSizes(
+                InstalledSizeQuery::RequirementProviders("bash"),
+            ))?,
+            [
+                "--setopt=disable_excludes=*",
+                "repoquery",
+                "--installed",
+                "--queryformat",
+                "%{full_nevra}\t%{installsize}\\n",
+                "--providers-of=requires",
+                "bash",
+            ]
+        );
+        Ok(())
     }
 
     #[test]
