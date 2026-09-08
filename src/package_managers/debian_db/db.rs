@@ -24,6 +24,7 @@ use fst::{IntoStreamer, Map, Streamer};
 use memchr::memmem;
 use rayon::prelude::*;
 use rkyv::util::AlignedVec;
+use sha2::{Digest, Sha256};
 use std::sync::RwLock;
 
 use crate::core::paths;
@@ -89,6 +90,7 @@ static DPKG_STATUS_CACHE: LazyLock<RwLock<DpkgStatusCache>> =
 #[derive(Default)]
 struct DebianIndexCache {
     index: Option<DebianPackageIndex>,
+    fst_mapping: Option<FstMappingId>,
     /// Source set and mtimes used to invalidate the complete index.
     file_mtimes: HashMap<PathBuf, std::time::SystemTime>,
     /// Contiguous search buffer for SIMD search: "name desc\0name desc\0..."
@@ -235,7 +237,7 @@ impl FstMappingId {
         Self(hash.finalize().into())
     }
 
-    fn from_map(map: &Map<Mmap>) -> Self {
+    fn from_map<D: AsRef<[u8]>>(map: &Map<D>) -> Self {
         let mut hash = Sha256::new();
         let mut stream = map.stream();
         while let Some((name, index)) = stream.next() {
@@ -248,24 +250,28 @@ impl FstMappingId {
 /// FST-based search index with TTL-based eviction
 struct FstIndex {
     map: Map<AlignedVec>,
-    /// Index generation this FST snapshot targets (see `.gen` sidecar).
-    generation: i64,
+    mapping: FstMappingId,
     /// Last access time for TTL-based eviction
     last_accessed: AtomicU64,
 }
 
 impl FstIndex {
+    #[cfg(test)]
+    fn generation_sidecar(path: &Path) -> PathBuf {
+        let mut sidecar = path.as_os_str().to_owned();
+        sidecar.push(".gen");
+        PathBuf::from(sidecar)
+    }
+
     /// Open an FST and derive its identity from the actual mapping. Legacy
     /// `.gen` files are not evidence of which bytes an open descriptor owns.
     fn open(path: &Path) -> Result<Self> {
-        let generation_bytes = read_index_snapshot(&Self::generation_sidecar(path), 64)
-            .context("FST generation sidecar missing or unreadable")?;
-        let generation = std::str::from_utf8(&generation_bytes)?
-            .trim()
-            .parse::<i64>()
-            .context("Invalid FST generation")?;
         let bytes = read_index_snapshot(path, MAX_INDEX_SNAPSHOT_BYTES)?;
         let map = Map::new(bytes).map_err(|e| anyhow::anyhow!("Corrupted FST index: {e}"))?;
+        map.as_fst()
+            .verify()
+            .context("FST checksum verification failed")?;
+        let mapping = FstMappingId::from_map(&map);
 
         Ok(Self {
             map,
@@ -288,6 +294,7 @@ impl FstIndex {
 /// Owned snapshot of the mmap-format Debian index, with zero-copy package access.
 pub struct DebianMmapIndex {
     bytes: AlignedVec,
+    fst_mapping: FstMappingId,
     last_accessed: AtomicU64,
 }
 
@@ -295,11 +302,19 @@ impl DebianMmapIndex {
     /// Open and validate an existing read-only package index.
     pub fn open(path: &Path) -> Result<Self> {
         let bytes = read_index_snapshot(path, MAX_INDEX_SNAPSHOT_BYTES)?;
-        rkyv::access::<rkyv::Archived<DebianPackageIndex>, rkyv::rancor::Error>(&bytes)
-            .map_err(|error| anyhow::anyhow!("Corrupted Debian package index: {error}"))?;
+        let archive =
+            rkyv::access::<rkyv::Archived<DebianPackageIndex>, rkyv::rancor::Error>(&bytes)
+                .map_err(|error| anyhow::anyhow!("Corrupted Debian package index: {error}"))?;
+        let fst_mapping = FstMappingId::from_names(
+            archive
+                .name_to_idx
+                .iter()
+                .map(|(name, index)| (name.as_str(), u64::from(u32::from(*index)))),
+        );
 
         Ok(Self {
             bytes,
+            fst_mapping,
             last_accessed: AtomicU64::new(unix_now_secs()),
         })
     }

@@ -397,10 +397,12 @@ for scenario in pass product-failure product-exit-three timeout cleanup-failure 
   qemu_result=$(results_file "$evidence")
   jq -e --arg result "$expected_result" --argjson rc "$expected_rc" 'length == 1 and .[0].result == $result and .[0].exit_code == $rc' "$qemu_result" >/dev/null || fail "QEMU $scenario verdict mismatch"
   work=${qemu_result%/results.json}
-  for file in client-key guest-host-key user-data seed.img overlay.qcow2 base.qcow2 vars.fd qemu.pid; do
-    [[ ! -e "$work/guest/$file" ]] || fail "QEMU $scenario retained $file"
-  done
+  # cleanup-failure leaves the controller unverified, so guest disks and
+  # keys stay on disk by contract. Other scenarios must still scrub them.
   if [[ "$scenario" != cleanup-failure ]]; then
+    for file in client-key guest-host-key user-data seed.img overlay.qcow2 base.qcow2 vars.fd qemu.pid; do
+      [[ ! -e "$work/guest/$file" ]] || fail "QEMU $scenario retained $file"
+    done
     [[ ! -f "$FAKE_QEMU_STATE" ]] || fail "QEMU $scenario retained its controller"
   fi
 done
