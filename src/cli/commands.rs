@@ -407,9 +407,9 @@ fn read_status_snapshot() -> Result<StatusSnapshot> {
 
     // Try the daemon on Unix, then fall back to the platform's direct query.
     #[cfg(unix)]
-    if let Ok(mut client) = crate::core::client::DaemonClient::connect_sync()
+    if let Ok(mut client) = crate::core::client::SyncDaemonClient::acquire()
         && let Ok(crate::daemon::protocol::ResponseResult::Status(res)) =
-            client.call_sync(&crate::daemon::protocol::Request::Status { id: 0 })
+            client.call(&crate::daemon::protocol::Request::Status { id: 0 })
     {
         return Ok((
             res.total_packages,
@@ -495,8 +495,8 @@ pub fn status_sync() -> Result<()> {
     // Daemon status: a stale socket node is not a running daemon.
     #[cfg(unix)]
     {
-        let running = crate::core::client::DaemonClient::connect_sync()
-            .and_then(|mut client| client.ping_sync())
+        let running = crate::core::client::SyncDaemonClient::acquire()
+            .and_then(|mut client| client.ping())
             .is_ok();
         if running {
             println!(
@@ -617,8 +617,8 @@ pub fn daemon(foreground: bool) -> Result<()> {
     // Check if daemon is already running
     let socket_path = crate::core::client::default_socket_path();
 
-    if let Ok(mut client) = crate::core::client::DaemonClient::connect_sync()
-        && client.ping_sync().is_ok()
+    if let Ok(mut client) = crate::core::client::SyncDaemonClient::acquire()
+        && client.ping().is_ok()
     {
         println!(
             "{} Daemon is already running at {}",

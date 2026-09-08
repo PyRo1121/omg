@@ -1,7 +1,7 @@
 //! Explicit package listing functionality
 
 #[cfg(unix)]
-use crate::core::client::DaemonClient;
+use crate::core::client::SyncDaemonClient;
 #[cfg(unix)]
 use crate::daemon::protocol::{Request, ResponseResult};
 use anyhow::{Context, Result};
@@ -49,14 +49,14 @@ pub fn explicit_sync_with_json(count: bool, json: bool) -> Result<()> {
     }
 
     #[cfg(unix)]
-    if let Ok(mut client) = DaemonClient::connect_sync() {
+    if let Ok(mut client) = SyncDaemonClient::acquire() {
         let request = if count {
             Request::ExplicitCount { id: 0 }
         } else {
             Request::Explicit { id: 0 }
         };
 
-        match client.call_sync(&request) {
+        match client.call(&request) {
             Ok(res) => match res {
                 ResponseResult::ExplicitCount(c) => {
                     print_count(c, json)?;

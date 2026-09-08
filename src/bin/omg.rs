@@ -330,11 +330,11 @@ fn print_fast_counter(counter: FastCounter, total: u32, explicit: u32, orphans: 
 
 #[cfg(unix)]
 fn fast_status_from_daemon() -> Result<(u32, u32, u32, u32)> {
-    use omg_lib::core::client::DaemonClient;
+    use omg_lib::core::client::SyncDaemonClient;
     use omg_lib::daemon::protocol::{Request, ResponseResult};
 
-    let mut client = DaemonClient::connect_sync()?;
-    let ResponseResult::Status(status) = client.call_sync(&Request::Status { id: 0 })? else {
+    let mut client = SyncDaemonClient::acquire()?;
+    let ResponseResult::Status(status) = client.call(&Request::Status { id: 0 })? else {
         anyhow::bail!("Unexpected response from daemon");
     };
     Ok((

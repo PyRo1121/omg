@@ -5,7 +5,7 @@
 //! - insecure socket-directory validation before any connection attempt
 //! - `DaemonClient::call()` framing: round-trip, ID echo/sequence, ID-mismatch,
 //!   daemon-error surfacing, wrong-variant rejection, protocol-version rejection,
-//!   disconnect detection, mode-mismatch errors
+//!   disconnect detection (transport separation is checked by compile-fail doctests)
 //! - `connect_to()` retry behavior: ECONNREFUSED retried with real backoff and
 //!   named "after retries"; missing socket fails fast without retry suffix
 //! - `SyncDaemonClient::acquire()/call()` via `sync_roundtrip`: payload pinning,
@@ -238,12 +238,14 @@ fn daemon_disabled_gate_pins_exact_acceptance_set() {
     // Every truthy spelling of OMG_DISABLE_DAEMON gates all entry points.
     for value in ["1", "true", "TRUE"] {
         let err = with_client_env(Some(value), Some("0"), None, || {
-            expect_err(DaemonClient::connect_sync())
+            expect_err(SyncDaemonClient::acquire_with_timeout(
+                Duration::from_millis(25),
+            ))
         });
         assert_eq!(
             err.to_string(),
             "Daemon disabled by environment",
-            "OMG_DISABLE_DAEMON={value} must gate connect_sync"
+            "OMG_DISABLE_DAEMON={value} must gate acquire_with_timeout"
         );
 
         let err = with_client_env(Some(value), Some("0"), None, || {
@@ -269,7 +271,7 @@ fn daemon_disabled_gate_pins_exact_acceptance_set() {
 
     // OMG_TEST_MODE alone (no explicit flag) trips the gate too.
     let err = with_client_env(None, Some("true"), None, || {
-        expect_err(DaemonClient::connect_sync())
+        expect_err(SyncDaemonClient::acquire())
     });
     assert_eq!(err.to_string(), "Daemon disabled by environment");
 
@@ -283,7 +285,7 @@ fn daemon_disabled_gate_pins_exact_acceptance_set() {
     let dead_socket = absent_dir.path().join("absent.sock");
     for value in ["0", "false", "False"] {
         let err = with_client_env(Some(value), None, Some(&dead_socket), || {
-            expect_err(DaemonClient::connect_sync())
+            expect_err(SyncDaemonClient::acquire())
         });
         let msg = err.to_string();
         assert!(
@@ -322,12 +324,14 @@ fn insecure_socket_parent_rejected_before_connecting() {
     let sock = permissive.join("omg.sock");
 
     let err = with_client_env(None, None, Some(&sock), || {
-        expect_err(DaemonClient::connect_sync())
+        expect_err(SyncDaemonClient::acquire_with_timeout(
+            Duration::from_millis(25),
+        ))
     });
     assert!(
         err.to_string()
             .starts_with("Refusing insecure daemon socket directory for "),
-        "connect_sync connected through a 0755 socket dir: {err}"
+        "acquire_with_timeout connected through a 0755 socket dir: {err}"
     );
 
     let err = with_client_env(None, None, Some(&sock), || {
@@ -357,7 +361,7 @@ fn insecure_socket_parent_rejected_before_connecting() {
     std::os::unix::fs::symlink(&real, &link).expect("symlink");
     let sock_through_link = link.join("omg.sock");
     let err = with_client_env(None, None, Some(&sock_through_link), || {
-        expect_err(DaemonClient::connect_sync())
+        expect_err(SyncDaemonClient::acquire())
     });
     assert!(
         err.to_string()
@@ -631,50 +635,56 @@ fn connection_refused_is_retried_but_missing_socket_fails_fast() {
     });
 }
 
-/// Contract: mixing transports is rejected explicitly — call_sync on an async
-/// client says "Client is in async mode"; call(Request) on a sync client says
-/// "Client is in sync mode" — and neither emits a single byte on the wire.
+/// Typed sync pings use the same framing and monotonic IDs as other accessors.
 #[test]
 #[serial]
-fn mode_mismatch_between_transports_is_named_explicitly() {
-    // Async client + sync call.
-    let mut daemon = MockDaemon::spawn(Box::new(|_request| {
-        unreachable!("no request should arrive")
+fn sync_ping_roundtrip_preserves_request_ids_and_payloads() {
+    let mut daemon = MockDaemon::spawn(Box::new(|request| {
+        Some(echo_frame(request, &ping_pong("pong")))
     }));
     let sock = daemon.socket_path.clone();
     with_client_env(None, None, Some(&sock), || {
-        block(async {
-            let mut client = DaemonClient::connect_to(sock.clone())
-                .await
-                .expect("connect");
-            let err = client.call_sync(&Request::Ping { id: 1 }).unwrap_err();
-            assert_eq!(err.to_string(), "Client is in async mode");
-            drop(client);
-        });
+        let mut client = SyncDaemonClient::acquire().expect("acquire");
+        assert_eq!(client.ping().expect("first ping"), "pong");
+        assert_eq!(client.ping().expect("second ping"), "pong");
     });
     let requests = daemon.take_requests();
-    assert!(
-        requests.is_empty(),
-        "mode-mismatched call_sync must not touch the wire, sent {requests:?}"
-    );
+    assert!(matches!(
+        requests.as_slice(),
+        [Request::Ping { id: 1 }, Request::Ping { id: 2 }]
+    ));
+}
 
-    // Sync client + async-style call.
-    let mut daemon = MockDaemon::spawn(Box::new(|_request| {
-        unreachable!("no request should arrive")
+/// The info fast path must retain its caller-selected socket timeout.
+#[test]
+#[serial]
+fn sync_client_honors_custom_read_timeout() {
+    let (release, wait) = std::sync::mpsc::channel::<()>();
+    let mut daemon = MockDaemon::spawn(Box::new(move |_request| {
+        // Bound fixture cleanup even if the client-side assertion panics.
+        let _ = wait.recv_timeout(Duration::from_secs(3));
+        None
     }));
     let sock = daemon.socket_path.clone();
     with_client_env(None, None, Some(&sock), || {
-        block(async {
-            let mut client = DaemonClient::connect_sync().expect("connect_sync");
-            let err = expect_err(client.call(Request::Ping { id: 1 }).await);
-            assert_eq!(err.to_string(), "Client is in sync mode");
-            drop(client);
-        });
+        let mut client = SyncDaemonClient::acquire_with_timeout(Duration::from_millis(25))
+            .expect("acquire with custom timeout");
+        let error = client
+            .info("fixture")
+            .expect_err("unanswered info must time out");
+        assert!(error.to_string().contains("Failed to read response"));
+        let source = error
+            .downcast_ref::<std::io::Error>()
+            .expect("socket error cause");
+        assert!(matches!(
+            source.kind(),
+            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+        ));
+        release.send(()).expect("release fixture");
     });
     let requests = daemon.take_requests();
     assert!(
-        requests.is_empty(),
-        "mode-mismatched call must not touch the wire, sent {requests:?}"
+        matches!(requests.as_slice(), [Request::Info { id: 1, package }] if package == "fixture")
     );
 }
 
