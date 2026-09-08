@@ -2474,6 +2474,19 @@ mod tests {
                 .map_err(|error| anyhow::anyhow!("fixture serialization: {error}"))?,
         )?;
         let mapped = DebianMmapIndex::open(&mmap_path)?;
+        let unchecked = fst_search(&fst.map, &index, "ba", &AHashSet::new());
+        assert_eq!(
+            unchecked.first().context("unchecked prefix lookup")?.name,
+            "zsh",
+            "the old timestamp guard admitted the wrong row for a native prefix lookup"
+        );
+        // The mmap helper re-resolves names rather than trusting row numbers;
+        // unchanged name sets do not misroute its exact lookup.
+        let mmap_exact = fst_mmap_search(&fst.map, &mapped, "bash", &AHashSet::new());
+        assert_eq!(
+            mmap_exact.first().context("mmap exact lookup")?.name,
+            "bash"
+        );
         assert_ne!(
             fst.mapping, mapped.fst_mapping,
             "same-second indexes with different mappings must not pair"
@@ -2496,6 +2509,16 @@ mod tests {
         let results = fst_mmap_search(&current.map, &mapped, "bash", &AHashSet::new());
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "bash");
+        let prefix = fst_search(
+            &current.map,
+            cache.index.as_ref().context("native index")?,
+            "ba",
+            &AHashSet::new(),
+        );
+        assert_eq!(
+            prefix.first().context("validated prefix lookup")?.name,
+            "bash"
+        );
         Ok(())
     }
 
