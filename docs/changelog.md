@@ -13,6 +13,7 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ## [Unreleased]
 ### ♻️  Refactoring
 
+- **Dnf**: Validate query arguments before command resolution ([#352](https://github.com/PyRo1121/omg/issues/352))
 - **Aur**: Make authorized source evidence mandatory ([#341](https://github.com/PyRo1121/omg/issues/341))
 
 * test(aur): declare fixture architecture only once
@@ -82,6 +83,22 @@ present before the probe runs.
 
 - **Install**: Add interactive fuzzy package discovery
 ### 🐛 Bug Fixes
+
+- **Dnf**: Bind cached inventory to RPM database generation ([#349](https://github.com/PyRo1121/omg/issues/349))
+- **Team**: Commit only the generated lockfile ([#348](https://github.com/PyRo1121/omg/issues/348))
+- **Privilege**: Allow internal re-exec verbs through install snapshot ([#347](https://github.com/PyRo1121/omg/issues/347))
+
+* fix(privilege): parse install argv before capturing archives
+
+* fix(privilege): allow internal re-exec verbs through install snapshot
+
+Clap does not define upgrade, fullupdate, or turboupdate. Parsing every
+
+elevation payload as a user command made update --fast/--turbo fail before
+
+sudo. Keep rejecting malformed install argv; those internal verbs still
+
+elevate without a snapshot.
 
 - **Privilege**: Discard inherited APT hook configuration ([#345](https://github.com/PyRo1121/omg/issues/345))
 - **Privilege**: Parse install argv before capturing archives ([#344](https://github.com/PyRo1121/omg/issues/344))
@@ -476,6 +493,16 @@ Preserve archive data and report persistence failures explicitly. Coordinate dat
 - Add published release smoke matrix
 ### 📚 Documentation
 
+- **Audit**: Preserve the 81-finding Daybreak remediation queue ([#346](https://github.com/PyRo1121/omg/issues/346))
+
+* docs(audit): track all 81 cancelled Daybreak findings
+
+* docs(audit): restamp merged Daybreak fixes on the remediation queue
+
+PRs [#343](https://github.com/PyRo1121/omg/issues/343), [#344](https://github.com/PyRo1121/omg/issues/344), and [#345](https://github.com/PyRo1121/omg/issues/345) landed on main after the queue was written.
+
+Keep the original 81 finding IDs and mark those three rows already-fixed-verified.
+
 - **Aur**: Clarify mandatory PKGBUILD review defaults ([#336](https://github.com/PyRo1121/omg/issues/336))
 - **Benchmarks**: Define fair native comparisons and evidence
 - **Tests**: Record mutation evidence and remaining verification gaps
@@ -536,6 +563,7 @@ surfaced by the stricter toolchain
 
 ### 🧪 Testing
 
+- **Privilege**: Scope archive fixture to supported backends ([#351](https://github.com/PyRo1121/omg/issues/351))
 - **Aur**: Declare fixture architecture only once ([#340](https://github.com/PyRo1121/omg/issues/340))
 - **Privilege**: Reject stderr-driven payload retries ([#333](https://github.com/PyRo1121/omg/issues/333))
 - **Cli**: Exercise missing-package removal instead of confirmation failure ([#328](https://github.com/PyRo1121/omg/issues/328))
