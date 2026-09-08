@@ -47,9 +47,9 @@ fn load_alpm_worker() -> Result<LoadedAlpm> {
     Ok(LoadedAlpm { handle, epoch })
 }
 
-fn reincarnate_if_disk_newer(loaded: &mut LoadedAlpm) -> Result<()> {
+fn refresh_if_catalog_changed(loaded: &mut LoadedAlpm) -> Result<()> {
     let disk = AlpmCatalogEpoch::observe().context("Failed to observe ALPM catalog epoch")?;
-    if disk.disk_is_newer_than(loaded.epoch) {
+    if disk != loaded.epoch {
         *loaded = load_alpm_worker()?;
     }
     Ok(())
@@ -82,14 +82,14 @@ impl AlpmWorker {
             while let Ok(req) = rx.recv() {
                 match req {
                     AlpmRequest::Info(name, reply) => {
-                        let res = match reincarnate_if_disk_newer(&mut loaded) {
+                        let res = match refresh_if_catalog_changed(&mut loaded) {
                             Ok(()) => get_pkg_info_from_db(&loaded.handle, &name),
                             Err(error) => Err(error),
                         };
                         let _ = reply.send(res);
                     }
                     AlpmRequest::ListUpdates(reply) => {
-                        let res = match reincarnate_if_disk_newer(&mut loaded) {
+                        let res = match refresh_if_catalog_changed(&mut loaded) {
                             Ok(()) => Ok(collect_updates(&loaded.handle)),
                             Err(error) => Err(error),
                         };
