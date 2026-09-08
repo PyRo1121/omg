@@ -84,6 +84,7 @@ present before the probe runs.
 - **Install**: Add interactive fuzzy package discovery
 ### 🐛 Bug Fixes
 
+- **Debian**: Rebuild cached indexes after package list removal
 - **Dnf**: Bind cached inventory to RPM database generation ([#349](https://github.com/PyRo1121/omg/issues/349))
 - **Team**: Commit only the generated lockfile ([#348](https://github.com/PyRo1121/omg/issues/348))
 - **Privilege**: Allow internal re-exec verbs through install snapshot ([#347](https://github.com/PyRo1121/omg/issues/347))
@@ -493,6 +494,7 @@ Preserve archive data and report persistence failures explicitly. Coordinate dat
 - Add published release smoke matrix
 ### 📚 Documentation
 
+- Correct security claims and operational guidance
 - **Audit**: Preserve the 81-finding Daybreak remediation queue ([#346](https://github.com/PyRo1121/omg/issues/346))
 
 * docs(audit): track all 81 cancelled Daybreak findings

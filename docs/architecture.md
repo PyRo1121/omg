@@ -62,6 +62,7 @@ This document provides a high-level overview of OMG's architecture, component in
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
+```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                              USER                                        │
 │                                │                                         │
@@ -113,10 +114,10 @@ This document provides a high-level overview of OMG's architecture, component in
 
 ## 📦 Binary Components
 
-OMG is distributed as two specialized binaries, both statically linked for maximum portability and zero dependencies.
+Release contents and native dependencies vary by platform and backend. Arch releases include the CLI and daemon; non-Arch release archives omit the daemon. Do not assume static linking or dependency-free portability. See [installation](./installation.md).
 
 ### omg (The CLI)
-The primary user interface. It is designed for human interaction, providing rich colored output, progress bars, and interactive TUI elements. It handles argument parsing, security policy enforcement, and communicates with the background daemon via a high-performance Unix socket. Prompt counters (`omg ec|tc|oc|uc`) and other hot paths bypass the async runtime for sub-millisecond reads from the daemon's binary status snapshot.
+The primary user interface. It is designed for human interaction, providing rich colored output, progress bars, and interactive TUI elements. It handles argument parsing, security policy enforcement, and communicates with the background daemon via a high-performance Unix socket. Prompt counters (`omg ec|tc|oc|uc`) and other hot paths can bypass the async runtime and read the daemon's binary status snapshot. This establishes no universal latency bound.
 
 ### omgd (The Daemon)
 The "brain" of the system. It runs as a lightweight background service that maintains an in-memory index of all system packages and language runtimes. It handles heavy lifting like background vulnerability scanning, metadata indexing, and complex dependency resolution.
@@ -212,7 +213,7 @@ User: omg use node 20.10.0
 OMG interacts with system package managers using direct library bindings whenever possible to avoid the overhead of spawning subprocesses.
 
 ### Arch Linux (libalpm)
-The `ArchPackageManager` implementation uses direct FFI bindings to `libalpm` (via the `alpm` crate). This allows OMG to perform package searches, dependency resolution, and transaction management directly within the process memory space, bypassing the `pacman` CLI entirely. This is a key factor in achieving sub-10ms query performance.
+The `ArchPackageManager` implementation uses direct FFI bindings to `libalpm` (via the `alpm` crate). This allows OMG to perform package searches, dependency resolution, and transaction management directly within the process memory space, bypassing the `pacman` CLI entirely. This avoids a subprocess on those paths. End-to-end latency still depends on the command, sources, and cache state.
 
 ---
 
@@ -227,7 +228,7 @@ The hottest data (recent searches, package details, system status) is kept in a 
 The daemon persists its latest status snapshot as versioned JSON using a same-directory temporary file, `fsync`, and atomic rename. Transaction history and the hash-chained audit log are separate owner-only files; package search indexes are rebuilt from native package-manager databases rather than treated as durable authority.
 
 ### 3. Binary Status
-A specialized binary status file is maintained by the daemon to store your system's "vital signs" (update counts, error status). Prompt counters (`omg ec|tc|oc|uc`) read this snapshot with zero-allocation, zero-IPC access.
+A specialized binary status file is maintained by the daemon to store your system's "vital signs" (update counts, error status). Prompt counters (`omg ec|tc|oc|uc`) can read this snapshot without a daemon request; fallback behavior depends on snapshot availability and backend.
 
 ---
 
@@ -252,15 +253,14 @@ The protocol supports a wide range of structured requests and responses:
 
 ### Performance
 
-- **Serialization Latency**: ~10μs
-- **Round-trip Time**: ~100μs for cached data, ~1ms for fresh queries.
+- **Measurements**: See [benchmark methodology and records](../benchmarks/README.md). Serialization microbenchmarks do not establish full command latency.
 - **Efficiency**: Persistent connections can issue multiple individually framed requests without a duplicate batch protocol.
 
 ---
 
 ## 🔧 Runtime Management Architecture
 
-OMG unifies language runtimes under a single "Runtime Manager" interface. This allows every language—whether it's Node.js, Rust, or Java—to behave identically from a user's perspective.
+OMG provides a shared runtime-manager interface. Providers differ in installation, version discovery, platform availability, and upstream tooling. Shared command syntax does not make those behaviors identical.
 
 ### Version Storage
 All runtimes are stored in your home directory (`~/.local/share/omg/versions`), ensuring you never need `sudo` to switch a Node.js version and your system-wide packages remain untouched.
@@ -272,42 +272,11 @@ OMG supports only its native runtime managers. Unknown runtime names fail explic
 
 ## 🛡️ Security Architecture
 
-### Verification Pipeline
+### Verification paths
 
-```
+There is no universal pipeline that runs PGP, SLSA, vulnerability scanning, and policy checks for every download. Package transactions use backend-specific verification. Runtime downloads use provider-specific integrity paths. Explicit policies are enforceable against ALPM's prepared transaction; native APT, DNF, and Homebrew install and upgrade paths refuse explicit policy instead of claiming equivalent enforcement.
 
-Package Download
-      │
-      ▼
-┌─────────────────┐
-│ Checksum Verify │ SHA256
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│  PGP Signature  │ Sequoia-OpenPGP
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ SLSA Provenance │ Sigstore/Rekor
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ Vulnerability   │ ALSA + OSV.dev
-│    Scan         │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ Policy Check    │ policy.toml
-└────────┬────────┘
-         │
-         ▼
-    Install / Reject
-
-```
+`omg audit slsa` is a separate supported-artifact-signature check with an exact expected identity. It returns no SLSA build level and does not verify in-toto provenance. Release archive attestations are verified separately by GitHub CLI. See [security architecture and limits](./security.md).
 
 ### Audit Log
 

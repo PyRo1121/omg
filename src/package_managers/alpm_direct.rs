@@ -33,7 +33,7 @@ fn cached_alpm_is_reusable(
     disk_loaded: pacman_db::AlpmCatalogEpoch,
     disk_now: pacman_db::AlpmCatalogEpoch,
 ) -> bool {
-    software_loaded == software_now && !disk_now.disk_is_newer_than(disk_loaded)
+    software_loaded == software_now && disk_now == disk_loaded
 }
 
 fn create_alpm_handle() -> Result<Alpm> {
@@ -444,7 +444,60 @@ mod tests {
     }
 
     #[test]
-    fn cached_handle_is_dropped_when_sync_db_epoch_advances() {
+    fn cached_handle_rejects_catalog_removal_and_rollback() -> Result<()> {
+        let set_mtime = |path: &std::path::Path, seconds: u64| -> Result<()> {
+            std::fs::File::open(path)?
+                .set_times(std::fs::FileTimes::new().set_modified(
+                    std::time::UNIX_EPOCH + std::time::Duration::from_secs(seconds),
+                ))?;
+            Ok(())
+        };
+        for removed in ["sync", "local"] {
+            let directory = tempfile::tempdir()?;
+            let sync = directory.path().join("sync");
+            let local = directory.path().join("local");
+            std::fs::create_dir(&sync)?;
+            std::fs::create_dir(&local)?;
+            std::fs::write(sync.join("core.db"), b"catalog")?;
+            std::fs::write(local.join("ALPM_DB_VERSION"), b"9\n")?;
+            set_mtime(&sync, 20)?;
+            set_mtime(&sync.join("core.db"), 20)?;
+            set_mtime(&local, 20)?;
+            let observe = || -> Result<pacman_db::AlpmCatalogEpoch> {
+                Ok(pacman_db::AlpmCatalogEpoch {
+                    sync: pacman_db::SyncDbEpoch::from_sync_dir(&sync)?,
+                    local: pacman_db::LocalDbEpoch::from_local_dir(&local)?,
+                })
+            };
+            let loaded = observe()?;
+            assert!(cached_alpm_is_reusable(1, 1, loaded, loaded));
+            set_mtime(if removed == "sync" { &sync } else { &local }, 10)?;
+            if removed == "sync" {
+                set_mtime(&sync.join("core.db"), 10)?;
+            }
+            let restored = observe()?;
+            assert!(restored.sync < loaded.sync || restored.local < loaded.local);
+            assert!(
+                !cached_alpm_is_reusable(1, 1, loaded, restored),
+                "restoring an older {removed} timestamp must invalidate the cached handle"
+            );
+            if removed == "sync" {
+                std::fs::remove_file(sync.join("core.db"))?;
+            } else {
+                std::fs::remove_dir_all(&local)?;
+            }
+            let current = observe()?;
+            assert_ne!(current, loaded);
+            assert!(
+                !cached_alpm_is_reusable(1, 1, loaded, current),
+                "removing {removed} must invalidate the cached handle even when its epoch decreases"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn cached_handle_is_dropped_when_sync_db_epoch_changes() {
         let dir = tempfile::tempdir().expect("temp sync dir");
         let older = pacman_db::AlpmCatalogEpoch::UNIX_EPOCH;
         std::fs::write(dir.path().join("core.db"), b"db").expect("sync db file");
@@ -452,11 +505,11 @@ mod tests {
             sync: pacman_db::SyncDbEpoch::from_sync_dir(dir.path()).expect("observe temp sync dir"),
             local: pacman_db::LocalDbEpoch::UNIX_EPOCH,
         };
-        assert!(newer.disk_is_newer_than(older));
+        assert_ne!(newer, older);
         assert!(!cached_alpm_is_reusable(1, 1, older, newer));
         assert!(cached_alpm_is_reusable(1, 1, newer, newer));
         assert!(!cached_alpm_is_reusable(1, 2, newer, newer));
-        assert!(cached_alpm_is_reusable(3, 3, newer, older));
+        assert!(!cached_alpm_is_reusable(3, 3, newer, older));
     }
 
     #[test]

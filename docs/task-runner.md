@@ -8,7 +8,7 @@ description: Unified task execution across ecosystems
 
 **Unified Task Execution Across All Ecosystems**
 
-OMG's task runner (`omg run`) automatically detects project types and executes tasks with the correct runtime environment, eliminating the need to remember different commands for different ecosystems.
+OMG's task runner (`omg run`) detects supported project files and resolves a named task. It executes project-controlled code, not a sandboxed command. Review untrusted repositories before running tasks or accepting setup prompts. Missing tools or malformed configuration can cause explicit failures; detection does not guarantee dependency installation or a successful build.
 
 ---
 
@@ -68,7 +68,7 @@ Tasks allow you to interact with your project's lifecycle without needing to rem
 
 The system uses a sophisticated 11-tier discovery engine to determine the correct execution path, now enhanced with an intelligent priority hierarchy and ambiguity resolution:
 
-1. **Project Identification**: The system performs a breadth-first search for configuration patterns across 11 distinct project types, including Rust (Cargo), Node.js/Bun, Python (Poetry/Pipenv), Java (Maven/Gradle), PHP (Composer), and Deno.
+1. **Project Identification**: The detector inspects supported configuration files in the current directory, including Cargo, Node/Bun, Python, Maven/Gradle, Composer, and Deno files. It is not a recursive breadth-first repository search.
 2. **Ecosystem Priority**: If a task name exists in multiple ecosystems (e.g., both `Cargo.toml` and `package.json`), OMG uses a weighted priority system:
     - **Rust (Cargo)**: 100
     - **JavaScript/TypeScript (Node/Bun)**: 90

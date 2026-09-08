@@ -4,7 +4,7 @@
 //! and provides a high-performance index with zero-copy deserialization via rkyv.
 //!
 //! Performance features:
-//! - Zero-copy memory-mapped access via rkyv + mmap
+//! - Zero-copy rkyv access over owned cache snapshots
 //! - SIMD-accelerated search via memchr/memmem
 //! - LZ4 compressed cache for space efficiency
 //! - Parallel parsing via rayon
@@ -12,7 +12,7 @@
 #![cfg(any(feature = "debian", feature = "debian-pure"))]
 
 use std::collections::HashMap;
-use std::fs::{self, File};
+use std::fs;
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -22,9 +22,8 @@ use ahash::AHashSet;
 use anyhow::{Context, Result};
 use fst::{IntoStreamer, Map, Streamer};
 use memchr::memmem;
-use memmap2::Mmap;
 use rayon::prelude::*;
-use sha2::{Digest, Sha256};
+use rkyv::util::AlignedVec;
 use std::sync::RwLock;
 
 use crate::core::paths;
@@ -34,6 +33,32 @@ use crate::core::{Package, PackageSource};
 const CACHE_TTL_SECS: u64 = 30 * 60;
 const DEBIAN_INDEX_CACHE_MAGIC: [u8; 4] = *b"ODXI";
 const DEBIAN_INDEX_CACHE_FORMAT_VERSION: u32 = 2;
+const MAX_INDEX_SNAPSHOT_BYTES: u64 = 512 * 1024 * 1024;
+
+fn read_index_snapshot(path: &Path, limit: u64) -> Result<AlignedVec> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let mut file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK)
+        .open(path)
+        .with_context(|| format!("Failed to open index snapshot at {}", path.display()))?;
+    let metadata = file.metadata()?;
+    anyhow::ensure!(metadata.is_file(), "Index snapshot must be a regular file");
+    anyhow::ensure!(
+        metadata.len() <= limit,
+        "Index snapshot exceeds {limit} bytes"
+    );
+
+    let mut bytes = AlignedVec::new();
+    bytes.extend_from_reader(&mut Read::by_ref(&mut file).take(limit))?;
+    let mut extra = [0];
+    anyhow::ensure!(
+        file.read(&mut extra)? == 0,
+        "Index snapshot exceeds {limit} bytes"
+    );
+    Ok(bytes)
+}
 
 /// Current time as unix seconds (`0` if the clock is before the epoch).
 fn unix_now_secs() -> u64 {
@@ -64,7 +89,6 @@ static DPKG_STATUS_CACHE: LazyLock<RwLock<DpkgStatusCache>> =
 #[derive(Default)]
 struct DebianIndexCache {
     index: Option<DebianPackageIndex>,
-    fst_mapping: Option<FstMappingId>,
     /// Source set and mtimes used to invalidate the complete index.
     file_mtimes: HashMap<PathBuf, std::time::SystemTime>,
     /// Contiguous search buffer for SIMD search: "name desc\0name desc\0..."
@@ -171,7 +195,7 @@ fn installed_names() -> Result<Arc<AHashSet<String>>> {
     Ok(Arc::clone(&cache.installed_set))
 }
 
-/// Global mmap-based index for zero-copy access (optional, used when available)
+/// Global owned snapshot of the on-disk mmap-format index.
 static DEBIAN_MMAP_INDEX: LazyLock<RwLock<Option<DebianMmapIndex>>> =
     LazyLock::new(|| RwLock::new(None));
 
@@ -223,8 +247,9 @@ impl FstMappingId {
 
 /// FST-based search index with TTL-based eviction
 struct FstIndex {
-    map: Map<Mmap>,
-    mapping: FstMappingId,
+    map: Map<AlignedVec>,
+    /// Index generation this FST snapshot targets (see `.gen` sidecar).
+    generation: i64,
     /// Last access time for TTL-based eviction
     last_accessed: AtomicU64,
 }
@@ -233,20 +258,14 @@ impl FstIndex {
     /// Open an FST and derive its identity from the actual mapping. Legacy
     /// `.gen` files are not evidence of which bytes an open descriptor owns.
     fn open(path: &Path) -> Result<Self> {
-        let file = File::open(path)
-            .with_context(|| format!("Failed to open FST index at {}", path.display()))?;
-
-        // SAFETY: cache writers publish by atomic rename, preserving mapped
-        // inodes. The mapping is owned for its full use. External in-place
-        // modification is outside this cache's supported writer contract.
-        #[expect(unsafe_code)]
-        let mmap = unsafe { Mmap::map(&file)? };
-
-        let map = Map::new(mmap).map_err(|e| anyhow::anyhow!("Corrupted FST index: {e}"))?;
-        map.as_fst()
-            .verify()
-            .context("FST checksum verification failed")?;
-        let mapping = FstMappingId::from_map(&map);
+        let generation_bytes = read_index_snapshot(&Self::generation_sidecar(path), 64)
+            .context("FST generation sidecar missing or unreadable")?;
+        let generation = std::str::from_utf8(&generation_bytes)?
+            .trim()
+            .parse::<i64>()
+            .context("Invalid FST generation")?;
+        let bytes = read_index_snapshot(path, MAX_INDEX_SNAPSHOT_BYTES)?;
+        let map = Map::new(bytes).map_err(|e| anyhow::anyhow!("Corrupted FST index: {e}"))?;
 
         Ok(Self {
             map,
@@ -266,53 +285,59 @@ impl FstIndex {
     }
 }
 
-/// Zero-copy memory-mapped Debian package index.
+/// Owned snapshot of the mmap-format Debian index, with zero-copy package access.
 pub struct DebianMmapIndex {
-    mmap: Mmap,
-    fst_mapping: FstMappingId,
+    bytes: AlignedVec,
     last_accessed: AtomicU64,
 }
 
 impl DebianMmapIndex {
     /// Open and validate an existing read-only package index.
     pub fn open(path: &Path) -> Result<Self> {
-        let file = File::open(path)
-            .with_context(|| format!("Failed to open mmap index at {}", path.display()))?;
-
-        // SAFETY: the file descriptor is read-only and the mapping is owned
-        // by this value for its full lifetime.
-        #[expect(unsafe_code)]
-        let mmap = unsafe { Mmap::map(&file)? };
-        let archive =
-            rkyv::access::<rkyv::Archived<DebianPackageIndex>, rkyv::rancor::Error>(&mmap)
-                .map_err(|error| anyhow::anyhow!("Corrupted Debian package index: {error}"))?;
-        let fst_mapping = FstMappingId::from_names(
-            archive
-                .name_to_idx
-                .iter()
-                .map(|(name, index)| (name.as_str(), u64::from(u32::from(*index)))),
-        );
+        let bytes = read_index_snapshot(path, MAX_INDEX_SNAPSHOT_BYTES)?;
+        rkyv::access::<rkyv::Archived<DebianPackageIndex>, rkyv::rancor::Error>(&bytes)
+            .map_err(|error| anyhow::anyhow!("Corrupted Debian package index: {error}"))?;
 
         Ok(Self {
-            mmap,
-            fst_mapping,
+            bytes,
             last_accessed: AtomicU64::new(unix_now_secs()),
         })
     }
 
     fn archive(&self) -> &rkyv::Archived<DebianPackageIndex> {
-        // SAFETY: `open` validates the entire immutable mapping before
-        // constructing `Self`, and `mmap` cannot be mutated afterward.
+        // SAFETY: `open` validates these aligned, owned bytes before construction.
+        // No mutable access is exposed, and external writers cannot change them.
         #[expect(unsafe_code)]
         unsafe {
-            rkyv::access_unchecked::<rkyv::Archived<DebianPackageIndex>>(&self.mmap)
+            rkyv::access_unchecked::<rkyv::Archived<DebianPackageIndex>>(&self.bytes)
         }
     }
 
-    /// Look up one package without deserializing the full index.
-    pub fn get(&self, name: &str) -> Result<Option<&rkyv::Archived<DebianPackage>>> {
+    /// Resolve `name[:architecture[:component]]` without deserializing the index.
+    /// Uses the same fallback order as [`DebianPackageIndex::get_query`].
+    pub fn get(&self, query: &str) -> Result<Option<&rkyv::Archived<DebianPackage>>> {
         let archive = self.archive();
-        let Some(index) = archive.name_to_idx.get(name) else {
+        let index = if let Some((name, rest)) = query.split_once(':') {
+            if let Some((architecture, _)) = rest.split_once(':') {
+                archive
+                    .name_arch_component_to_idx
+                    .get(query)
+                    .or_else(|| {
+                        archive
+                            .name_arch_to_idx
+                            .get(format!("{name}:{architecture}").as_str())
+                    })
+                    .or_else(|| archive.name_to_idx.get(name))
+            } else {
+                archive
+                    .name_arch_to_idx
+                    .get(query)
+                    .or_else(|| archive.name_to_idx.get(name))
+            }
+        } else {
+            archive.name_to_idx.get(query)
+        };
+        let Some(index) = index else {
             return Ok(None);
         };
         Ok(archive.packages.get(u32::from(*index) as usize))
@@ -1493,7 +1518,7 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
 /// Much faster than full buffer scan for common queries
 #[inline]
 fn fst_search(
-    fst_map: &Map<Mmap>,
+    fst_map: &Map<AlignedVec>,
     index: &DebianPackageIndex,
     query_lower: &str,
     installed_set: &AHashSet<String>,
@@ -1557,7 +1582,7 @@ fn fst_search(
 /// Uses FST for name matching and mmap for zero-copy package details
 #[inline]
 fn fst_mmap_search(
-    fst_map: &Map<Mmap>,
+    fst_map: &Map<AlignedVec>,
     mmap: &DebianMmapIndex,
     query_lower: &str,
     installed_set: &AHashSet<String>,
@@ -1684,7 +1709,7 @@ pub fn get_info_fast(name: &str) -> Result<Option<Package>> {
             if let Ok(Some(pkg)) = mmap.get(name) {
                 return Ok(Some(archived_package_to_package(
                     pkg,
-                    is_installed_fast(name)?,
+                    is_installed_fast(pkg.name.as_str())?,
                 )));
             }
             // Package not in mmap - still return None without loading full index
@@ -1929,7 +1954,7 @@ pub fn cleanup_expired_mmaps() {
     if let Some(ref mmap) = *mmap_guard
         && mmap.is_expired()
     {
-        let size = mmap.mmap.len();
+        let size = mmap.bytes.len();
         tracing::info!(
             "Cleaning up expired Debian mmap index (size: {} MB)",
             size / 1024 / 1024
@@ -2445,6 +2470,86 @@ fn remove_deb_files(dir: &Path) -> Result<(usize, u64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::File;
+    use std::io::Write as _;
+
+    #[test]
+    fn index_snapshot_enforces_byte_budget() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("index");
+        fs::write(&path, b"abc")?;
+        assert_eq!(read_index_snapshot(&path, 3)?.as_slice(), b"abc");
+        assert!(read_index_snapshot(&path, 2).is_err());
+        File::create(&path)?.set_len(MAX_INDEX_SNAPSHOT_BYTES + 1)?;
+        let error = DebianMmapIndex::open(&path)
+            .err()
+            .expect("oversized index rejected");
+        assert!(error.to_string().contains("exceeds"));
+        Ok(())
+    }
+
+    #[test]
+    fn index_snapshot_rejects_symlinks_and_special_files() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let target = directory.path().join("target");
+        let link = directory.path().join("link");
+        fs::write(&target, b"unchanged")?;
+        std::os::unix::fs::symlink(&target, &link)?;
+        assert!(read_index_snapshot(&link, 64).is_err());
+        assert_eq!(fs::read(&target)?, b"unchanged");
+        assert!(read_index_snapshot(directory.path(), 64).is_err());
+        let fifo = directory.path().join("fifo");
+        nix::unistd::mkfifo(&fifo, nix::sys::stat::Mode::S_IRWXU)?;
+        assert!(read_index_snapshot(&fifo, 64).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn package_snapshot_survives_external_overwrite_and_truncation() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("index.mmap");
+        let mut source = DebianPackageIndex::new();
+        source.updated_at = 41;
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&source)?;
+        fs::write(&path, &bytes)?;
+        let mut writer = fs::OpenOptions::new().write(true).open(&path)?;
+        let index = DebianMmapIndex::open(&path)?;
+        assert_eq!(index.generation(), 41);
+
+        source.updated_at = 42;
+        let replacement = rkyv::to_bytes::<rkyv::rancor::Error>(&source)?;
+        assert_eq!(bytes.len(), replacement.len());
+        writer.write_all(&replacement)?;
+        assert_eq!(index.generation(), 41);
+        assert_eq!(DebianMmapIndex::open(&path)?.generation(), 42);
+        writer.set_len(0)?;
+        assert_eq!(index.generation(), 41);
+        assert!(index.packages()?.is_empty());
+        assert!(DebianMmapIndex::open(&path).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn fst_snapshot_survives_external_overwrite_and_truncation() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("index.fst");
+        let bytes = Map::from_iter([("demo", 1)])?.into_fst().into_inner();
+        let replacement = Map::from_iter([("demo", 2)])?.into_fst().into_inner();
+        assert_eq!(bytes.len(), replacement.len());
+        fs::write(&path, &bytes)?;
+        fs::write(FstIndex::generation_sidecar(&path), b"41")?;
+        let mut writer = fs::OpenOptions::new().write(true).open(&path)?;
+        let index = FstIndex::open(&path)?;
+        assert_eq!(index.map.get("demo"), Some(1));
+
+        writer.write_all(&replacement)?;
+        assert_eq!(index.map.get("demo"), Some(1));
+        assert_eq!(FstIndex::open(&path)?.map.get("demo"), Some(2));
+        writer.set_len(0)?;
+        assert_eq!(index.map.get("demo"), Some(1));
+        assert!(FstIndex::open(&path).is_err());
+        Ok(())
+    }
 
     #[test]
     fn fst_rejects_different_mapping_with_the_same_timestamp() -> Result<()> {
@@ -3121,6 +3226,53 @@ mod tests {
     }
 
     #[test]
+    fn mmap_lookup_preserves_qualified_query_selection() -> Result<()> {
+        let mut index = DebianPackageIndex::new();
+        for (architecture, component, version) in [
+            ("amd64", "main", "1.0"),
+            ("amd64", "contrib", "2.0"),
+            ("i386", "main", "3.0"),
+        ] {
+            let paragraph = format!(
+                "Package: demo\nVersion: {version}\nArchitecture: {architecture}\nDescription: fixture\n"
+            );
+            index.add_package(parse_paragraph_str(
+                &paragraph, component, "stable", "fixture",
+            )?);
+        }
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("index.mmap");
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&index)
+            .map_err(|error| anyhow::anyhow!("fixture serialization: {error}"))?;
+        fs::write(&path, &bytes)?;
+        let mapped = DebianMmapIndex::open(&path)?;
+
+        for (query, architecture, component, version) in [
+            ("demo:amd64", "amd64", "main", "1.0"),
+            ("demo:amd64:contrib", "amd64", "contrib", "2.0"),
+            ("demo:i386", "i386", "main", "3.0"),
+            ("demo:i386:absent", "i386", "main", "3.0"),
+        ] {
+            let package = mapped
+                .get(query)?
+                .with_context(|| format!("mmap lost qualified lookup {query}"))?;
+            assert_eq!(package.name.as_str(), "demo");
+            assert_eq!(package.architecture.as_str(), architecture);
+            assert_eq!(package.component.as_str(), component);
+            assert_eq!(package.version.as_str(), version);
+        }
+        for query in ["demo", "demo:unknown", "demo:unknown:absent"] {
+            let expected = index.get_query(query).context("normal index result")?;
+            let actual = mapped.get(query)?.context("mapped index result")?;
+            assert_eq!(actual.architecture.as_str(), expected.architecture);
+            assert_eq!(actual.component.as_str(), expected.component);
+            assert_eq!(actual.version.as_str(), expected.version);
+        }
+        assert!(mapped.get("missing:amd64:main")?.is_none());
+        Ok(())
+    }
+
+    #[test]
     fn test_index_get_query_name_arch_component() {
         let mut idx = DebianPackageIndex::new();
 
@@ -3479,6 +3631,7 @@ mod tests {
         let mut builder = fst::MapBuilder::memory();
         builder.insert("bash", 0)?;
         fs::write(&fst_path, builder.into_inner()?)?;
+        fs::write(FstIndex::generation_sidecar(&fst_path), b"0")?;
         let fst = FstIndex::open(&fst_path)?;
 
         for (status, expected) in [
