@@ -200,7 +200,8 @@ Published v0.1.218 still has known Fedora defects. The passing four-guest record
 uses fixed Debian and Fedora candidates, not four passing published artifacts.
 
 Requirements are local Docker access, `/dev/kvm` available to the controller,
-`jq`, and GNU coreutils. Published downloads also require `gh`. Docker validates
+`jq`, and GNU coreutils. Benchmarks also require host Python 3 for bounded sample
+validation. Published downloads also require `gh`. Docker validates
 device access. The script does not compile software or install host packages. Prebuilt
 QEMU and SSH tools run inside disposable Debian controllers. Each controller has
 two CPUs and a 3 GiB memory limit. Each guest has two vCPUs and 1536 MiB RAM.
@@ -213,10 +214,20 @@ state. APT fixtures use HTTPS on Ubuntu, IPv4, bounded network retries, no
 translation or desktop indexes, and stopped periodic APT timers. Package signature
 validation remains enabled.
 
-Add `--benchmark` for three warmups and 30 fresh-process samples per command.
-The comparisons are OMG installed information against pacman, apt-cache, or RPM.
-Native output includes additional metadata. Debug candidates, warm queries, and
-one guest per distro do not establish release speedups or identical output work.
+Add `--benchmark` to invoke a frozen copy of the root `benchmark-hyperfine.sh`
+driver: three warmups and 20–50 fresh-process samples per command, with the daemon
+disabled and caches warmed by preflight. It measures package info, untruncated
+JSON search, and explicit installed-package counts. Native comparisons include
+pacman, both apt-cache and apt, and both RPM and DNF where applicable. Counts use
+a common Bash wrapper; native count pipelines include `wc`.
+
+Pre/post checks retain package identities and name sets. `benchmarks/summary.json`
+inside each guest evidence directory records workload-equivalence checks, exact
+command arguments, and the measurement profile. Different search result sets are
+marked non-comparable, not advertised as speedups. Native output can include extra
+fields. The host validates sample statistics, exit receipts, requested scenarios,
+and command identities. A passing measurement run is not a release speedup claim;
+these are warm-cache observations, not cold-cache or repeated-guest statistics.
 
 Evidence is retained under `~/.cache/build-targets/omg-qemu-benchmark/`.
 An all-distro run produces `suite-*/<distro>/run-*` directories and aggregate

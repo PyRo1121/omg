@@ -314,10 +314,10 @@ if [[ "$GUEST_MODE" == true ]]; then
         cmp "$EXPORT_DIR/extra-identity.tsv" "$EXPORT_DIR/extra-identity-after.tsv"
     fi
     command_json() {
-        local label=$1
+        local command_label=$1
         shift
-        printf '%s\0' "$@" | jq -Rs --arg label "$label" \
-            '{label:$label, argv:(split("\u0000")[:-1])}'
+        printf '%s\0' "$@" | jq -Rs --arg command_label "$command_label" \
+            '{"label":$command_label, argv:(split("\u0000")[:-1])}'
     }
     {
         command_json OMG "$OMG" info tree

@@ -8,6 +8,26 @@ use clap::{CommandFactory, Parser};
 use common::*;
 use omg_lib::cli::Cli;
 
+#[test]
+fn explicit_shortcut_uses_the_same_isolated_state_as_explicit_count() {
+    for distro in ["arch", "debian", "fedora"] {
+        let project = TestProject::for_distro(distro);
+        project.mock_install("git", "2.43.0").expect("seed installed git");
+        let listing = project.run(&["--json", "explicit"]);
+        listing.assert_success();
+        let payload: serde_json::Value =
+            serde_json::from_str(&listing.stdout).expect("explicit package JSON");
+        let expected = payload["packages"].as_array().expect("package array").len();
+        assert!(expected > 0, "fixture must include installed git");
+        for command in [&["explicit", "--count"][..], &["ec"][..]] {
+            let result = project.run(command);
+            result.assert_success();
+            let actual = result.stdout.trim().parse::<usize>().expect("package count");
+            assert_eq!(actual, expected, "{distro}: {command:?}");
+        }
+    }
+}
+
 fn command_paths() -> Vec<Vec<String>> {
     fn collect(command: &clap::Command, prefix: &mut Vec<String>, paths: &mut Vec<Vec<String>>) {
         for subcommand in command.get_subcommands() {
