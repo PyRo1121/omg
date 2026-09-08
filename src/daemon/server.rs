@@ -239,7 +239,7 @@ async fn run_with_status_path(
                 let common_queries = ["", "linux", "python", "node", "firefox", "git"];
                 let index = state_search.index_snapshot();
                 for query in common_queries {
-                    let results = Arc::new(index.search(query, 50));
+                    let results = Arc::new(index.search(query, super::handlers::MAX_SEARCH_LIMIT));
                     if !state_search.with_current_index(&index, || {
                         state_search
                             .cache
@@ -1071,12 +1071,20 @@ mod tests {
 
     #[tokio::test]
     async fn startup_prewarms_every_common_search_query() -> Result<()> {
+        let names: Vec<_> = (0..120)
+            .map(|index| format!("python-package-{index:03}"))
+            .collect();
+        let records: Vec<_> = names
+            .iter()
+            .map(|name| (name.as_str(), "1.0", "Python fixture"))
+            .collect();
+        let index = super::super::index::PackageIndex::from_records(&records);
         let directory = tempfile::tempdir()?;
         let data_dir = directory.path().join("data");
         std::fs::create_dir_all(&data_dir)?;
         let state = Arc::new(super::super::handlers::DaemonState::new_isolated(
             &data_dir,
-            super::super::index::PackageIndex::empty(),
+            index,
             Arc::new(crate::package_managers::mock::MockPackageManager::new_in(
                 "arch", &data_dir,
             )),
@@ -1107,6 +1115,33 @@ mod tests {
         }
 
         server.abort();
+        for limit in [75, 120] {
+            let response = handle_request(
+                Arc::clone(&state),
+                Request::Search {
+                    id: 1,
+                    query: "python".to_string(),
+                    limit: Some(limit),
+                },
+            )
+            .await;
+            let Response::Success {
+                result: ResponseResult::Search(results),
+                ..
+            } = response
+            else {
+                anyhow::bail!("prewarmed search must succeed");
+            };
+            assert_eq!(
+                results.total, 120,
+                "prewarming must retain the backing inventory"
+            );
+            assert_eq!(
+                results.packages.len(),
+                limit,
+                "request limits apply after cache lookup"
+            );
+        }
         Ok(())
     }
 }
