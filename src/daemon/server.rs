@@ -1165,6 +1165,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn idle_client_is_closed_and_releases_its_connection_metric() -> Result<()> {
         let directory = tempfile::tempdir()?;
         let data_dir = directory.path().join("data");
@@ -1197,6 +1198,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn startup_prewarms_every_common_search_query() -> Result<()> {
         let names: Vec<_> = (0..120)
             .map(|index| format!("python-package-{index:03}"))
@@ -1222,7 +1224,7 @@ mod tests {
         let server = tokio::spawn(run_with_status_path(
             listener,
             Arc::clone(&state),
-            socket_path,
+            socket_path.clone(),
             fast_status_path.clone(),
         ));
 
@@ -1241,6 +1243,24 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
 
+        let response = tokio::time::timeout(Duration::from_secs(5), async {
+            let stream = tokio::net::UnixStream::connect(&socket_path).await?;
+            let mut framed = LengthDelimitedCodec::builder().new_framed(stream);
+            let request = Request::Search {
+                id: 1,
+                query: "python".to_string(),
+                limit: Some(100),
+            };
+            framed
+                .send(crate::daemon::protocol::encode_frame(&request)?.into())
+                .await?;
+            framed
+                .next()
+                .await
+                .context("daemon closed before returning search results")?
+                .context("read search response")
+        })
+        .await;
         server.abort();
         for limit in [75, 120] {
             let response = handle_request(
