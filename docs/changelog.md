@@ -11,6 +11,16 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ---
 
 ## [Unreleased]
+### Merge
+
+- **Main**: Keep audited cheatsheet and exact-match hook note
+
+Resolve the docs/cheatsheet.md conflict from [#371](https://github.com/PyRo1121/omg/issues/371) by keeping the
+
+audited short cheatsheet and documenting that uninstall removes only
+
+byte-exact current OMG hooks.
+
 ### ♻️  Refactoring
 
 - **Debian**: Separate installed flags from repository caching
@@ -86,6 +96,7 @@ present before the probe runs.
 - **Install**: Add interactive fuzzy package discovery
 ### 🐛 Bug Fixes
 
+- **Ci**: Express test durations in canonical units
 - **Aur**: Isolate archived index entries from mutable cache files
 - **Daemon**: Bound persisted status freshness without resetting its TTL
 - **Debian**: Read mutable indexes into owned validated snapshots
@@ -95,6 +106,7 @@ present before the probe runs.
 - **Debian**: Rebuild cached indexes after package list removal
 - **Debian**: Bind FST lookup to its actual name-to-row mapping
 - **Debian**: Rebuild cached indexes after package list removal
+- **Hooks**: Preserve custom automation during uninstall
 - **Dnf**: Bind cached inventory to RPM database generation ([#349](https://github.com/PyRo1121/omg/issues/349))
 - **Team**: Commit only the generated lockfile ([#348](https://github.com/PyRo1121/omg/issues/348))
 - **Privilege**: Allow internal re-exec verbs through install snapshot ([#347](https://github.com/PyRo1121/omg/issues/347))
@@ -504,10 +516,12 @@ Preserve archive data and report persistence failures explicitly. Coordinate dat
 - Add published release smoke matrix
 ### 📚 Documentation
 
+- Retain one merged hook ownership explanation
 - **Audit**: Record AUR index snapshot remediation
 - **Audit**: Record Debian cache mutation remediation
 - **Audit**: Record root pacman environment remediation
 - Correct security claims and operational guidance
+- **Audit**: Track exact-match hook uninstall fix
 - **Audit**: Preserve the 81-finding Daybreak remediation queue ([#346](https://github.com/PyRo1121/omg/issues/346))
 
 * docs(audit): track all 81 cancelled Daybreak findings
