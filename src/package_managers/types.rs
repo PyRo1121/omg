@@ -45,7 +45,7 @@ pub type Version = AlpmVersion;
 /// lexicographically and security updates were silently reported as up to
 /// date on every non-Arch build.
 #[cfg(not(feature = "arch"))]
-#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Eq, serde::Serialize, serde::Deserialize)]
 pub struct DebVersion(String);
 
 #[cfg(not(feature = "arch"))]
@@ -65,6 +65,20 @@ impl DebVersion {
 impl std::fmt::Display for DebVersion {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)
+    }
+}
+
+#[cfg(not(feature = "arch"))]
+impl PartialEq for DebVersion {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other).is_eq()
+    }
+}
+
+#[cfg(not(feature = "arch"))]
+impl std::hash::Hash for DebVersion {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        debian_version::hash_deb_version(&self.0, state);
     }
 }
 
@@ -107,6 +121,32 @@ mod debian_version {
         match compare_deb_part(upstream_a, upstream_b) {
             std::cmp::Ordering::Equal => compare_deb_part(revision_a, revision_b),
             other => other,
+        }
+    }
+
+    #[cfg(not(feature = "arch"))]
+    pub(super) fn hash_deb_version<H: std::hash::Hasher>(version: &str, state: &mut H) {
+        use std::hash::Hash;
+
+        let (epoch, rest) = split_deb_epoch(version);
+        epoch.hash(state);
+        let (upstream, revision) = split_deb_revision(rest);
+        for mut part in [upstream, revision] {
+            while !part.is_empty() {
+                let (non_digits, rest) = split_at_deb_digit(part);
+                let (digits, rest) = split_at_deb_non_digit(rest);
+                if !non_digits.is_empty() {
+                    non_digits.hash(state);
+                }
+                let digits = digits.trim_start_matches('0');
+                if !digits.is_empty() {
+                    digits.hash(state);
+                }
+                part = rest;
+            }
+            // A missing numeric run and an all-zero run compare equally.
+            // Delimit the parts even when all their numeric runs vanish.
+            "".hash(state);
         }
     }
 
@@ -345,6 +385,38 @@ mod tests {
         assert_eq!(v("1.0"), v("1.0"));
         assert!(v("1.0a") < v("1.0b"));
         assert!(v("1.0") < v("1.01"));
+    }
+
+    #[cfg(not(feature = "arch"))]
+    #[test]
+    fn deb_version_equality_and_hash_agree_with_ordering() {
+        use std::hash::{DefaultHasher, Hash, Hasher};
+
+        for (left, right) in [
+            ("1.01", "1.1"),
+            ("0:1.0", "1.0"),
+            ("01:1.0", "1:1.0"),
+            ("1.0", "1.0-0"),
+            ("1.0-00", "1.0-0"),
+            ("1.0a0", "1.0a"),
+            ("1.0000000000000000000001", "1.1"),
+        ] {
+            let a = Version::new(left);
+            let b = Version::new(right);
+            assert_eq!(a.cmp(&b), std::cmp::Ordering::Equal);
+            assert_eq!(a, b, "equal ordering for {left} and {right}");
+            let mut a_hash = DefaultHasher::new();
+            let mut b_hash = DefaultHasher::new();
+            a.hash(&mut a_hash);
+            b.hash(&mut b_hash);
+            assert_eq!(
+                a_hash.finish(),
+                b_hash.finish(),
+                "hashes for {left} and {right}"
+            );
+            assert_eq!(a.as_str(), left);
+            assert_eq!(serde_json::to_string(&a).unwrap(), format!("\"{left}\""));
+        }
     }
 
     #[test]
