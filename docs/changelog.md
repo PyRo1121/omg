@@ -1,12 +1,8 @@
 # Changelog
 
-All notable changes to OMG are documented here.
+Historical release and commit notes follow. Their feature descriptions, timings, security claims, and status language describe their original context; they are not a current support or assurance statement. The documentation audit reviewed this file as an archive, not as a fresh validation of every historical entry.
 
-OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm, pyenv, rustup, and more with a single tool.
-
-**Performance**: 22x faster searches than pacman, 59-483x faster than apt-cache on Debian/Ubuntu
-**Unified**: System packages + 8 language runtimes in one CLI
-**Secure**: Built-in SLSA, PGP, SBOM, and audit logs
+For current behavior and limits, use [installation](./installation.md), [security](./security.md), and the [benchmark evidence](../benchmarks/README.md). In particular, OMG is alpha software, backend coverage differs, and the SLSA-named command does not establish a SLSA build level.
 
 ---
 

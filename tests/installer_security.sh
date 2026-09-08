@@ -21,16 +21,18 @@ for scenario in missing rejected wrong_tag accepted; do
     detect_os() { echo linux; }
     detect_distro() { echo arch; }
     detect_arch() { echo x86_64; }
-    fetch_release_json() {
-      local version=v1.2.3
-      [[ "$scenario" != wrong_tag ]] || version=v1.2.2
-      printf '{"tag_name":"%s","assets":[{"browser_download_url":"https://github.com/PyRo1121/omg/releases/download/%s/omg-%s-x86_64-linux-arch.tar.gz"}]}' "$version" "$version" "$version"
-    }
+    if [[ "$scenario" == wrong_tag ]]; then
+      resolve_version() { printf 'v1.2.2\n'; }
+    fi
     curl() {
-      if [[ "$2" == *.sha256 ]]; then
-        printf '%064d  archive\n' 0 > "$4"
+      local url="${@: -1}"
+      if [[ "$url" == *.sha256 ]]; then
+        printf '%064d  archive\n' 0
+      elif [[ "$url" == "$RELEASES_BASE_URL/omg-v1.2.3-x86_64-linux-arch.tar.gz" ]]; then
+        printf 'fixture'
       else
-        printf 'fixture' > "$4"
+        printf 'Unexpected fixture URL: %s\n' "$url" >&2
+        return 1
       fi
     }
     calculate_sha256() { printf '%064d\n' 0; }

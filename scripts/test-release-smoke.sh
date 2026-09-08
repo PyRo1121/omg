@@ -14,6 +14,55 @@ fail() {
   exit 1
 }
 
+(
+  work="$scratch/source-install"
+  mkdir -p "$work/bin" "$work/project/target/release" "$work/home"
+  printf 'stale\n' > "$work/project/target/release/omg"
+  printf 'stale\n' > "$work/project/target/release/omgd"
+  cat > "$work/bin/rustc" <<'EOF'
+#!/usr/bin/env bash
+printf 'fixture-host\n'
+EOF
+  cat > "$work/bin/cargo" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+target_dir="${CARGO_TARGET_DIR:-target}"
+host="${CARGO_BUILD_TARGET:-}"
+while (($#)); do
+  case "$1" in
+    --target-dir) target_dir=$2; shift 2 ;;
+    --target) host=$2; shift 2 ;;
+    *) shift ;;
+  esac
+done
+output="$target_dir${host:+/$host}/release"
+mkdir -p "$output"
+printf 'fresh omg\n' > "$output/omg"
+printf 'fresh omgd\n' > "$output/omgd"
+EOF
+  chmod +x "$work/bin/cargo" "$work/bin/rustc"
+  export PATH="$work/bin:$PATH" HOME="$work/home"
+  export CARGO_TARGET_DIR="$work/redirected output" CARGO_BUILD_TARGET=foreign-host
+  source <(sed -n '/^build_omg()/,/^}/p' "$repo_root/install.sh")
+  header() { :; }
+  info() { :; }
+  start_spinner() { :; }
+  stop_spinner() { :; }
+  success() { :; }
+  fail_spinner() { fail "$1"; }
+  error() { fail "$1"; }
+  detect_os() { printf linux; }
+  detect_distro() { printf arch; }
+  install_binary() { cp "$1" "$2"; }
+  IS_SOURCE_INSTALL=true SCRIPT_DIR="$work/project" INSTALL_DIR="$work/installed"
+  build_omg
+  grep -qx 'fresh omg' "$INSTALL_DIR/omg" || fail 'source installer copied a stale binary'
+  grep -qx 'fresh omgd' "$INSTALL_DIR/omgd" || fail 'source installer copied a stale daemon'
+  make -f "$repo_root/Makefile" install >/dev/null
+  grep -qx 'fresh omg' "$HOME/.local/bin/omg" || fail 'make install copied a stale binary'
+  grep -qx 'fresh omgd' "$HOME/.local/bin/omgd" || fail 'make install copied a stale daemon'
+)
+
 results_file() {
   find "$1" -mindepth 2 -maxdepth 2 -name results.json -type f -print -quit
 }
@@ -237,14 +286,20 @@ printf '%s\n' '[{"case_id":"release-package-search-tree","distro":"macos","resul
 assert_rc 0 "$reporter" "$scratch/sentry-run/results-macos.json"
 jq -se '.[2].extra.failures[0].distro == "macos"' "$FAKE_SENTRY_ENVELOPE" >/dev/null || fail "Sentry reporter dropped the macos distro"
 rm "$FAKE_SENTRY_ENVELOPE"
-# Rows the filer accepts but telemetry does not forward (FAIL, SKIPPED,
-# exit -1) must not fail the schema gate and drop real PRODUCT_FAILs.
+# Inventory FAIL rows must reach telemetry without forwarding skipped rows.
 printf '%s\n' '[{"case_id":"release-package-search-tree","distro":"arch","result":"PRODUCT_FAIL","exit_code":1,"elapsed_seconds":2},{"case_id":"update-turbo","distro":"arch","result":"FAIL","exit_code":-1,"elapsed_seconds":0},{"case_id":"doctor-eol","distro":"arch","result":"SKIPPED","exit_code":0,"elapsed_seconds":0}]' > "$scratch/sentry-run/results-mixed.json"
 assert_rc 0 "$reporter" "$scratch/sentry-run/results-mixed.json"
-jq -se '.[2].extra.failures | length == 1 and .[0].result == "PRODUCT_FAIL"' "$FAKE_SENTRY_ENVELOPE" >/dev/null || fail "mixed rows broke Sentry forwarding"
+jq -se '.[2].extra.failures | length == 2 and .[0].result == "PRODUCT_FAIL" and .[1].result == "FAIL"' "$FAKE_SENTRY_ENVELOPE" >/dev/null || fail "inventory failure missing from Sentry report"
 rm "$FAKE_SENTRY_ENVELOPE"
 assert_rc 0 "$reporter" "$result"
 [[ ! -f "$FAKE_SENTRY_ENVELOPE" ]] || fail "passing run sent an error report"
+export OMG_SMOKE_ENVIRONMENT=fixture-private-token
+assert_rc 2 "$reporter" "$scratch/sentry-run/results.json"
+[[ ! -f "$FAKE_SENTRY_ENVELOPE" ]] || fail 'unsupported environment reached Sentry'
+unset OMG_SMOKE_ENVIRONMENT
+truncate -s 1048577 "$scratch/sentry-run/oversize.json"
+assert_rc 2 "$reporter" "$scratch/sentry-run/oversize.json"
+[[ ! -f "$FAKE_SENTRY_ENVELOPE" ]] || fail 'oversized input reached Sentry'
 export FAKE_SENTRY_HTTP=429
 assert_rc 1 "$reporter" "$scratch/sentry-run/results.json"
 export FAKE_RUN_EXIT=7
@@ -271,6 +326,24 @@ case "$1" in
     printf 'fixture-controller\n' ;;
   exec)
     for argument in "$@"; do
+      if [[ "$argument" == /work/qemu-inventory.sh ]]; then
+        work=$(<"$FAKE_QEMU_STATE")
+        if [[ -n "${FAKE_INVENTORY_RESULT:-}" ]]; then
+          mkdir -p "$work/inventory"
+          jq -Rn --arg verdict "$FAKE_INVENTORY_RESULT" '
+            [inputs | split("\t") | select(.[6] == "hermetic") |
+              {case_id:("qemu-arch-" + .[0]), distro:"arch", result:$verdict,
+               artifact_source:"inventory", exit_code:0, elapsed_seconds:0, stderr:"fixture-private-token"}]' < "$work/cases.tsv" > "$work/inventory/results.json"
+          printf '{"complete":true}\n' > "$work/inventory/summary.json"
+          case "${FAKE_INVENTORY_SHAPE:-}" in
+            partial) jq '.[0:1]' "$work/inventory/results.json" > "$work/inventory/next.json" ;;
+            mixed) jq '.[0].result = "FAIL" | .[1].result = "BLOCKED"' "$work/inventory/results.json" > "$work/inventory/next.json" ;;
+            incomplete) printf '{"complete":false}\n' > "$work/inventory/summary.json" ;;
+          esac
+          [[ ! -f "$work/inventory/next.json" ]] || mv "$work/inventory/next.json" "$work/inventory/results.json"
+        fi
+        exit "${FAKE_INVENTORY_EXIT:-0}"
+      fi
       [[ "$argument" != ssh ]] || exit "${FAKE_QEMU_TRANSPORT_EXIT:-${FAKE_QEMU_GUEST_EXIT:-0}}"
       if [[ "$argument" == bench@127.0.0.1:evidence && ${FAKE_QEMU_MISSING_RECEIPT:-0} == 0 ]]; then
         work=$(<"$FAKE_QEMU_STATE")
@@ -298,7 +371,7 @@ jq -e 'length == 4 and ([.[].distro] | sort) == ["arch", "debian", "fedora", "ub
 assert_rc 143 bash -c 'export FAKE_QEMU_SUITE_PID=$$; exec "$@"' _ "$qemu_runner" --distro all --staged-dir "$scratch/valid" --evidence-dir "$scratch/qemu-interrupted"
 qemu_result=$(find "$scratch/qemu-interrupted" -mindepth 2 -maxdepth 2 -name results.json -print -quit)
 jq -e 'length == 4 and .[0].result == "INCOMPLETE" and all(.[1:][]; .result == "NOT_RUN")' "$qemu_result" >/dev/null || fail 'interrupted QEMU suite lost target states'
-for attempt in {1..100}; do
+for _attempt in {1..100}; do
   child_result=$(find "$scratch/qemu-interrupted" -mindepth 4 -maxdepth 4 -name results.json -print -quit)
   if [[ -n "$child_result" ]] && jq -e '.[0].result == "HARNESS_ERROR"' "$child_result" >/dev/null 2>&1; then break; fi
   sleep 0.1
@@ -306,13 +379,14 @@ done
 [[ -n "$child_result" ]] || fail 'interrupted QEMU child did not record its exit'
 
 export FAKE_QEMU_INFO_EXIT=0 FAKE_QEMU_STATE="$scratch/qemu-controller"
-for scenario in pass product-failure timeout cleanup-failure transport-failure missing-receipt; do
+for scenario in pass product-failure product-exit-three timeout cleanup-failure transport-failure missing-receipt; do
   export FAKE_QEMU_GUEST_EXIT=0 FAKE_QEMU_CLEANUP_FAIL=0 FAKE_QEMU_MISSING_RECEIPT=0
   unset FAKE_QEMU_TRANSPORT_EXIT
   expected_rc=0
   expected_result=PASS
   case "$scenario" in
     product-failure) export FAKE_QEMU_GUEST_EXIT=1; expected_rc=1; expected_result=PRODUCT_FAIL ;;
+    product-exit-three) export FAKE_QEMU_GUEST_EXIT=3; expected_rc=3; expected_result=PRODUCT_FAIL ;;
     timeout) export FAKE_QEMU_GUEST_EXIT=124; expected_rc=124; expected_result=PRODUCT_FAIL ;;
     cleanup-failure) export FAKE_QEMU_CLEANUP_FAIL=1; expected_rc=3; expected_result=HARNESS_ERROR ;;
     transport-failure) export FAKE_QEMU_TRANSPORT_EXIT=1; expected_rc=3; expected_result=HARNESS_ERROR ;;
@@ -330,8 +404,40 @@ for scenario in pass product-failure timeout cleanup-failure transport-failure m
     [[ ! -f "$FAKE_QEMU_STATE" ]] || fail "QEMU $scenario retained its controller"
   fi
 done
-native_arch=x86_64; foreign_arch=aarch64
-if [[ "$(uname -m)" == aarch64 || "$(uname -m)" == arm64 ]]; then native_arch=aarch64; foreign_arch=x86_64; fi
+export FAKE_QEMU_GUEST_EXIT=0 FAKE_QEMU_CLEANUP_FAIL=0 FAKE_QEMU_MISSING_RECEIPT=0
+unset FAKE_QEMU_TRANSPORT_EXIT
+for scenario in missing PASS FAIL HARNESS_ERROR BLOCKED SKIPPED partial mixed incomplete; do
+  export FAKE_INVENTORY_RESULT="$scenario" FAKE_INVENTORY_EXIT=0
+  expected_rc=3
+  case "$scenario" in
+    missing) unset FAKE_INVENTORY_RESULT ;;
+    PASS) expected_rc=0 ;;
+    FAIL) expected_rc=1 ;;
+    partial|mixed|incomplete)
+      export FAKE_INVENTORY_RESULT=PASS FAKE_INVENTORY_SHAPE="$scenario"
+      [[ "$scenario" != mixed ]] || expected_rc=1 ;;
+  esac
+  assert_rc "$expected_rc" "$qemu_runner" --distro arch --release v9.9.9 --staged-dir "$scratch/valid" --inventory-tiers hermetic --evidence-dir "$scratch/qemu-inventory-$scenario"
+  unset FAKE_INVENTORY_SHAPE
+done
+export FAKE_INVENTORY_RESULT=PASS FAKE_INVENTORY_SHAPE=mixed
+export OMG_SMOKE_SENTRY_CONFIG="$scratch/sentry-config.json" FAKE_SENTRY_ENVELOPE="$scratch/qemu-envelope.txt"
+assert_rc 1 "$qemu_runner" --distro arch --release v9.9.9 --staged-dir "$scratch/valid" --inventory-tiers hermetic --evidence-dir "$scratch/qemu-row-telemetry"
+jq -se '.[2].extra.failures | length == 2 and any(.[]; .result == "FAIL") and any(.[]; .result == "PRODUCT_FAIL")' "$FAKE_SENTRY_ENVELOPE" >/dev/null || fail 'QEMU row failure not delivered with lifecycle failure'
+if grep -q 'fixture-private-token' "$FAKE_SENTRY_ENVELOPE"; then fail 'QEMU telemetry included private fields'; fi
+unset FAKE_INVENTORY_RESULT FAKE_INVENTORY_EXIT FAKE_INVENTORY_SHAPE OMG_SMOKE_SENTRY_CONFIG FAKE_SENTRY_ENVELOPE
+export FAKE_QEMU_GUEST_EXIT=1
+assert_rc 1 "$qemu_runner" --distro arch --release v9.9.9 --staged-dir "$scratch/valid" --inventory-tiers hermetic --evidence-dir "$scratch/qemu-blocked-inventory"
+blocked_results=$(find "$scratch/qemu-blocked-inventory" -path '*/inventory/results.json' -print -quit)
+blocked_ids=$(awk -F '\t' 'NR > 1 && $7 ~ /(^|,)hermetic(,|$)/ {print "qemu-arch-" $1}' \
+  "$repo_root/tests/cli_behavior_inventory.tsv" | jq -Rsc 'split("\n") | map(select(length > 0)) | sort')
+jq -e --argjson expected "$blocked_ids" '(map(.case_id) | sort) == $expected and all(.[]; .result == "BLOCKED")' \
+  "$blocked_results" >/dev/null || fail 'lifecycle failure hid requested coverage'
+export FAKE_QEMU_GUEST_EXIT=0
+assert_rc 2 "$qemu_runner" --inventory-tiers "hermetic';exit 0;'"
+assert_rc 2 "$qemu_runner" --inventory-tiers $'hermetic\n\047;exit 0;\047'
+foreign_arch=aarch64
+if [[ "$(uname -m)" == aarch64 || "$(uname -m)" == arm64 ]]; then foreign_arch=x86_64; fi
 # Preflight probes fail closed to HARNESS_ERROR without needing a guest.
 unset OMG_QEMU_ALLOW_NO_KVM
 export OMG_QEMU_KVM_DEVICE="$scratch/does-not-exist"
@@ -485,5 +591,128 @@ PATH="$scratch/macbin" assert_rc 0 "$runner" "${native_args[@]}" --evidence-dir 
 mac_result=$(results_file "$scratch/native-mac-tools")
 [[ "$(grep -c '"result":"PASS"' "$mac_result")" -eq 3 ]] || fail "macOS toolset run did not pass every contract"
 grep -q 'gtimeout-stub' "$scratch/gtimeout-log" || fail "macOS toolset run did not fall back to gtimeout"
+
+# Per-distro expected exits (#303): source only the pure resolvers out of
+# the runner (anchored extraction keeps the suite hermetic).
+# shellcheck disable=SC1090
+source <(sed -n '/^exit_for_distro/,/^}/p;/^valid_expected_exit/,/^}/p' "$runner")
+[[ "$(exit_for_distro "0" arch)" == "0" ]] || fail "bare exit must apply to every distro"
+[[ "$(exit_for_distro "0" debian)" == "0" ]] || fail "bare exit must apply to debian"
+[[ "$(exit_for_distro "arch:0,debian:1,ubuntu:1,fedora:1" debian)" == "1" ]] || fail "matrix must resolve debian refusal"
+[[ "$(exit_for_distro "arch:0,debian:1,ubuntu:1,fedora:1" arch)" == "0" ]] || fail "matrix must resolve arch pass"
+exit_for_distro "arch:0,debian:1,ubuntu:1,fedora:1" macos >/dev/null 2>&1 && fail "unlisted distro must not resolve"
+exit_for_distro "arch:0,debian:1,ubuntu:1" fedora >/dev/null 2>&1 && fail "partial matrix must not resolve"
+valid_expected_exit "0" || fail "bare exit must validate"
+valid_expected_exit "arch:0,debian:1,ubuntu:1,fedora:1" || fail "complete matrix must validate"
+valid_expected_exit "arch:0,debian:1,ubuntu:1" && fail "partial matrix must not validate"
+valid_expected_exit "arch:0,arch:1,debian:1,ubuntu:1,fedora:1" && fail "duplicate distro must not validate"
+valid_expected_exit "arch:0,debian:1,ubuntu:1,centos:1" && fail "unknown distro must not validate"
+valid_expected_exit "arch:0,debian:x,ubuntu:1,fedora:1" && fail "non-numeric code must not validate"
+
+# Exercise the real inventory runner and remote shell, with only SSH replaced.
+# The fake product and guest HOME are disposable; no host package calls occur.
+inventory_runner="$repo_root/scripts/qemu-inventory.sh"
+cat > "$scratch/bin/ssh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ ${FAKE_INVENTORY_TRANSPORT:-0} == 0 ]] || exit "$FAKE_INVENTORY_TRANSPORT"
+exec bash -c "${!#}"
+EOF
+cat > "$scratch/fake inventory omg" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$1" in
+  fail) exit 1 ;;
+  exit-code) exit "$2" ;;
+  json) printf '{"ok":true}\n' ;;
+  bad-json) printf 'not json\n' ;;
+  artifact) printf '{}\n' > "$2" ;;
+  require) test -s "$2" ;;
+  missing) exit 0 ;;
+  hang) sleep 30 ;;
+  interrupt) kill -TERM "$FAKE_INVENTORY_PID" ;;
+  literal) [[ "$2" == '$(touch MUST_NOT_EXIST)' ]] ;;
+  empty-arg) [[ "$#" == 3 && "$2" == '' && "$3" == tail ]] ;;
+  path) command -v 'fake inventory omg' ;;
+  *) exit 2 ;;
+esac
+EOF
+chmod 700 "$scratch/bin/ssh" "$scratch/fake inventory omg"
+inv_header=$'case\targs_json\tsafety\texpected_exit\texpected_ux\trequires\ttier\ttargets\tassertions\tcleanup'
+inv_row() { printf '%s\t%s\t%s\t%s\tpass\t%s\thermetic\t%s\t%s\ttempdir-drop\n' "$1" "$2" "${6:-read}" "$3" "${4:--}" "${7:-hermetic:pass}" "${5:--}"; }
+run_inventory() {
+  local name=$1 expected=$2
+  shift 2
+  mkdir -p "$scratch/inventory-$name/guest"
+  printf '%s\n' "$inv_header" > "$scratch/inventory-$name.tsv"
+  printf '%s\n' "$@" >> "$scratch/inventory-$name.tsv"
+  assert_rc "$expected" bash -c 'export FAKE_INVENTORY_PID=$$; exec "$@"' _ "$inventory_runner" --work "$scratch/inventory-$name" --distro arch --tiers hermetic --tag v9.9.9 --binary "$scratch/fake inventory omg" --tsv "$scratch/inventory-$name.tsv" --row-timeout 1
+}
+inv_verdict() {
+  jq -e --arg id "qemu-arch-$2" --arg verdict "$3" 'any(.[]; .case_id == $id and .result == $verdict)' "$scratch/inventory-$1/inventory/results.json" >/dev/null || fail "inventory $1/$2 expected $3"
+}
+run_inventory known-defect 1 "$(inv_row broken '["fail"]' 0 - - read 'arch:known-defect')"
+inv_verdict known-defect broken FAIL
+export FAKE_INVENTORY_TRANSPORT=1
+run_inventory transport 1 "$(inv_row refusal '["fail"]' 1)"
+inv_verdict transport refusal HARNESS_ERROR
+unset FAKE_INVENTORY_TRANSPORT
+run_inventory refusal 0 "$(inv_row refusal '["fail"]' 1)"
+run_inventory path 0 "$(inv_row path '["path"]' 0)"
+inv_verdict refusal refusal PASS
+for code in 124 125 126 127 137; do
+  run_inventory "product-exit-$code" 0 "$(inv_row product "[\"exit-code\",\"$code\"]" "$code")"
+  inv_verdict "product-exit-$code" product PASS
+done
+run_inventory missing-exit 2 "$(inv_row invalid '["json"]' 'debian:0')"
+run_inventory duplicate-exit 2 "$(inv_row invalid '["json"]' 'arch:0,arch:1,debian:0,ubuntu:0,fedora:0')"
+run_inventory cycle 2 "$(inv_row cycle '["json"]' 0 cycle)"
+run_inventory invalid-prerequisite 2 "$(inv_row invalid '["json"]' 0 '$(touch MUST_NOT_EXIST)')"
+run_inventory nul-argument 2 "$(inv_row invalid '["literal","a\u0000b"]' 0)"
+run_inventory assertions 1 \
+  "$(inv_row valid-json '["json"]' 0 - json-stdout)" \
+  "$(inv_row invalid-json '["bad-json"]' 0 - json-stdout)" \
+  "$(inv_row missing-artifact '["missing"]' 0 - artifact:manifest.json)" \
+  "$(inv_row missing-child '["json"]' 0 missing-artifact)" \
+  "$(inv_row export '["artifact","${ROOT}/manifest.json"]' 0 - artifact:manifest.json)" \
+  "$(inv_row import '["require","${ROOT}/manifest.json"]' 0 export)" \
+  "$(inv_row literal '["literal","$(touch MUST_NOT_EXIST)"]' 0)"
+inv_verdict assertions valid-json PASS
+inv_verdict assertions invalid-json FAIL
+inv_verdict assertions missing-artifact FAIL
+inv_verdict assertions missing-child BLOCKED
+inv_verdict assertions export PASS
+inv_verdict assertions import PASS
+inv_verdict assertions literal PASS
+run_inventory empty-argument 0 "$(inv_row empty '["empty-arg","","tail"]' 0)"
+inv_verdict empty-argument empty PASS
+run_inventory json-dependency 1 \
+  "$(inv_row setup '["bad-json"]' 0 - json-stdout)" \
+  "$(inv_row child '["json"]' 0 setup)"
+inv_verdict json-dependency child BLOCKED
+run_inventory dependency 1 \
+  "$(inv_row setup '["fail"]' 0)" \
+  "$(inv_row child '["json"]' 0 setup)"
+inv_verdict dependency child BLOCKED
+run_inventory gated 1 \
+  "$(inv_row setup '["json"]' 0 - - package-mutation)" \
+  "$(inv_row child '["json"]' 0 setup)"
+inv_verdict gated setup SKIPPED
+inv_verdict gated child BLOCKED
+run_inventory deadline 1 "$(inv_row hang '["hang"]' 0)"
+inv_verdict deadline hang FAIL
+run_inventory interrupted 143 \
+  "$(inv_row observed-failure '["fail"]' 0)" \
+  "$(inv_row interrupt '["interrupt"]' 0)"
+inv_verdict interrupted observed-failure FAIL
+jq -e '.complete == false' "$scratch/inventory-interrupted/inventory/summary.json" >/dev/null || fail 'interrupted inventory claimed complete coverage'
+jq -e '.[0].exit_code == 124' "$scratch/inventory-deadline/inventory/results.json" >/dev/null || fail 'guest deadline lost timeout status'
+# Existing evidence is immutable, even on an otherwise valid rerun.
+assert_rc 2 "$inventory_runner" --work "$scratch/inventory-refusal" --distro arch --tiers hermetic --tag v9.9.9 --binary "$scratch/fake inventory omg" --tsv "$scratch/inventory-refusal.tsv"
+
+# Validate the checked-in inventory without executing any of its commands.
+mkdir -p "$scratch/inventory-schema/guest"
+assert_rc 1 "$inventory_runner" --work "$scratch/inventory-schema" --distro arch --tiers credentialed --tag v9.9.9 --binary "$scratch/fake inventory omg" --tsv "$repo_root/tests/cli_behavior_inventory.tsv"
+inv_verdict schema inventory-selection HARNESS_ERROR
 
 printf 'PASS: release smoke and QEMU fixture suite\n'

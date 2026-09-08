@@ -966,6 +966,188 @@ pub fn audit_log_nonblocking(
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "linux")]
+    mod system_directory {
+        use super::*;
+        use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
+
+        #[test]
+        fn fresh_install_uses_private_storage_without_changing_syslog_permissions()
+        -> anyhow::Result<()> {
+            let parent = tempfile::tempdir()?;
+            let syslog = tempfile::tempdir()?;
+            std::fs::set_permissions(syslog.path(), std::fs::Permissions::from_mode(0o775))?;
+            let directory = prepare_system_audit_directory(parent.path(), syslog.path())?;
+            assert_eq!(std::fs::metadata(&directory)?.mode() & 0o777, 0o700);
+            assert_eq!(
+                std::fs::metadata(&directory)?.uid(),
+                rustix::process::geteuid().as_raw()
+            );
+            assert_eq!(std::fs::metadata(syslog.path())?.mode() & 0o777, 0o775);
+            assert!(!syslog.path().join("omg").exists());
+            Ok(())
+        }
+
+        #[test]
+        fn world_writable_parent_is_rejected_before_creation() -> anyhow::Result<()> {
+            let parent = tempfile::tempdir()?;
+            let legacy = tempfile::tempdir()?;
+            std::fs::set_permissions(parent.path(), std::fs::Permissions::from_mode(0o777))?;
+            assert!(prepare_system_audit_directory(parent.path(), legacy.path()).is_err());
+            assert_eq!(std::fs::read_dir(parent.path())?.count(), 0);
+            Ok(())
+        }
+
+        #[test]
+        fn writable_existing_audit_directory_is_not_adopted() -> anyhow::Result<()> {
+            let parent = tempfile::tempdir()?;
+            let legacy = tempfile::tempdir()?;
+            let child = parent.path().join("audit");
+            std::fs::create_dir(&child)?;
+            for mode in [0o770, 0o777] {
+                std::fs::set_permissions(&child, std::fs::Permissions::from_mode(mode))?;
+                assert!(prepare_system_audit_directory(parent.path(), legacy.path()).is_err());
+                assert_eq!(std::fs::metadata(&child)?.mode() & 0o777, mode);
+            }
+            Ok(())
+        }
+
+        #[test]
+        fn symlink_parent_and_child_are_rejected() -> anyhow::Result<()> {
+            let parent = tempfile::tempdir()?;
+            let target = tempfile::tempdir()?;
+            let legacy = tempfile::tempdir()?;
+            let link = parent.path().join("link");
+            symlink(target.path(), &link)?;
+            assert!(prepare_system_audit_directory(&link, legacy.path()).is_err());
+            symlink(target.path(), legacy.path().join("omg"))?;
+            assert!(prepare_system_audit_directory(parent.path(), legacy.path()).is_err());
+            assert_eq!(std::fs::read_dir(target.path())?.count(), 0);
+            Ok(())
+        }
+
+        #[test]
+        fn migration_preserves_history_archives_and_chain_continuity() -> anyhow::Result<()> {
+            let parent = tempfile::tempdir()?;
+            let legacy = tempfile::tempdir()?;
+            let original = legacy.path().join("omg");
+            std::fs::create_dir(&original)?;
+            std::fs::set_permissions(&original, std::fs::Permissions::from_mode(0o755))?;
+            AuditLogger::new_in(original.join("audit.jsonl"))?.log(
+                AuditEventType::PackageInstall,
+                AuditSeverity::Info,
+                "tree",
+                "existing history",
+            )?;
+            let original_bytes = std::fs::read(original.join("audit.jsonl"))?;
+            std::fs::write(original.join("audit.jsonl.1"), &original_bytes)?;
+            let directory = prepare_system_audit_directory(parent.path(), legacy.path())?;
+            assert!(!original.exists());
+            assert_eq!(
+                std::fs::read(directory.join("audit.jsonl.1"))?,
+                original_bytes
+            );
+            AuditLogger::new_in(directory.join("audit.jsonl"))?.log(
+                AuditEventType::PackageRemove,
+                AuditSeverity::Info,
+                "tree",
+                "after migration",
+            )?;
+            assert!(std::fs::read(directory.join("audit.jsonl"))?.starts_with(&original_bytes));
+            let report = AuditLogger::new_in(directory.join("audit.jsonl"))?.verify_integrity()?;
+            assert!(report.is_valid());
+            assert_eq!(report.total_entries, 2);
+            assert_eq!(
+                prepare_system_audit_directory(parent.path(), legacy.path())?,
+                directory
+            );
+            Ok(())
+        }
+
+        #[test]
+        fn untrusted_legacy_data_is_not_discarded() -> anyhow::Result<()> {
+            let parent = tempfile::tempdir()?;
+            let legacy = tempfile::tempdir()?;
+            std::fs::create_dir(legacy.path().join("omg"))?;
+            let history = legacy.path().join("omg/audit.jsonl");
+            std::fs::write(&history, b"retained history")?;
+            std::fs::set_permissions(legacy.path(), std::fs::Permissions::from_mode(0o775))?;
+            assert!(prepare_system_audit_directory(parent.path(), legacy.path()).is_err());
+            assert_eq!(std::fs::read(history)?, b"retained history");
+            assert!(!parent.path().join("audit").exists());
+            Ok(())
+        }
+
+        #[test]
+        fn cross_filesystem_migration_preserves_legacy_data_on_refusal() -> anyhow::Result<()> {
+            let parent = tempfile::tempdir()?;
+            let legacy = tempfile::tempdir_in("/dev/shm")?;
+            assert_ne!(
+                std::fs::metadata(parent.path())?.dev(),
+                std::fs::metadata(legacy.path())?.dev()
+            );
+            std::fs::create_dir(legacy.path().join("omg"))?;
+            let history = legacy.path().join("omg/audit.jsonl");
+            std::fs::write(&history, b"retained history")?;
+            let error = prepare_system_audit_directory(parent.path(), legacy.path())
+                .expect_err("cross-filesystem rename must not become a copy or fresh log");
+            assert_eq!(
+                error
+                    .downcast_ref::<io::Error>()
+                    .and_then(io::Error::raw_os_error),
+                Some(libc::EXDEV)
+            );
+            assert_eq!(std::fs::read(history)?, b"retained history");
+            assert!(!parent.path().join("audit").exists());
+            Ok(())
+        }
+
+        #[test]
+        fn concurrent_migrations_select_the_same_history() -> anyhow::Result<()> {
+            let parent = tempfile::tempdir()?;
+            let legacy = tempfile::tempdir()?;
+            std::fs::create_dir(legacy.path().join("omg"))?;
+            std::fs::write(legacy.path().join("omg/audit.jsonl"), b"retained history")?;
+            let barrier = std::sync::Barrier::new(2);
+            std::thread::scope(|scope| -> anyhow::Result<()> {
+                let run = || {
+                    barrier.wait();
+                    prepare_system_audit_directory(parent.path(), legacy.path())
+                };
+                let first = scope.spawn(run);
+                let second = scope.spawn(run);
+                assert_eq!(
+                    first.join().expect("migration thread panicked")?,
+                    second.join().expect("migration thread panicked")?
+                );
+                Ok(())
+            })?;
+            assert_eq!(
+                std::fs::read(parent.path().join("audit/audit.jsonl"))?,
+                b"retained history"
+            );
+            Ok(())
+        }
+
+        #[test]
+        fn competing_histories_require_explicit_reconciliation() -> anyhow::Result<()> {
+            let parent = tempfile::tempdir()?;
+            let legacy = tempfile::tempdir()?;
+            let current = prepare_system_audit_directory(parent.path(), legacy.path())?;
+            std::fs::write(current.join("audit.jsonl"), b"current history")?;
+            std::fs::create_dir(legacy.path().join("omg"))?;
+            let old = legacy.path().join("omg/audit.jsonl");
+            std::fs::write(&old, b"legacy history")?;
+            assert!(prepare_system_audit_directory(parent.path(), legacy.path()).is_err());
+            assert_eq!(std::fs::read(old)?, b"legacy history");
+            assert_eq!(
+                std::fs::read(current.join("audit.jsonl"))?,
+                b"current history"
+            );
+            Ok(())
+        }
+    }
+
     #[test]
     fn failed_audit_write_does_not_advance_the_chain() {
         let temp = tempfile::TempDir::new().unwrap();
@@ -1362,16 +1544,7 @@ mod tests {
     }
 }
 
-/// Fail closed when the system audit directory is not trustworthy.
-///
-/// Every component must be a root-owned real directory (symlinks fail
-/// `is_dir` under `symlink_metadata`), so a planted redirection is refused.
-/// Only the leaf itself must additionally be free of group/other write bits:
-/// system ancestors legitimately carry them by distro default (Ubuntu ships
-/// `/var/log` as group-writable `root:syslog`, which a blanket writability
-/// check turns into a refusal to run at all). Ownership plus type still rule
-/// out non-root redirection of any component.
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "linux")))]
 fn ensure_system_audit_dir_trusted(directory: &Path) -> anyhow::Result<()> {
     use std::os::unix::fs::MetadataExt;
     for path in directory.ancestors() {
@@ -1390,8 +1563,102 @@ fn ensure_system_audit_dir_trusted(directory: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
+fn check_audit_directory(path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::MetadataExt;
+
+    let metadata = std::fs::symlink_metadata(path)?;
+    if !metadata.is_dir()
+        || metadata.uid() != rustix::process::geteuid().as_raw()
+        || metadata.mode() & 0o022 != 0
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("Untrusted system audit directory: {}", path.display()),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn create_audit_directory(path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+
+    match std::fs::DirBuilder::new().mode(0o700).create(path) {
+        Ok(()) => File::open(path.parent().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "audit directory has no parent")
+        })?)?
+        .sync_all()?,
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error),
+    }
+    check_audit_directory(path)
+}
+
+#[cfg(target_os = "linux")]
+fn prepare_system_audit_directory(parent: &Path, legacy_parent: &Path) -> anyhow::Result<PathBuf> {
+    use anyhow::Context;
+
+    check_audit_directory(parent)?;
+    let migration_lock = open_lock_file(&parent.join("audit-migration.lock"))?;
+    migration_lock.lock()?;
+    let directory = parent.join("audit");
+    let legacy = legacy_parent.join("omg");
+    match std::fs::symlink_metadata(&legacy) {
+        Ok(_) => {
+            check_audit_directory(legacy_parent)?;
+            check_audit_directory(&legacy)?;
+            match std::fs::symlink_metadata(&directory) {
+                Ok(_) => anyhow::bail!(
+                    "Both system audit locations exist; reconcile {} and {} while OMG is stopped",
+                    legacy.display(),
+                    directory.display()
+                ),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+            // Serialize with old writers and move the entire history unchanged.
+            // A cross-filesystem move requires an explicit operator migration.
+            let legacy_lock = open_lock_file(&legacy.join("audit.lock"))?;
+            legacy_lock.lock()?;
+            std::fs::rename(&legacy, &directory).with_context(|| {
+                format!(
+                    "Cannot atomically migrate {} to {}; move the history while OMG is stopped",
+                    legacy.display(),
+                    directory.display()
+                )
+            })?;
+            File::open(parent)?.sync_all()?;
+            File::open(legacy_parent)?.sync_all()?;
+            check_audit_directory(&directory)?;
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            create_audit_directory(&directory)?;
+        }
+        Err(error) => return Err(error.into()),
+    }
+    Ok(directory)
+}
+
 /// Durable operation records are not subject to the daemon's best-effort queue.
 pub fn record_operation(operation: &str, targets: &[String], outcome: &str) -> anyhow::Result<()> {
+    #[cfg(target_os = "linux")]
+    let system_directory = crate::core::privilege::is_root()
+        .then(|| -> anyhow::Result<PathBuf> {
+            for path in Path::new("/var/lib").ancestors() {
+                check_audit_directory(path)?;
+            }
+            let parent = Path::new("/var/lib/omg");
+            create_audit_directory(parent)?;
+            prepare_system_audit_directory(parent, Path::new("/var/log"))
+        })
+        .transpose()?;
+    #[cfg(target_os = "linux")]
+    let mut logger = match system_directory.as_ref() {
+        Some(directory) => AuditLogger::new_in(directory.join("audit.jsonl"))?,
+        None => AuditLogger::new()?,
+    };
+    #[cfg(not(target_os = "linux"))]
     let mut logger = if crate::core::privilege::is_root() {
         let directory = Path::new("/var/log/omg");
         std::fs::create_dir_all(directory)?;

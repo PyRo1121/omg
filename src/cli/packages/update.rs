@@ -17,9 +17,9 @@ pub async fn update_fast() -> Result<()> {
 
 pub async fn update_turbo() -> Result<()> {
     dispatch_backend! {
-        debian: { super::common::update_official_only(false, true, false, false).await },
+        debian: { super::common::update_official_only(false, true, false, true).await },
         arch: { arch::update_turbo().await },
-        generic: { super::common::update_official_only(false, true, false, false).await },
+        generic: { super::common::update_official_only(false, true, false, true).await },
     }
 }
 

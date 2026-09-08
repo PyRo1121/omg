@@ -46,7 +46,7 @@ Explicit package policies are checked against ALPM's prepared transaction, inclu
 
 ## Package and runtime verification
 
-Official package verification follows the selected backend and its repository trust configuration. Native PGP verification is available in builds with the `pgp` feature. Signatures authenticate signed bytes under the selected trust policy; they do not inspect package behavior.
+Official package verification follows the selected backend and its repository trust configuration. Native PGP verification is available in builds with the `pgp` feature. Signatures authenticate signed bytes under the selected trust policy; they do not inspect package behavior. Expired and future-dated signatures are rejected.
 
 Runtime downloads trust their upstream publishers. Publisher-provided checksums detect corruption, but do not protect against compromise of both an archive and its checksum source. Not every provider follows the same verification path. See [runtime integrity](./runtimes.md).
 

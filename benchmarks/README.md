@@ -18,8 +18,13 @@ and state must pass the equivalence checks before timing, not new measured resul
   Also report `apt-cache search` and `apt-cache --no-all-versions show` as cached
   metadata baselines when comparing offline indexed queries. Do not pick only
   the slower APT invocation. Query installed state with `dpkg-query`, not a
-  repository search. Explicit/manual packages require the installed subset of
-  `apt-mark showmanual`, not a count of every package in the database.
+  repository search. Explicit/manual packages mean installed manual packages,
+  not every package in the database. `apt-mark showmanual` already filters out
+  packages without an installed version: see `ShowAuto` in
+  [APT 2.6.1](https://github.com/Debian/apt/blob/2.6.1/cmdline/apt-mark.cc#L277-L313)
+  and the [Ubuntu APT 2.8.3 source](https://archive.ubuntu.com/ubuntu/pool/main/a/apt/apt_2.8.3.tar.xz).
+  Verify the installed subset during preflight; do not add a redundant timed
+  `dpkg-query` intersection that artificially slows the native comparator.
 - **Fedora.** Use DNF for repository search, information, installation, and removal.
   Record whether the image provides DNF4 or DNF5 and use that version's documented
   syntax. RPM queries such as `rpm -q` and `rpm -qa` measure installed-package
@@ -27,8 +32,9 @@ and state must pass the equivalence checks before timing, not new measured resul
   cannot beat a successful DNF repository search.
 
 For search, normalize package identities, architecture, repository scope, and
-result limits before declaring equivalence. OMG currently defaults to a 50-result
-limit; native commands can return all matches. A shared query string does not
+result limits before declaring equivalence. OMG currently defaults to a 15-result
+limit; native commands can return all matches. JSON search preserves installable
+package names but still honors the requested limit. A shared query string does not
 make fuzzy, regex, name-only, and description searches equivalent. If equivalent
 semantics cannot be established, label the result as non-comparable and do not
 publish a speedup. Do not truncate the native command's output through `head` to
@@ -166,16 +172,33 @@ Historical files remain intact for inspection:
 - `summary.json` is the reviewed CI baseline, not proof of platform support.
 - `badge.json` may contain a historical headline; it is not a cross-distro claim.
 
-The existing `benchmark-hyperfine.sh` reproduces an Arch-oriented development
-benchmark path, not the four-distribution guest protocol. Without
-`OMG_BENCH_BINARY` it builds from source. Do not run that implicit build on this
-shared host; supply the exact prebuilt release binaries instead. The script also
-falls back to `benchmark.sh` when hyperfine is missing, so the release benchmark
-must check hyperfine availability before invoking it rather than silently changing
-timing methods. A future guest runner must refuse source builds and missing tools.
-Its plausibility thresholds, such as rejecting sub-1 ms results, are heuristics,
-not proof that samples are authentic or comparable. `benchmark.sh` is a separate
-Bash-timing fallback and does not write canonical hyperfine records.
+`benchmark-hyperfine.sh --guest` is now the shared four-distribution read-query
+driver. It requires a prebuilt `OMG_BENCH_BINARY` and Hyperfine, refuses nonempty
+output directories, and measures info, full JSON search, and explicit counts.
+There is no automatic substitute timer. The default development mode can still
+build from source; do not invoke that implicit build on this shared host.
+
+The recorder's measurement validator recomputes statistics from finite samples
+and verifies successful exit receipts. It accepts slower, parity, and sub-1 ms
+results. Use `--validate-only --scenario <name>` for scoped measurement checks;
+these checks do not establish workload equivalence. The legacy archive/report
+writer still assumes daemon labels and recorder-host metadata, so it must not
+publish the new guest measurements without further work.
+
+### Cleanup proposals — not deletion authorization
+
+- Retire `benchmark.sh` after migrating `Makefile`'s `bench`/`bench-fast` targets
+  and its CI path trigger. It uses a separate millisecond-rounded Bash timer and
+  compares explicit counts with package listings. Preserve historical records.
+- Replace the hardcoded arrays and speedup annotations in
+  `scripts/generate-benchmark-chart.py` with validated record inputs; rebuild its
+  derived images only after the evidence-backed reporting path is verified.
+- Review consolidating `.github/workflows/benchmark.yml` orchestration with the
+  QEMU workflow. Keep daemon-backed and daemon-disabled profiles distinct rather
+  than silently dropping one or combining their results.
+
+No files are deleted by these proposals. Frozen sources, runners, raw logs,
+archives, and historical benchmark records remain retained.
 
 ## What Oligarchy actually does
 

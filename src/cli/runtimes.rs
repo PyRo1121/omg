@@ -2,8 +2,9 @@ use anyhow::{Context, Result};
 
 use crate::cli::{style, ui};
 use crate::runtimes::{
-    BunManager, DenoManager, GoManager, JavaManager, NodeManager, PiManager, PythonManager,
-    RubyManager, RustManager, SUPPORTED_RUNTIMES,
+    BunManager, DenoManager, DotnetManager, ErlangManager, GenericToolManager, GoManager,
+    JavaManager, NodeManager, PhpManager, PiManager, PythonManager, RubyManager, RustManager,
+    SUPPORTED_RUNTIMES, SwiftManager, ZigManager,
 };
 
 pub fn resolve_active_version(runtime: &str) -> Result<Option<String>> {
@@ -15,7 +16,9 @@ pub fn resolve_active_version(runtime: &str) -> Result<Option<String>> {
     if let Some(version) = versions.get(&runtime) {
         return Ok(Some(version.clone()));
     }
-    if SUPPORTED_RUNTIMES.contains(&runtime.as_str()) {
+    if SUPPORTED_RUNTIMES.contains(&runtime.as_str())
+        || crate::runtimes::tool_registry::is_registry_tool(&runtime)
+    {
         return Ok(crate::runtimes::probe_version(&runtime));
     }
     Ok(None)
@@ -31,7 +34,12 @@ pub fn ensure_active_version(runtime: &str) -> Result<Option<String>> {
 pub fn known_runtimes() -> Result<Vec<String>> {
     let mut runtimes: Vec<String> = SUPPORTED_RUNTIMES
         .iter()
-        .map(std::string::ToString::to_string)
+        .chain(
+            crate::runtimes::tool_registry::REGISTRY_TOOLS
+                .iter()
+                .map(|tool| &tool.name),
+        )
+        .map(|name| (*name).to_string())
         .collect();
 
     runtimes.sort();
@@ -74,7 +82,13 @@ impl_runtime_install_use!(
     JavaManager,
     BunManager,
     PiManager,
-    DenoManager
+    DenoManager,
+    GenericToolManager,
+    ZigManager,
+    DotnetManager,
+    ErlangManager,
+    PhpManager,
+    SwiftManager
 );
 
 /// Use an already-installed version, or install it first if missing.
@@ -98,6 +112,7 @@ fn canonical_runtime_name(runtime: &str) -> String {
         "rustlang" => "rust".to_string(),
         "jdk" | "openjdk" => "java".to_string(),
         "bunjs" => "bun".to_string(),
+        "ziglang" => "zig".to_string(),
         normalized => normalized.to_string(),
     }
 }
@@ -164,10 +179,32 @@ pub async fn use_version(runtime: &str, version: Option<&str>) -> Result<()> {
         "deno" => {
             install_or_use(&DenoManager::new(), strip_version_prefix(&version)).await?;
         }
-        _ => anyhow::bail!(
-            "Unsupported runtime '{runtime}'. Supported runtimes: {}",
-            SUPPORTED_RUNTIMES.join(", ")
-        ),
+        "zig" => {
+            install_or_use(&ZigManager::new(), strip_version_prefix(&version)).await?;
+        }
+        "dotnet" => {
+            install_or_use(&DotnetManager::new(), strip_version_prefix(&version)).await?;
+        }
+        "erlang" => {
+            install_or_use(&ErlangManager::new(), strip_version_prefix(&version)).await?;
+        }
+        "php" => {
+            PhpManager::new()
+                .install(strip_version_prefix(&version))
+                .await?;
+        }
+        "swift" => {
+            install_or_use(&SwiftManager::new(), strip_version_prefix(&version)).await?;
+        }
+        other => {
+            let Some(manager) = GenericToolManager::for_name(other) else {
+                anyhow::bail!(
+                    "Unsupported runtime '{runtime}'. Supported runtimes: {}",
+                    known_runtimes().unwrap_or_default().join(", ")
+                );
+            };
+            install_or_use(&manager, strip_version_prefix(&version)).await?;
+        }
     }
 
     crate::core::usage::track_runtime_switch(&runtime);
@@ -194,10 +231,20 @@ pub fn uninstall_version(runtime: &str, version: &str) -> Result<()> {
         "bun" => BunManager::new().uninstall(strip_version_prefix(version))?,
         "pi" => PiManager::new().uninstall(strip_version_prefix(version))?,
         "deno" => DenoManager::new().uninstall(strip_version_prefix(version))?,
-        _ => anyhow::bail!(
-            "Unsupported runtime '{runtime}'. Supported runtimes: {}",
-            SUPPORTED_RUNTIMES.join(", ")
-        ),
+        "zig" => ZigManager::new().uninstall(strip_version_prefix(version))?,
+        "dotnet" => DotnetManager::new().uninstall(strip_version_prefix(version))?,
+        "erlang" => ErlangManager::new().uninstall(strip_version_prefix(version))?,
+        "php" => PhpManager::new().uninstall(strip_version_prefix(version))?,
+        "swift" => SwiftManager::new().uninstall(strip_version_prefix(version))?,
+        other => {
+            let Some(manager) = GenericToolManager::for_name(other) else {
+                anyhow::bail!(
+                    "Unsupported runtime '{runtime}'. Supported runtimes: {}",
+                    known_runtimes().unwrap_or_default().join(", ")
+                );
+            };
+            manager.uninstall(strip_version_prefix(version))?;
+        }
     }
 
     println!("{} Removed {runtime} {version}", style::positive("✓"));
@@ -224,7 +271,13 @@ fn native_version_info(runtime: &str) -> Option<(Result<Vec<String>>, Option<Str
         "bun" => probe!(BunManager::new()),
         "pi" => probe!(PiManager::new()),
         "deno" => probe!(DenoManager::new()),
-        _ => None,
+        "zig" => probe!(ZigManager::new()),
+        "dotnet" => probe!(DotnetManager::new()),
+        "erlang" => probe!(ErlangManager::new()),
+        "php" => probe!(PhpManager::new()),
+        "swift" => probe!(SwiftManager::new()),
+        other => GenericToolManager::for_name(other)
+            .map(|manager| (manager.list_installed(), manager.current_version())),
     }
 }
 
@@ -289,10 +342,8 @@ fn list_installed_json(runtime: Option<&str>) -> Result<()> {
     }
 
     let mut entries = Vec::new();
-    for rt in [
-        "node", "python", "rust", "go", "ruby", "java", "bun", "pi", "deno",
-    ] {
-        if let Some(entry) = installed_json_entry(rt)? {
+    for rt in known_runtimes()? {
+        if let Some(entry) = installed_json_entry(&rt)? {
             entries.push(entry);
         }
     }
@@ -329,9 +380,20 @@ pub fn list_versions_sync(runtime: Option<&str>, json: bool) -> Result<()> {
             ("Bun", BunManager::new().current_version()),
             ("Pi", PiManager::new().current_version()),
             ("Deno", DenoManager::new().current_version()),
+            ("Zig", ZigManager::new().current_version()),
+            (".NET", DotnetManager::new().current_version()),
+            ("Erlang/OTP", ErlangManager::new().current_version()),
+            ("PHP", PhpManager::new().current_version()),
+            ("Swift", SwiftManager::new().current_version()),
         ] {
             if let Some(v) = mgr_version {
                 ui::print_list_item(name, Some(&v));
+            }
+        }
+        for tool in crate::runtimes::tool_registry::REGISTRY_TOOLS {
+            let manager = GenericToolManager::for_spec(tool);
+            if let Some(v) = manager.current_version() {
+                ui::print_list_item(tool.name, Some(&v));
             }
         }
     }
@@ -354,7 +416,22 @@ pub async fn list_versions(runtime: Option<&str>, available: bool, json: bool) -
         ui::print_header("OMG", "Installed runtime versions");
         ui::print_spacer();
 
-        let (node_res, py_res, rust_res, go_res, ruby_res, java_res, bun_res, pi_res, deno_res) = tokio::join!(
+        let (
+            node_res,
+            py_res,
+            rust_res,
+            go_res,
+            ruby_res,
+            java_res,
+            bun_res,
+            pi_res,
+            deno_res,
+            zig_res,
+            dotnet_res,
+            erlang_res,
+            php_res,
+            swift_res,
+        ) = tokio::join!(
             tokio::task::spawn_blocking(|| NodeManager::new().current_version()),
             tokio::task::spawn_blocking(|| PythonManager::new().current_version()),
             tokio::task::spawn_blocking(|| RustManager::new().current_version()),
@@ -364,6 +441,11 @@ pub async fn list_versions(runtime: Option<&str>, available: bool, json: bool) -
             tokio::task::spawn_blocking(|| BunManager::new().current_version()),
             tokio::task::spawn_blocking(|| PiManager::new().current_version()),
             tokio::task::spawn_blocking(|| DenoManager::new().current_version()),
+            tokio::task::spawn_blocking(|| ZigManager::new().current_version()),
+            tokio::task::spawn_blocking(|| DotnetManager::new().current_version()),
+            tokio::task::spawn_blocking(|| ErlangManager::new().current_version()),
+            tokio::task::spawn_blocking(|| PhpManager::new().current_version()),
+            tokio::task::spawn_blocking(|| SwiftManager::new().current_version()),
         );
 
         for (name, res) in [
@@ -376,6 +458,11 @@ pub async fn list_versions(runtime: Option<&str>, available: bool, json: bool) -
             ("Bun", bun_res),
             ("Pi", pi_res),
             ("Deno", deno_res),
+            ("Zig", zig_res),
+            (".NET", dotnet_res),
+            ("Erlang/OTP", erlang_res),
+            ("PHP", php_res),
+            ("Swift", swift_res),
         ] {
             let version = res.with_context(|| format!("Failed to inspect {name} versions"))?;
             if let Some(v) = version {
@@ -473,7 +560,69 @@ pub async fn list_versions(runtime: Option<&str>, available: bool, json: bool) -
                 ui::print_list_item(&v.version, Some(pre));
             }
         }
-        _ => anyhow::bail!("Unsupported runtime '{rt}'"),
+        "zig" => {
+            let mgr = ZigManager::new();
+            println!(
+                "{} Available remote versions (ziglang.org):",
+                style::informative("→")
+            );
+            for v in mgr.list_available().await?.iter().take(20) {
+                ui::print_list_item(&v.version, None);
+            }
+        }
+        "dotnet" => {
+            let mgr = DotnetManager::new();
+            println!(
+                "{} Available remote versions (builds.dotnet.microsoft.com):",
+                style::informative("→")
+            );
+            for v in mgr.list_available().await?.iter().take(20) {
+                let pre = if v.prerelease { " (pre-release)" } else { "" };
+                ui::print_list_item(&v.version, Some(pre));
+            }
+        }
+        "erlang" => {
+            let mgr = ErlangManager::new();
+            println!(
+                "{} Available remote versions (builds.hex.pm / erlef/otp_builds):",
+                style::informative("→")
+            );
+            for v in mgr.list_available().await?.iter().take(20) {
+                ui::print_list_item(&v.version, None);
+            }
+        }
+        "swift" => {
+            let mgr = SwiftManager::new();
+            println!("{} Available remote versions:", style::informative("→"));
+            for version in mgr.list_available().await?.iter().take(20) {
+                ui::print_list_item(&version.version, None);
+            }
+        }
+        "php" => {
+            let mgr = PhpManager::new();
+            println!(
+                "{} Available remote channels (shivammathur/php-builder):",
+                style::informative("→")
+            );
+            for v in mgr.list_available().await?.iter().take(20) {
+                ui::print_list_item(&v.version, None);
+            }
+        }
+        other => {
+            let Some(mgr) = GenericToolManager::for_name(other) else {
+                anyhow::bail!("Unsupported runtime '{rt}'");
+            };
+            println!(
+                "{} Available {} versions ({}):",
+                style::informative("→"),
+                other,
+                mgr.description()
+            );
+            for v in mgr.list_available().await?.iter().take(20) {
+                let pre = if v.prerelease { " (pre-release)" } else { "" };
+                ui::print_list_item(&v.version, Some(pre));
+            }
+        }
     }
 
     ui::print_spacer();
@@ -518,8 +667,17 @@ mod tests {
 
     #[test]
     fn installed_json_entry_rejects_unsupported_runtimes() {
-        let entry = super::installed_json_entry("erlang").expect("probe must succeed");
+        let entry = super::installed_json_entry("cobol").expect("probe must succeed");
         assert!(entry.is_none(), "unsupported runtimes have no JSON entry");
+    }
+
+    #[test]
+    fn installed_json_entry_covers_newly_supported_erlang() {
+        // Erlang graduated from unsupported (previous assertion above used
+        // it as the example) to a native manager: it must resolve to an
+        // entry, empty when nothing is installed.
+        let entry = super::installed_json_entry("erlang").expect("probe must succeed");
+        assert!(entry.is_some(), "native runtimes need a JSON entry");
     }
 
     #[test]
@@ -541,5 +699,54 @@ mod tests {
     fn unsupported_runtime_names_are_preserved_for_diagnostics() {
         assert_eq!(canonical_runtime_name("Erlang"), "erlang");
         assert_eq!(canonical_runtime_name("deno"), "deno");
+    }
+
+    #[test]
+    fn known_runtimes_covers_thirteen_natives_plus_fifty_four_registry_tools() {
+        let runtimes = super::known_runtimes().expect("runtime list must build");
+        assert_eq!(
+            runtimes.len(),
+            68,
+            "13 natives + 54 registry tools: {runtimes:?}"
+        );
+        for name in [
+            "node",
+            "zig",
+            "dotnet",
+            "erlang",
+            "php",
+            "swift",
+            "ripgrep",
+            "kustomize",
+            "kotlin",
+            "scala",
+            "elixir",
+            "ghcup",
+        ] {
+            assert!(
+                runtimes.iter().any(|runtime| runtime == name),
+                "{name} is known"
+            );
+        }
+    }
+
+    #[test]
+    fn registry_tools_reach_generic_uninstall_dispatch() {
+        // Mirrors the e2e dispatch contract: a registry tool must reach its
+        // uninstall implementation ("not installed") rather than fail as an
+        // unsupported runtime.
+        let error = super::uninstall_version("ripgrep", "999.999.999")
+            .expect_err("missing version must fail");
+        assert!(
+            error.to_string().contains("not installed"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[test]
+    fn registry_tools_have_version_info_dispatch() {
+        // Uninstalled registry tools still resolve to a (empty) version entry.
+        let entry = super::installed_json_entry("ripgrep").expect("probe must succeed");
+        assert!(entry.is_some(), "registry tools need a JSON entry");
     }
 }

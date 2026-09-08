@@ -1,5 +1,6 @@
 //! Configuration module for OMG
 
+pub(crate) mod mise_env;
 mod settings;
 
 pub use settings::{AurBuildMethod, Settings};
