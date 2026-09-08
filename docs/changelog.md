@@ -13,6 +13,13 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ## [Unreleased]
 ### ♻️  Refactoring
 
+- **Aur**: Make authorized source evidence mandatory ([#341](https://github.com/PyRo1121/omg/issues/341))
+
+* test(aur): declare fixture architecture only once
+
+* refactor(aur): require source evidence for authorized builds
+
+- **Packages**: Remove the ignored recursive service argument ([#337](https://github.com/PyRo1121/omg/issues/337))
 - **Client**: Separate synchronous and asynchronous transports ([#324](https://github.com/PyRo1121/omg/issues/324))
 - **Packages**: Unify generic install orchestration ([#322](https://github.com/PyRo1121/omg/issues/322))
 - **Daemon**: Reuse catalog freshness policy ([#319](https://github.com/PyRo1121/omg/issues/319))
@@ -76,6 +83,13 @@ present before the probe runs.
 - **Install**: Add interactive fuzzy package discovery
 ### 🐛 Bug Fixes
 
+- **Privilege**: Discard inherited APT hook configuration ([#345](https://github.com/PyRo1121/omg/issues/345))
+- **Privilege**: Parse install argv before capturing archives ([#344](https://github.com/PyRo1121/omg/issues/344))
+- **Usage**: Bind lock ownership to a newly created inode ([#343](https://github.com/PyRo1121/omg/issues/343))
+- **Packages**: Record installed versions in removal history ([#342](https://github.com/PyRo1121/omg/issues/342))
+- **Aur**: Align cached archive architecture with final authorization ([#339](https://github.com/PyRo1121/omg/issues/339))
+- **Pgp**: Reject expired and future signatures ([#335](https://github.com/PyRo1121/omg/issues/335))
+- **Aur**: Own rollback checkouts across errors and cancellation ([#334](https://github.com/PyRo1121/omg/issues/334))
 - **Aur**: Coordinate cache cleanup with build lifetime ownership ([#332](https://github.com/PyRo1121/omg/issues/332))
 - **Python**: Validate staged launcher before publication ([#331](https://github.com/PyRo1121/omg/issues/331))
 - **Runtimes**: Give Bun and Deno downloads operation-owned paths ([#330](https://github.com/PyRo1121/omg/issues/330))
@@ -462,6 +476,7 @@ Preserve archive data and report persistence failures explicitly. Coordinate dat
 - Add published release smoke matrix
 ### 📚 Documentation
 
+- **Aur**: Clarify mandatory PKGBUILD review defaults ([#336](https://github.com/PyRo1121/omg/issues/336))
 - **Benchmarks**: Define fair native comparisons and evidence
 - **Tests**: Record mutation evidence and remaining verification gaps
 - **Privacy**: State the local export size limit
@@ -521,6 +536,8 @@ surfaced by the stricter toolchain
 
 ### 🧪 Testing
 
+- **Aur**: Declare fixture architecture only once ([#340](https://github.com/PyRo1121/omg/issues/340))
+- **Privilege**: Reject stderr-driven payload retries ([#333](https://github.com/PyRo1121/omg/issues/333))
 - **Cli**: Exercise missing-package removal instead of confirmation failure ([#328](https://github.com/PyRo1121/omg/issues/328))
 - **Daemon**: Assert the prewarmed search IPC response ([#326](https://github.com/PyRo1121/omg/issues/326))
 - **Cli**: Cover workspace run confirmation in behavior inventory ([#321](https://github.com/PyRo1121/omg/issues/321))
