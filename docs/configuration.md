@@ -149,8 +149,8 @@ The security policy controls what packages can be installed and their required s
 # Grade hierarchy (lowest to highest):
 #   Risk      - Known vulnerabilities present
 #   Community - AUR/unsigned packages
-#   Verified  - PGP/checksum verified (official repos)
-#   Locked    - SLSA Level 3 + PGP verified (core packages)
+#   Verified  - Official repository source classification
+#   Locked    - Policy value; current source grading does not assign it
 minimum_grade = "Verified"
 
 # Allow installation of AUR packages
@@ -187,41 +187,30 @@ banned_packages = [
     # "example-malicious-package",
     # "deprecated-insecure-tool",
 ]
-
-# ═══════════════════════════════════════════════════════════════════════════
-# ADVANCED POLICY OPTIONS
-# ═══════════════════════════════════════════════════════════════════════════
-
-# Block packages with known CVEs above this severity (0.0-10.0)
-# max_cve_severity = 7.0
-
-# Require SBOM for installed packages
-# require_sbom = false
-
-# Enable SLSA provenance verification
-# verify_slsa = true
-
-# Trusted packagers/maintainers
-# trusted_maintainers = ["username1", "username2"]
 ```
+
+The policy parser rejects unknown settings. CVE thresholds, required SBOMs,
+automatic SLSA verification, and trusted-maintainer lists are not policy options.
 
 ### Security Grades Explained
 
 | Grade | Level | Description | Examples |
 | ------- | ------- | ------------- | ---------- |
-| **Locked** | 3 | SLSA Level 3 + PGP verified | `glibc`, `linux`, `pacman` |
-| **Verified** | 2 | PGP/checksum verified | Official repo packages |
+| **Locked** | 3 | Reserved policy grade, not an established SLSA level | Not assigned by current source classification |
+| **Verified** | 2 | Official repository source classification | Official repo packages |
 | **Community** | 1 | AUR/unsigned sources | AUR packages |
 | **Risk** | 0 | Known vulnerabilities | CVE-affected packages |
 
 ### Policy Enforcement
 
-When you run `omg install`:
+On ALPM install and upgrade paths, explicit policies are checked against the prepared transaction, including dependencies. Native APT, DNF, and Homebrew install and upgrade paths refuse explicit policies rather than claim equivalent enforcement. Grades do not certify SLSA build levels. See [security limits](./security.md#security-policy).
+
+The policy checks include:
 
 1. **Package grading**: Each package is assigned a security grade
 2. **Policy check**: Grade compared against `minimum_grade`
 3. **AUR check**: If AUR package and `allow_aur = false`, rejected
-4. **PGP check**: If `require_pgp = true` and no signature, rejected
+4. **PGP policy check**: `require_pgp` rejects grades below `Verified`; backend signature verification remains a separate mechanism
 5. **License check**: If `allowed_licenses` is set and license not in list, rejected
 6. **Ban check**: If package in `banned_packages`, rejected
 
@@ -572,8 +561,8 @@ allow_aur = false
 - name: Lock environment
   run: omg env check  # Verify omg.lock matches
 
-- name: Install dependencies
-  run: omg install
+- name: Preview named system dependencies
+  run: omg install --dry-run ripgrep
 ```
 
 **Best for:** CI/CD pipelines, Docker images, automated builds

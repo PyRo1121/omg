@@ -192,11 +192,22 @@ pub fn remove_hook(shell: &str) -> Result<bool> {
     let metadata = match fs::symlink_metadata(&rc) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(error) => return Err(error).with_context(|| format!("Failed to inspect {}", rc.display())),
+        Err(error) => {
+            return Err(error).with_context(|| format!("Failed to inspect {}", rc.display()));
+        }
     };
-    anyhow::ensure!(!metadata.is_symlink(), "Refusing to replace symlink-managed shell config {}. Remove the OMG hook from its managed source instead.", rc.display());
-    anyhow::ensure!(metadata.is_file(), "Shell config is not a regular file: {}", rc.display());
-    let content = fs::read_to_string(&rc).with_context(|| format!("Failed to read {}", rc.display()))?;
+    anyhow::ensure!(
+        !metadata.is_symlink(),
+        "Refusing to replace symlink-managed shell config {}. Remove the OMG hook from its managed source instead.",
+        rc.display()
+    );
+    anyhow::ensure!(
+        metadata.is_file(),
+        "Shell config is not a regular file: {}",
+        rc.display()
+    );
+    let content =
+        fs::read_to_string(&rc).with_context(|| format!("Failed to read {}", rc.display()))?;
     let owned = hook_lines(shell);
     let kept: Vec<&str> = content
         .lines()

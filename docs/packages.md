@@ -16,7 +16,7 @@ OMG provides unified package management for official repositories and AUR on Arc
 
 OMG's package management features:
 
-- **12-24x faster searches** than pacman (5-11ms vs 133ms)
+- **Daemon-backed searches** with [artifact-specific benchmark evidence](../benchmarks/README.md)
 - **Unified AUR integration** — no separate AUR helper needed — see [AUR Support](./aur.md)
 - **Security grading** — packages rated before installation
 - **Policy enforcement** — organization-wide installation rules
@@ -124,7 +124,7 @@ enable_sccache = false
 omg remove firefox
 
 # Remove with orphaned dependencies
-omg remove firefox -r
+omg remove firefox -r  # Arch backend only
 
 # Remove multiple packages
 omg remove pkg1 pkg2 pkg3
@@ -254,12 +254,12 @@ omg sync
 
 ### Security Grades
 
-Every package is assigned a security grade:
+Policy grades describe classification, not a guarantee of package safety or an independent signature receipt. Core package names do not establish SLSA provenance. See [security grades](./security.md#security-grades):
 
 | Grade | Meaning | Examples |
 | ------- | --------- | ---------- |
-| **LOCKED** | SLSA Level 3 + PGP | glibc, linux, pacman |
-| **VERIFIED** | PGP signature verified | Official repo packages |
+| **LOCKED** | Policy enum value, not an established SLSA level | Not assigned by current source classification |
+| **VERIFIED** | Official repository source classification | Official repo packages |
 | **COMMUNITY** | AUR/unsigned | AUR packages |
 | **RISK** | Known vulnerabilities | CVE-affected packages |
 
@@ -381,7 +381,7 @@ omg install pkg3
 
 - Official repositories via libalpm
 - AUR with full build support
-- All features available
+- ALPM and AUR workflows; security evidence and policy limits still apply
 
 ### Debian/Ubuntu (Experimental)
 

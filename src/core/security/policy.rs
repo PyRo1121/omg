@@ -65,6 +65,7 @@ impl std::fmt::Display for SecurityGrade {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct SecurityPolicy {
     #[serde(default = "default_minimum_grade")]
     pub minimum_grade: SecurityGrade,
@@ -422,6 +423,28 @@ mod tests {
             .expect("missing policy should use defaults");
         assert_eq!(policy.minimum_grade, SecurityGrade::Community);
         assert!(policy.allow_aur);
+    }
+
+    #[test]
+    fn policy_rejects_unsupported_or_misspelled_settings() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("policy.toml");
+        for setting in [
+            "max_cve_severity = 7.0",
+            "require_sbom = true",
+            "verify_slsa = true",
+            "trusted_maintainers = []",
+            "allow_ar = false",
+        ] {
+            fs::write(&path, setting).unwrap();
+            assert!(
+                matches!(
+                    SecurityPolicy::load_optional(&path),
+                    Err(PolicyError::Parse { .. })
+                ),
+                "ignored unsupported setting: {setting}"
+            );
+        }
     }
 
     #[test]

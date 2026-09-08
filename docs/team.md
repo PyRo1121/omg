@@ -334,18 +334,9 @@ Required scopes:
 
 ### Team Settings
 
-Team configuration in `.omg/team.toml`:
+Run `omg team init mycompany/frontend --name "Frontend Team"` to generate `.omg/team.toml`. Run `omg team join <gist-url>` to configure a remote.
 
-```toml
-[team]
-id = "mycompany/frontend"
-name = "Frontend Team"
-remote = "https://gist.github.com/mycompany/abc123def456"
-
-[sync]
-auto_check = true  # Check on directory enter
-auto_prompt = true # Prompt to sync on drift
-```
+The generated TOML uses flat `team_id`, `name`, `member_id`, `remote_url`, and `auto_push` fields. It does not support `[team]` and `[sync]` sections or the `auto_check` and `auto_prompt` settings. Review lockfile inventory before uploading it to a Gist.
 
 ---
 

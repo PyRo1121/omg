@@ -24,7 +24,7 @@ This guide provides step-by-step workflows for common tasks, from daily usage to
 
 ---
 
-## 🔄 Daily Development Workflow
+## Daily development workflow
 
 ### Morning Startup
 
@@ -78,7 +78,7 @@ omg env share
 
 ---
 
-## 👥 Team Onboarding
+## Team onboarding
 
 ### For the Team Lead: Setting Up
 
@@ -149,7 +149,7 @@ omg team push
 
 ---
 
-## 🏗️ Project Setup
+## Project setup
 
 ### New Rust Project
 
@@ -221,7 +221,7 @@ omg env capture
 
 ---
 
-## 🔄 CI/CD Integration
+## CI/CD integration
 
 ### GitHub Actions
 
@@ -338,7 +338,9 @@ omg container shell
 
 ---
 
-## 🔐 Security Compliance
+## Security compliance
+
+These recipes collect review inputs on Arch with a running daemon. They do not certify compliance or implement HIPAA controls. Scans do not fail solely because vulnerabilities exist; local log verification checks consistency, not authenticity. Exports and tar archives are plaintext. Restrict destinations and encrypt externally when required. See [security limits](./security.md).
 
 ### Daily Security Audit
 
@@ -346,11 +348,8 @@ omg container shell
 # 1. Run vulnerability scan
 omg audit
 
-# 2. Check for high-severity issues
-omg audit scan | grep -i critical
-
-# 3. Update vulnerable packages
-omg update
+# 2. Review the report, then preview available updates
+omg audit fix --dry-run
 ```
 
 ### Weekly Compliance Check
@@ -372,7 +371,8 @@ omg audit log --limit 1000 > audit-$(date +%Y%m%d).log
 ### Setting Up Security Policy
 
 ```bash
-# 1. Create strict policy
+# Review and back up any existing policy before replacing it.
+# Explicit install/upgrade policy enforcement is supported on ALPM, not native APT/DNF/Homebrew.
 cat > ~/.config/omg/policy.toml << 'EOF'
 # Only allow verified packages
 minimum_grade = "Verified"
@@ -404,7 +404,7 @@ omg install some-package
 
 ```bash
 # Generate compliance package
-mkdir compliance-$(date +%Y%m%d)
+mkdir -m 700 compliance-$(date +%Y%m%d)
 cd compliance-$(date +%Y%m%d)
 
 # SBOM
@@ -414,7 +414,7 @@ omg audit sbom -o sbom.json
 omg audit scan > vulnerabilities.txt
 
 # Audit log
-omg audit log --limit 10000 > audit-log.jsonl
+omg audit log --limit 10000 --export audit-log.json
 
 # Log integrity
 omg audit verify > integrity-check.txt
@@ -429,7 +429,7 @@ tar -czf compliance-$(date +%Y%m%d).tar.gz compliance-$(date +%Y%m%d)/
 
 ---
 
-## 🔧 System Maintenance
+## System maintenance
 
 ### Weekly Maintenance
 
@@ -458,11 +458,9 @@ omg clean --all
 omg list node
 omg list python
 
-# 2. Remove unused runtime versions
-# NOTE: there is currently no CLI command that removes installed runtime
-# versions. To free space, remove the version directory manually, e.g.:
-rm -rf ~/.local/share/omg/versions/node/18.17.0
-rm -rf ~/.local/share/omg/versions/python/3.10.0
+# Remove only versions you no longer need. Switch away from active versions first.
+omg use node 18.17.0 --uninstall
+omg use python 3.10.0 --uninstall
 # Then verify what remains:
 omg list node
 omg list python
@@ -499,7 +497,7 @@ omg rollback
 
 ---
 
-## 🚚 Migration from Other Tools
+## Migration from other tools
 
 ### From nvm (Node Version Manager)
 
@@ -631,10 +629,7 @@ omg dash
 
 Create a cron job for security monitoring:
 
-```bash
-# Add to crontab -e
-0 9 * * * ~/.local/bin/omg audit scan | grep -q "high_severity" && notify-send "OMG: Security Alert"
-```
+Run `omg audit scan` and review the report. It requires the daemon. Its display is not a documented machine-readable alert interface, and findings alone do not cause a nonzero exit status. Do not use a `high_severity` grep as a security gate.
 
 ---
 

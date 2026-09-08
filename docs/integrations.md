@@ -17,25 +17,24 @@ OMG enhances your existing development workflow by integrating with popular tool
 **Interactive package selection:**
 
 ```bash
-# Search official repos + AUR, pipe through fzf
-omg search | fzf | cut -d' ' -f1 | xargs omg install
+# Use OMG's built-in package picker in an interactive terminal
+omg install
 
-# Search AUR-style packages (search includes AUR by default; use --no-aur to skip it)
-omg search | fzf --preview 'omg info {}' | xargs omg install
-
-# Select runtime version
-omg list node --available | fzf | xargs omg use node
+# Inspect available runtime versions, then select an explicit version
+omg list node --available
+omg use node 22
 ```
 
 **Add to shell:**
 
 ```bash
 # ~/.zshrc or ~/.bashrc
-alias omgi='omg search | fzf --preview "omg info {1}" | cut -d" " -f1 | xargs omg install'
-alias omgn='omg list node --available | fzf | xargs omg use node'
+alias omgi='omg install'
 ```
 
 ---
+
+Do not pipe formatted search or runtime-list output directly into installation commands. `omg search` requires a query, and its display is not a package-name stream.
 
 ### ripgrep (Code Search)
 
@@ -242,7 +241,7 @@ jobs:
         run: omg env check
       
       - name: Install dependencies
-        run: omg install
+        run: npm ci
       
       - name: Run tests
         run: omg run test
@@ -277,7 +276,7 @@ before_script:
 
 build:
   script:
-    - omg install
+    - npm ci
     - omg run build
 
 test:
@@ -514,7 +513,10 @@ cat .tool-versions
 # python 3.12.0
 # rust stable
 
-omg env check  # Auto-installs all versions
+omg use node 20.10.0
+omg use python 3.12.0
+omg use rust stable
+omg env check  # Reports drift against an existing omg.lock; installs nothing
 ```
 
 ---
@@ -527,7 +529,7 @@ omg env check  # Auto-installs all versions
 
 ```bash
 # Fast search with OMG
-omg search firefox  # 12-24x faster
+omg search firefox  # Includes AUR on Arch unless --no-aur is set
 
 # Install with yay (if you prefer)
 yay -S firefox
@@ -601,7 +603,7 @@ omg env check
 omg run dev
 ```
 
-**One command to verify your environment.** To restore a full shared environment from a Gist, use `omg env sync <gist-url>`.
+`omg env check` reports drift. `omg env sync <gist-url>` downloads and validates the shared lockfile, backs up a differing existing file, and checks drift. Neither command installs packages or runtimes.
 
 ---
 

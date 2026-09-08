@@ -296,10 +296,10 @@ compinit
 
 ```bash
 # System-wide
-sudo omg completions bash --stdout > /etc/bash_completion.d/omg
+omg completions bash --stdout | sudo tee /etc/bash_completion.d/omg >/dev/null
 
 # Or user-only
-omg completions bash --stdout > ~/.local/share/bash-completion/completions/omg
+omg completions bash
 
 # Source immediately
 source /etc/bash_completion.d/omg
@@ -309,10 +309,10 @@ source /etc/bash_completion.d/omg
 
 ```bash
 # User completions
-omg completions fish --stdout > ~/.config/fish/completions/omg.fish
+omg completions fish
 
 # System-wide
-sudo omg completions fish --stdout > /usr/share/fish/vendor_completions.d/omg.fish
+omg completions fish --stdout | sudo tee /usr/share/fish/vendor_completions.d/omg.fish >/dev/null
 ```
 
 ### Completion Features

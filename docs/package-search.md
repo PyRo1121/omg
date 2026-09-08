@@ -1,59 +1,37 @@
 ---
-title: Package Search
-sidebar_position: 34
-description: Search indexing and ranking algorithms
+title: Package search
+sidebar_position: 33
+description: Official repository queries, AUR enrichment, and result limits
 ---
 
-# Package Search Flow
+# Package search
 
-OMG's search engine is built for extreme speed and relevance. It combines a high-performance local index of official packages with an intelligent, conditional fallback to the AUR (Arch User Repository).
+```bash
+omg search ripgrep
+omg search ripgrep --no-aur
+omg search ripgrep --json
+```
 
-## 🔍 The Search Pipeline
+Search requires a query. On Arch, OMG queries official repositories and AUR concurrently unless `--no-aur` is set. AUR lookup is not conditional on too few official matches. Other platforms use their compiled package backend.
 
-When you type `omg search <query>`, the system executes a multi-stage pipeline to find the best results in less than a blink.
+## Official results and AUR
 
-### 1. Instant Cache Check
-First, the daemon checks its internal high-speed memory cache.
-- **Latency**: &lt;0.1ms
-- **Hit Rate**: Over 80% for common queries
-- **Freshness**: Cache is automatically invalidated every 5 minutes to ensure results stay current.
+Official queries can use the daemon or a direct backend fallback. On the Arch path, AUR search has a four-second timeout. If AUR lookup fails and official results are available, those results can still be returned. If no official results are available, the AUR failure returns an error rather than an apparently complete empty result.
 
-### 2. Official Index Lookup
-If the cache misses, OMG queries its optimized in-memory index of all official repository packages.
-- **Search Strategy**: Uses a hybrid approach combining prefix matching and SIMD-accelerated substring search.
-- **Performance**: High-speed substring matching allows the engine to scan 15,000+ packages in less than 1ms.
-- **Ranking**: Instant results are returned as soon as matches are found, prioritizing binary name matches.
+AUR entries with names already present in official results are removed before presentation. The result list is ranked and limited. A short list is not necessarily the full repository inventory.
 
-### 3. Concurrent AUR Search
-OMG queries official repositories and AUR concurrently. Use `--no-aur` to skip the network call.
-- **Latency**: 50–200ms (depending on network conditions).
-- **Architecture**: Communicates via the official AUR RPC interface with built-in rate limiting.
+## Output
 
-### 4. Result Aggregation
-Finally, results from all sources are merged, ranked, and presented in a unified list. Official packages are always prioritized over community-maintained (AUR) versions for maximum security.
+Human-readable output is for inspection. Do not pipe it into an installation command as though every line were a package name. `--json` selects structured search output; consumers must validate the returned fields before taking action.
 
----
+Bare `omg install` opens the built-in package picker in an interactive terminal. In CI, supply explicit package names.
 
-## 📊 Performance at a Glance
+## Performance
 
-| Stage | Data Source | Latency | Benefit |
-|-------|-------------|---------|---------|
-| **Cache** | System RAM | &lt;0.1ms | Instant repeated queries |
-| **Official Index** | Local SSD/RAM | &lt;1ms | Blazing fast primary search |
-| **AUR RPC** | Network | 50-200ms | Millions of packages available |
+Use the same query, backend, cache state, and sources when comparing results. `--no-aur` excludes network-backed AUR work on Arch. Warm index timings do not establish end-to-end network search performance or equivalent results across tools. See [benchmark methodology](../benchmarks/README.md).
 
----
+## See also
 
-## 🛠️ Technical Highlights
-
-### Zero-Allocation Probing
-OMG uses a highly optimized probe mechanism to check system status and package availability. By avoiding unnecessary memory allocations, the engine remains responsive even under heavy load.
-
-### Parallel Security Audits
-When performing an audit (`omg audit`), the engine divides your installed packages into chunks and scans them in parallel across all CPU cores. High-severity vulnerabilities are prioritized and highlighted instantly.
-
-### Intelligent Error Recovery
-The search engine is designed for resilience:
-- **Network Outage**: If the AUR is unreachable, the system continues to serve official results and logs the error.
-- **Index Corruption**: The engine can automatically rebuild its local index from system databases if corruption is detected.
-- **Rate Limiting**: Gracefully handles upstream API limits to prevent IP blocking.
+- [CLI search reference](./cli.md).
+- [Daemon](./daemon.md).
+- [Caching](./cache.md).

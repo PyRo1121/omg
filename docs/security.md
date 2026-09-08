@@ -1,600 +1,157 @@
 ---
-title: Security & Compliance
+title: Security and evidence limits
 sidebar_position: 20
-description: Vulnerability scanning, SBOM, PGP verification, and audit logging
+description: Package verification, SBOM scope, audit logging, and export limitations
 ---
 
-# Security Model
+# Security model
 
-OMG implements enterprise-grade security with defense-in-depth: vulnerability scanning, PGP verification, SLSA provenance, SBOM generation, secret scanning, tamper-evident audit logging, and configurable security policies. All operations are user-isolated with minimal privilege requirements.
+OMG provides package verification, vulnerability reports, secret scanning, and local audit records. These controls do not prove that software is safe or that an organization meets a compliance framework. Capabilities depend on the compiled backend and the command path.
 
-## Quick Reference
+Report vulnerabilities privately using [SECURITY.md](../SECURITY.md).
 
-| Command | Description |
-| --------- | ------------- |
-| `omg audit` | Vulnerability scan (default) |
-| `omg audit scan` | Scan installed packages for CVEs |
-| `omg audit sbom` | Generate CycloneDX 1.5 SBOM |
-| `omg audit secrets` | Scan for leaked credentials |
-| `omg audit log` | View audit log entries |
-| `omg audit verify` | Verify audit log integrity |
-| `omg audit policy` | Show security policy status |
-| `omg audit slsa <pkg>` | Check SLSA provenance |
-
-## Security Overview
-
-### Threat Model
-
-OMG protects against:
-
-- **Malicious Packages**: PGP signatures and vulnerability scanning
-- **Supply Chain Attacks**: SLSA provenance verification via Sigstore/Rekor
-- **Leaked Credentials**: Secret scanning for 20+ credential types
-- **Compliance Violations**: SBOM generation for FDA, FedRAMP, SOC2
-- **Privilege Escalation**: User-level operations only
-- **Network Attacks**: Certificate validation for HTTPS requests and rejection of HTTPS-to-HTTP redirects
-- **Data Tampering**: Checksum verification and hash-chained audit logs
-
-### Security Grades
-
-Packages are classified into four security grades to help you make informed decisions about your system's integrity:
-
-| Grade | Description | Security Features |
-| ------- | ------------- | ------------------- |
-| **Locked** | Mission-critical system packages | SLSA Level 3 + PGP + Signature Verification |
-| **Verified** | Official repository packages | PGP Signature Verification + Checksum |
-| **Community** | AUR and user-maintained packages | Checksum Verification (Unsigned) |
-| **Risk** | Packages with known issues | Contains active CVEs or security advisories |
-
-Grade definitions:
-
-- **Locked**: Core system components like `glibc`, `linux`, and `pacman`. These are verified against the highest standards including SLSA build provenance.
-- **Verified**: Packages from official Arch/Debian repositories that are signed by trusted maintainers.
-- **Community**: Packages from the AUR or third-party sources. While they have checksums, they lack official cryptographic signatures.
-- **Risk**: Any package with one or more known vulnerabilities in the ALSA or OSV databases.
-
-## Vulnerability Scanning
-
-### Architecture
-
-The OMG vulnerability scanner is designed for high-performance, parallel analysis. It integrates multiple security databases to provide a comprehensive view of your system's risk profile.
-
-1. **Arch Linux Security Advisory (ALSA)**: Provides real-time information on vulnerabilities specifically affecting Arch Linux packages.
-2. **OSV.dev**: A high-speed, distributed vulnerability database that covers multiple ecosystems.
-
-### ALSA Integration
-
-OMG periodically fetches the complete set of ALSA issues. Each advisory includes:
-
-- **CVE Identifier**: The unique ID for the vulnerability.
-- **Affected Packages**: A list of specific package names and version ranges.
-- **Status**: Whether the issue is fixed, currently being addressed, or not yet fixed.
-- **Severity**: A rating from Low to Critical based on the potential impact.
-
-### OSV.dev Integration
-
-For broader coverage, OMG queries the Open Source Vulnerabilities (OSV) API. To maintain speed, results are cached locally:
-
-- **Querying**: When you scan a package, OMG sends the name and version to the OSV API.
-- **Processing**: The API returns detailed reports including CVSS scores and fix versions.
-- **Caching**: Results are stored in an in-memory concurrent cache for 1 hour, ensuring that subsequent checks for the same package are instantaneous.
-
-### Parallel Scanning
-
-When you run a full system audit (`omg audit`), OMG employs a massively parallel scanning strategy. The scan requires a running daemon (start it with `omg daemon`); compliance export still runs without one but skips the vulnerability-scan section:
-
-1. **Chunking**: Your installed packages are divided into small chunks.
-2. **Concurrent Execution**: Each chunk is scanned in parallel using all available CPU cores.
-3. **Aggregation**: The results are merged, filtered by severity (CVSS >= 7.0 for high severity), and presented in a unified report.
-
-## Native PGP Verification
-
-OMG performs all cryptographic operations natively using a thread-safe implementation. Unlike standard managers that call an external binary (which is slow and difficult to parallelize), OMG leverages native logic to verify signatures for dozens of packages in parallel across all available CPU cores without process-spawning overhead.
-
-- **Direct System Integration**: No dependency on external security binaries.
-- **Keyring Awareness**: Automatically leverages official system keyrings for verification.
-- **Modern Standards**: Built to support advanced and future-proof cryptographic algorithms.
-
-### Verification Lifecycle
-
-When verifying a package, OMG follows a rigorous multi-step process:
-
-1. **Extract**: Retrieves cryptographic signatures from package artifacts.
-2. **Calculate**: Computes integrity hashes using modern secure algorithms.
-3. **Match**: Identifies the correct public keys within the system keyring.
-4. **Validate**: Performs the mathematical validation of the signature against the calculated hash.
-5. **Assess**: Confirms the signing authority is trusted and the certificate is current. Signatures that are expired or dated in the future are rejected.
-
-## SLSA Provenance
-
-### Architecture
-
-SLSA (Supply-chain Levels for Software Artifacts) provides a framework for ensuring the integrity of the entire software supply chain.
-
-- **Provenance**: Cryptographic proof of how and where a package was built.
-- **Integrity**: Guarantees that the binary you download is exactly what was produced by the build system.
-- **Traceability**: Allows you to trace a binary back to its exact source code commit.
-
-### Verification
-
-OMG integrates with **Sigstore** and the **Rekor** transparency log to verify build provenance. When checking a package, OMG ensures that the package hash is recorded in a tamper-proof public log and matches the signed attestation from a trusted build environment (like GitHub Actions or GitLab CI).
-
-### Hash-Based Integrity
-
-Beyond signatures, OMG performs a streaming SHA-256 hash validation on every downloaded artifact. This ensures that the data on your disk matches the exact byte sequence reported by the upstream repository, protecting against bit rot and man-in-the-middle attacks during the download process.
-
-## Security Policy
-
-### Policy Configuration
-
-You can define custom security policies in your `policy.toml` or via the CLI to enforce organizational standards.
-
-Key policy options:
-
-- **Minimum Grade**: Reject any package that doesn't meet a specific security level (e.g., "Verified only").
-- **AUR Restrictions**: Toggle whether community-contributed packages are allowed.
-- **PGP Requirement**: Force signature verification for all installations.
-- **License Whitelist**: Only allow packages with approved licenses (e.g., MIT, Apache-2.0).
-- **Blacklist**: Explicitly ban specific packages from being installed.
-
-### Enforcement
-
-The policy engine acts as a gatekeeper for every operation. Before a package is installed or updated, OMG checks it against your policy rules. If a package is banned, has too low a grade, or violates license requirements, the operation is blocked with a detailed explanation of the violation.
-
-## Security Grading Logic
-
-The grading system uses a strictly hierarchical check to determine a package's safety level:
-
-1. **Risk Assessment**: If a package has any known vulnerabilities in the security databases, it is immediately graded as **Risk**, regardless of its source or signature.
-2. **Core Integrity**: Packages that form the system's foundation (such as the kernel or core libraries) are graded as **Locked** if they meet both the SLSA Level 3 provenance and official PGP standards.
-3. **Official Verification**: Packages from official repositories that carry a valid PGP signature from a trusted maintainer are graded as **Verified**.
-4. **Community Standards**: Packages from the AUR or third-party sources that provide valid checksums but lack official cryptographic signatures are graded as **Community**.
-
-## Verification Pipeline
-
-When a package is integrated into the system, it passes through a rigorous 5-stage native verification process:
-
-- **Extraction**: Cryptographic signatures are retrieved from detached signature artifacts.
-- **Integrity Calculation**: A streaming hash is computed using secure modern algorithms to ensure the file matches the expected byte sequence.
-- **Key Identification**: The system keyring is searched for the specific public key associated with the signature.
-- **Mathematical Validation**: The public key and calculated hash are used to perform a native cryptographic validation of the signature.
-- **Trust Evaluation**: The system confirms the signing certificate is active, trusted by the root authority, and has not expired.
-
-### Network Security
-
-- **TLS Validation**: HTTPS requests use standard certificate validation. OMG does not pin endpoint certificates. The shared client rejects HTTPS-to-HTTP redirects.
-- **Vulnerability Requests**: The shared client has a 15-second total request timeout and a 5-second connect timeout. These are per-request limits, not a bound on an entire multi-request scan.
-
-### File System Security
-
-- **User Isolation**: All operations as current user
-- **Permission Checks**: Validate permissions before operations
-- **Atomic Operations**: Use atomic writes where possible
-- **Cleanup**: Remove temporary files securely
-
-## Monitoring and Auditing
-
-### Security Events
-
-Security events include signature checks, vulnerability detections, and policy rejections. Durable package-operation records fail closed if they cannot be persisted. The daemon's separate best-effort queue can drop events; its incompleteness marker prevents treating a consistent remaining hash chain as proof of a complete audit.
-
-### Audit Trail
-
-- **Package Installs**: Full audit log with checksums
-- **Security Scans**: Timestamp and results
-- **Policy Violations**: All rejections logged
-- **Configuration Changes**: Policy updates tracked
-
-### Privileged Linux audit storage
-
-Privileged package-operation history lives at `/var/lib/omg/audit/audit.jsonl`.
-Its directories must be owned by root and must not be group- or world-writable.
-OMG does not change `/var/log` permissions to accommodate logging.
-Unprivileged audit storage is unchanged.
-
-On first use, an existing trusted `/var/log/omg` directory is atomically moved
-to `/var/lib/omg/audit`, preserving log bytes, archives, and chain continuity.
-Migration is serialized with other migrations and the legacy audit writer.
-It refuses to proceed if both locations exist, a legacy directory is untrusted,
-or an atomic move cannot be made, including across filesystems.
-Reconcile or move that history while OMG is stopped; do not delete audit data
-to clear the error. A refused migration is not converted into a fresh history.
-
-### Metrics Collection
-
-Security metrics available:
-
-- **Vulnerability Count**: Total and by severity
-- **Verification Rate**: PGP verification success
-- **Policy Violations**: Rejection reasons
-- **Scan Performance**: Time per package
-
-## Best Practices
-
-### For Users
-
-1. **Enable PGP Verification**: Always verify signatures
-2. **Regular Scans**: Run security audits weekly
-3. **Policy Configuration**: Set appropriate minimum grades
-4. **Update Keyring**: Keep GPG keys current
-5. **Review Logs**: Monitor security events
-
-### For Organizations
-
-1. **Central Policies**: Distribute security policies
-2. **License Compliance**: Configure allowed licenses
-3. **Package Blacklist**: Block problematic packages
-4. **Regular Audits**: Automated security scanning
-5. **Incident Response**: Plan for vulnerability disclosures
-
-### For Developers
-
-1. **Sign Packages**: Always sign custom packages
-2. **SLSA Attestations**: Provide build provenance
-3. **Vulnerability Disclosure**: Report security issues
-4. **Secure Defaults**: Enable security by default
-5. **Documentation**: Document security features
-
-## SBOM Generation
-
-OMG generates CycloneDX 1.5 compliant Software Bill of Materials for enterprise compliance.
-
-### Usage
+## Vulnerability scanning
 
 ```bash
-# Generate SBOM (written to the default SBOM directory)
-omg audit sbom
-
-# Export to specific file
-omg audit sbom -o /path/to/sbom.json
+omg daemon --foreground
 ```
 
-### SBOM Contents
-
-The generated SBOM includes:
-
-- **All installed packages** with PURL identifiers
-- **Version information** for each component
-- **Vulnerability data** (optional) from ALSA
-- **Metadata** including generation timestamp and tool version
-
-### Compliance Standards
-
-OMG's SBOM generation supports:
-
-- **FDA Cybersecurity Requirements** for medical devices
-- **FedRAMP** for federal systems
-- **SOC2** for enterprise compliance
-- **NTIA Minimum Elements** for software transparency
-
-## Secret Scanning
-
-OMG detects leaked credentials before they're committed.
-
-### Usage
+Run the daemon in a separate terminal, then scan:
 
 ```bash
-# Scan current directory
+omg audit scan
+```
+
+The scan requires the Unix daemon and a matching `omgd` executable. Current non-Arch release archives omit `omgd`; see [installation requirements](./installation.md#daemon-requirements). Arch Linux Security Advisory data is specific to Arch packages. OSV queries depend on ecosystem and version matching. Missing findings are not proof that a package is free of vulnerabilities. Do not treat Arch advisory matching as Debian, Fedora, or macOS vulnerability coverage.
+
+The scan prints findings but does not return a failing exit status merely because it found vulnerabilities. Its human-readable output is not a documented JSON alert interface. `omg audit fix --dry-run` previews available package updates on the Arch backend; an available update is not proof that every advisory is fixed.
+
+## Security grades
+
+Policy grades are ordered `Risk`, `Community`, `Verified`, and `Locked`. Source classification treats official repository metadata as `Verified` and AUR or local packages as `Community`. A package name such as `glibc` does not confer a `Locked` grade.
+
+`Locked` remains a policy enum value. The current source classifier does not establish SLSA Level 3 or assign that grade to core packages. A displayed grade is not an independent cryptographic receipt or a certification. Requiring `Locked` can reject ordinary official packages.
+
+## Security policy
+
+The local policy is `~/.config/omg/policy.toml`. Inspect it with:
+
+```bash
+omg audit policy
+```
+
+The policy supports minimum grades, AUR restrictions, package bans, PGP requirements, and license allowlists. See [configuration](./configuration.md).
+
+Explicit package policies are checked against ALPM's prepared transaction, including dependencies. Native APT, DNF, and Homebrew install and upgrade paths refuse explicit policies because a separate precheck cannot guarantee the final native transaction. Do not assume that a policy enforced on Arch is enforced identically elsewhere. Pure-Debian production mutations remain disabled pending authenticated repository authority.
+
+## Package and runtime verification
+
+Official package verification follows the selected backend and its repository trust configuration. Native PGP verification is available in builds with the `pgp` feature. Signatures authenticate signed bytes under the selected trust policy; they do not inspect package behavior.
+
+Runtime downloads trust their upstream publishers. Publisher-provided checksums detect corruption, but do not protect against compromise of both an archive and its checksum source. Not every provider follows the same verification path. See [runtime integrity](./runtimes.md).
+
+AUR builds execute community-maintained code. Review PKGBUILDs, sources, and install hooks. Bubblewrap builds are offline by default. Enabling `[aur] allow_network = true` exposes reachable services to build code. Native builds are an explicit unsafe choice. See the [retained trust boundaries](../SECURITY.md#security-boundaries-and-retained-trust).
+
+## SLSA provenance
+
+Despite its command name and success label, `omg audit slsa` is currently a limited artifact-signature verifier, not a SLSA build-provenance verifier.
+
+```bash
+omg audit slsa ./package.pkg.tar.zst \
+  --certificate-identity "$EXPECTED_SIGNER_IDENTITY"
+```
+
+Set `EXPECTED_SIGNER_IDENTITY` to the exact trusted publisher email or OIDC URI obtained independently. An empty or omitted identity fails verification. Use an existing artifact path without parent-directory traversal.
+
+The verifier hashes the artifact, queries Rekor, checks the log's signed entry timestamp against a pinned key, and handles supported `hashedrekord` signatures. A successful result requires a supported artifact signature, a Fulcio certificate chain, and an exact identity match.
+
+Current limits:
+
+- A verified `hashedrekord` result still has SLSA level `None`. It contains no build provenance.
+- In-toto attestations are not verified by this engine.
+- A Rekor index hit, unsigned local provenance JSON, or a bare public-key self-attestation is not accepted as trusted provenance.
+- Pinned trust roots and log keys require deliberate updates. Entries signed under other keys can fail.
+- The command does not establish SLSA Levels 1, 2, or 3 for any package category.
+
+### Release attestations
+
+The [release workflow](../.github/workflows/release.yml) separately uses GitHub Actions build-provenance attestations for OMG release archives and the generated dependency SBOM. The installer uses `gh attestation verify`, bound to the selected release tag and workflow. This is distinct from `omg audit slsa` and does not certify a SLSA build level.
+
+## SBOM generation
+
+Two different SBOMs are available.
+
+The release workflow runs pinned `cargo-cyclonedx` against Cargo metadata with all features and targets, checks that `Cargo.lock` is unchanged, and publishes a CycloneDX JSON file on GitHub Releases. This is a dependency inventory for OMG's source configuration, not an inventory of packages installed on your machine or an exact per-binary dependency subset.
+
+The local command emits an installed-package CycloneDX 1.5 JSON inventory:
+
+```bash
+omg audit sbom --output ./sbom.json
+```
+
+The CLI always requests Arch advisory matching. It works with the Arch backend and available advisory data. Debian-like generation fails rather than applying Arch advisories to Debian packages. Fedora and macOS builds lack this system-SBOM backend. There is no CLI flag to disable vulnerability inclusion.
+
+The inventory contains package names, versions, descriptions, PURLs, available license metadata, and matched Arch advisories. It does not resolve dependency edges or populate component file hashes. It is not an application dependency inventory, a complete supply-chain graph, or proof of regulatory compliance. An advisory fetch failure must not be read as a clean report.
+
+The default location is `~/.local/share/omg/sbom/`. SBOM files are plaintext. Use a restricted destination and inspect permissions before sharing them.
+
+## Secret scanning
+
+```bash
 omg audit secrets
-
-# Scan specific path
-omg audit secrets -p /path/to/project
+omg audit secrets --path ./project
 ```
 
-### Detected Secret Types
+The scanner reports pattern matches, including supported credential formats and private-key markers. It can miss secrets and can report false positives. Critical findings cause a nonzero exit status. A clean scan does not establish that a repository contains no credentials. Revoke exposed credentials rather than only deleting their text.
 
-| Type | Pattern | Severity |
-| ------ | --------- | ---------- |
-| AWS Access Key | `AKIA...` | Critical |
-| AWS Secret Key | `aws_secret_access_key=...` | Critical |
-| GitHub Token | `ghp_...`, `github_pat_...` | Critical |
-| GitLab Token | `glpat-...` | Critical |
-| Private Key | `-----BEGIN PRIVATE KEY-----` | Critical |
-| Stripe Key | `sk_live_...` | Critical |
-| Slack Token | `xoxb-...` | High |
-| Google API Key | `AIza...` | High |
-| NPM Token | `npm_...` | High |
-| JWT Token | `eyJ...` | Medium |
-| Generic API Key | `api_key=...` | Medium |
-| Generic Password | `password=...` | Medium |
-
-### Placeholder Detection
-
-The scanner automatically ignores common placeholders:
-
-- `your_api_key_here`
-- `example_token`
-- `<API_KEY>`
-- `${SECRET}`
-
-## Privacy & Telemetry
-
-OMG respects user privacy with a privacy-first telemetry system that is entirely optional and transparent.
-
-### Telemetry Models
-
-OMG offers two telemetry levels:
-
-#### 1. Basic Install Tracking (Always Optional)
-
-The installer asks for explicit consent, defaults to **No**, and sends minimal anonymous data only after opt-in:
-
-- **Anonymous Install ID**: A unique UUID generated per installation (not tied to user)
-- **Platform**: OS and architecture (e.g., `linux-x86_64`, `macos-arm64`)
-- **Version**: OMG version at time of install
-- **Backend**: Package manager used (arch, debian, fedora, macos, windows)
-- **Timestamp**: Installation time in ISO 8601 format
-
-This data enables the GitHub badge to show real install counts. No personal information is collected.
-
-**Non-interactive opt-out:** Skip the consent prompt and keep telemetry disabled with `OMG_NO_TELEMETRY=1` (the variable must be set for the installer's bash, not for curl):
+## Audit logging
 
 ```bash
-curl -fsSL https://omg.latham.cloud/install.sh | OMG_NO_TELEMETRY=1 bash
-```
-
-Or disable via config:
-
-```toml
-# ~/.config/omg/config.toml
-telemetry_enabled = false
-```
-
-At runtime, `OMG_TELEMETRY=0` or `OMG_DISABLE_TELEMETRY=1` in your environment also
-disable collection.
-
-#### 2. Enhanced Telemetry (Opt-In)
-
-Enhanced telemetry is disabled by default and activates only when the user explicitly enables runtime telemetry. When disabled, no enhanced collection occurs.
-
-When enabled, enhanced telemetry collects:
-
-- **Command Summary**: Canonical command name, duration, success/failure, and compiled backend
-- **Performance Metrics**: Metric name and duration (for example, CLI startup)
-- **Feature Usage**: Feature name and enabled state
-- **Session Data**: Random session ID, command count, duration, and start/end timestamps
-- **Attribution Data**: Stable hashed machine identifier
-
-**Not collected**:
-
-- Positional arguments, package names, search queries, or file paths
-- Raw error messages, command output, package contents, or source code
-- User names, home-directory paths, unrelated credentials, or environment variables
-- System configuration beyond platform/architecture and compiled backend
-- Network information
-
-### Data Handling
-
-#### Storage
-
-- **In-Flight**: Events are queued locally in `~/.local/share/omg/telemetry_queue.json`
-- **Batching**: Events are persisted in a bounded queue and flushed on CLI exit
-- **Retry Logic**: Failed batches remain in the bounded local queue for a later invocation; a circuit breaker suppresses repeated requests to an unhealthy endpoint
-- **Privacy Isolation**: Queue and session files are written atomically in the user's data directory
-
-#### Transmission
-
-- **HTTPS Only**: Telemetry is sent only to HTTPS endpoints
-- **Timeout**: Each telemetry request has a five-second upper bound
-- **Failure Isolation**: Network and server failures never fail the requested OMG command
-- **Bounded Exit Cost**: The final best-effort flush is awaited on CLI exit and remains bounded by the request timeout
-
-#### Retention
-
-- **Server-side retention**: Governed by the published OMG privacy policy
-- **Local Queue**: Queued events are deleted after successful transmission
-- **Session Data**: Session info remains in the user's local data directory until removed
-
-### Opting Out
-
-**Complete Opt-Out**:
-
-```bash
-# Disable all telemetry (runtime environment variables)
-export OMG_TELEMETRY=0
-# or
-export OMG_DISABLE_TELEMETRY=1
-
-# Or persistently in the config file (~/.config/omg/config.toml)
-echo 'telemetry_enabled = false' >> ~/.config/omg/config.toml
-```
-
-**After Install**:
-
-```bash
-# Disable telemetry after installation
-omg config set telemetry.enabled false
-```
-
-**Verification**:
-
-```bash
-# Check current telemetry status
-omg config get telemetry.enabled
-```
-
-### Transparency
-
-The telemetry system is fully open-source:
-
-- Implementation: [`src/core/telemetry.rs`](https://github.com/PyRo1121/omg/blob/main/src/core/telemetry.rs)
-- Client: [`src/core/telemetry_client.rs`](https://github.com/PyRo1121/omg/blob/main/src/core/telemetry_client.rs)
-
-You can:
-
-- Review the exact data collected by reading the source code
-- Audit network requests using tools like `tcpdump` or Wireshark
-- Run with debug logging to observe behavior: `RUST_LOG=debug omg <command>`
-
-### Why Telemetry?
-
-When enabled, telemetry helps us:
-
-- **Usage Analytics**: Understand which features are most valuable
-- **Performance Optimization**: Identify performance bottlenecks
-- **Reliability**: Detect errors in real-world usage patterns
-- **Roadmap Priority**: Make data-driven decisions about what to build next
-
-For everyone (install tracking):
-
-- **Install Metrics**: Display real install counts on GitHub/website badges
-- **Community Size**: Show adoption and growth transparently
-
-### FAQs
-
-**Q: Does OMG collect passwords or credentials?**
-A: It does not collect passwords, environment variables, or unrelated credentials.
-
-**Q: Can I use OMG without telemetry?**
-A: Yes. Set `OMG_TELEMETRY=0` or disable via config. All features work identically.
-
-**Q: Is telemetry data sold?**
-A: No. Telemetry data is used internally only and never shared with third parties.
-
-**Q: Does telemetry slow down OMG?**
-A: Event recording is local and small. A final best-effort network flush can add up to the five-second request timeout when the endpoint is slow.
-
-**Q: What if my network is slow?**
-A: Telemetry failure never changes the command result. Unsent events remain in the bounded local queue for a later invocation.
-
----
-
-## Audit Logging
-
-OMG maintains hash-chained, tamper-evident audit logs for compliance and forensics. The local chain detects modification of retained entries; it cannot independently prove that a privileged filesystem actor did not truncate or delete log history.
-
-### Usage
-
-```bash
-# View recent entries
 omg audit log
-
-# View last 50 entries
-omg audit log -l 50
-
-# Filter by severity
-omg audit log -s error
-
-# Export logs to CSV
-omg audit log --export security_audit.csv
-
-# Export logs to JSON
-omg audit log --export security_audit.json
-
-# Verify log integrity
+omg audit log --limit 50 --severity error
+omg audit log --export ./audit.json
+omg audit log --export ./audit.csv
 omg audit verify
 ```
 
-### Export Capabilities
+Screen output defaults to 20 entries. Export defaults to all entries unless `--limit` is supplied. Redirecting the screen display does not produce JSON. A `.csv` extension selects CSV; other extensions select JSON.
 
-OMG supports exporting audit logs for compliance reporting:
+`omg audit verify` checks internal hash-chain consistency and refuses a collection marked incomplete. A log owner can rewrite entries and recompute hashes, truncate history, or remove an incompleteness marker. Successful verification proves neither authenticity nor completeness. Retain independent logs if you need evidence against the machine's administrator.
 
-- **CSV**: Best for spreadsheets and manual review (includes Timestamp, Severity, Event, Description, Resource).
-- **JSON**: Best for automated processing and security dashboards.
+Unprivileged storage defaults to `~/.local/share/omg/audit/audit.jsonl`. Privileged Linux storage is `/var/lib/omg/audit/audit.jsonl`. A trusted legacy `/var/log/omg` collection is migrated atomically on first use. Migration refuses conflicting locations, untrusted permissions, or a cross-filesystem move. Preserve the old data and reconcile it while OMG is stopped; do not delete audit history to clear an error.
 
-### Event Types
+Privileged backend operations record attempts and outcomes synchronously. An interrupted operation may have no outcome. The daemon's separate best-effort queue can lose events and records an incompleteness marker when it detects that condition.
 
-| Event | Description |
-| ------- | ------------- |
-| `PackageInstall` | Package installation |
-| `PackageRemove` | Package removal |
-| `PackageUpgrade` | Package upgrade |
-| `SecurityAudit` | Security scan performed |
-| `VulnerabilityDetected` | CVE found |
-| `SignatureVerified` | PGP verification success |
-| `SignatureFailed` | PGP verification failure |
-| `PolicyViolation` | Policy rule triggered |
-| `SbomGenerated` | SBOM created |
-
-### Tamper Detection
-
-Each audit entry includes:
-
-- **SHA-256 hash** of entry contents
-- **Previous entry hash** for chain integrity
-- **Timestamp** in ISO 8601 format
-- **User** who performed the action
-
-The `omg audit verify` command validates:
-
-1. Each entry's hash matches its contents
-2. The hash chain is unbroken
-3. No entries have been modified or deleted
-
-### Log Location
-
-Audit logs are stored at:
-
-```
-~/.local/share/omg/audit/audit.jsonl
-```
-
-## SLSA Verification
-
-OMG verifies SLSA provenance via Sigstore/Rekor.
-
-### Usage
+## Compliance exports
 
 ```bash
-# Check SLSA provenance for a package file
-omg audit slsa /path/to/package.pkg.tar.zst
+omg audit export --framework soc2 --output ./audit-evidence
 ```
 
-### SLSA Levels
+Only `soc2` generates files on this command path. It exports up to 1,000 recent audit entries, a daemon vulnerability scan, a system SBOM, and a policy snapshot. The Unix daemon and supported SBOM backend are required. `iso27001`, `fedramp`, `hipaa`, and `pci-dss` are accepted names but return an unimplemented error. A failed export may leave partial files.
 
-| Level | Requirements | OMG Support |
-| ------- | -------------- | ------------- |
-| Level 1 | Build process documented | ✅ |
-| Level 2 | Hosted build, signed provenance | ✅ |
-| Level 3 | Hardened build, non-falsifiable | ✅ |
+`--period` is metadata, not a time-range filter. The separate `omg enterprise audit-export` command produces a generic inventory bundle, not framework-specific controls. See [enterprise limits](./enterprise.md).
 
-### Rekor Integration
+Audit and enterprise evidence files are plaintext JSON or CSV. Private writers protect selected exports with owner-only permissions; permissions are not encryption. SBOM and other report writers do not all use that private writer. Restrict the destination directory, inspect every file, and encrypt externally before transport when required. Reports can disclose package inventory, paths, and activity.
 
-OMG queries the Sigstore Rekor transparency log to verify:
+OMG does not implement HIPAA controls or certify SOC 2, ISO 27001, FedRAMP, PCI DSS, or HIPAA compliance.
 
-- Package hash is recorded in the log
-- Build attestation is present
-- Signature is valid
+## Privacy and telemetry
 
-### Package SLSA Levels
+Installer telemetry requires consent and defaults to no. Pass `OMG_NO_TELEMETRY=1` to the shell executing the installer to disable it. Runtime telemetry is opt-in and can be disabled with:
 
-| Package Type | Default Level |
-| -------------- | --------------- |
-| Core packages (glibc, linux, pacman) | Level 3 |
-| Official repo packages | Level 2 |
-| AUR packages | None |
+```bash
+omg config set telemetry.enabled false
+omg config get telemetry.enabled
+```
 
-## Future Security Enhancements
+`OMG_TELEMETRY=0` and `OMG_DISABLE_TELEMETRY=1` also disable runtime collection. When enabled, runtime telemetry includes canonical command names, timing, success status, backend, session data, and a hashed machine identifier. It does not send positional arguments or raw command output through the documented telemetry path. This does not prevent package, advisory, dashboard, or download services from receiving requests needed by their features.
 
-### Planned Features
+Queued events are stored in the user's data directory. The final best-effort network flush can add up to its five-second request timeout. Review [telemetry implementation](../src/core/telemetry.rs) and [client](../src/core/telemetry_client.rs) for the exact collection path.
 
-1. **Policy-as-Code**: OPA/Rego integration for complex policies
-2. **Runtime Security**: Monitor package behavior post-install
-3. **Machine Learning**: Anomaly detection for suspicious packages
-4. **Zero-Trust**: Enhanced verification
+## See also
 
-### Emerging Threats
-
-1. **Supply Chain Attacks**: Enhanced provenance
-2. **Deep Package Inspection**: Static analysis
-3. **Behavioral Analysis**: Runtime monitoring
-4. **Threat Intelligence**: CVE database integration
-5. **Compliance**: Industry standard support
-
-### Cryptographic Improvements
-
-1. **Post-Quantum**: Prepare for quantum computing
-2. **Multi-Sig**: Multiple signature support
-3. **Key Rotation**: Automated key management
-4. **Hardware Tokens**: YubiKey integration
-5. **Secure Enclaves**: TPM integration
-
----
-
-## 📚 See Also
-
-- [CLI Reference](./cli.md) — Security-related commands (`omg audit`, `omg audit sbom`, `omg audit secrets`)
-- [Configuration](./configuration.md) — Security policy configuration
-- [Team Sync](./team.md) — Secure environment sharing and drift detection
-- [Enterprise](./enterprise.md) — SOC2/ISO27001/FedRAMP compliance features
-- [Troubleshooting](./troubleshooting.md) — Security-related issues and solutions
+- [Enterprise reports](./enterprise.md).
+- [CLI reference](./cli.md).
+- [Configuration](./configuration.md).
+- [Security reporting and trust boundaries](../SECURITY.md).

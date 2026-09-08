@@ -49,7 +49,7 @@ These flags work with any command:
 ### Search & Info
 
 ```bash
-omg search <query>              # Search official repos + AUR (5-11ms with daemon)
+omg search <query>              # Search official repos + AUR on Arch
 omg search <query> -d           # Detailed source metadata (votes, popularity)
 omg search <query> --no-aur     # Official repositories only
 omg search <query> -l 10        # Limit results (default: 50)
@@ -63,7 +63,7 @@ omg install <pkg> [<pkg>...]    # Install packages (system + AUR auto-detected)
 omg install -y <pkg>            # Skip confirmation
 omg install --dry-run <pkg>     # Preview without installing
 omg remove <pkg>                # Remove package
-omg remove -r <pkg>             # Also remove unused dependencies
+omg remove -r <pkg>             # Arch only: also remove unused dependencies
 omg remove --dry-run <pkg>      # Preview without removing
 ```
 
@@ -191,6 +191,8 @@ omg audit fix -y                # Auto-fix by upgrading packages
 omg audit eol                   # Check end-of-life runtimes
 ```
 
+Audit commands have [backend and evidence limits](./security.md). The SBOM CLI requires Arch advisory matching. The SLSA-named command verifies supported signatures, not a SLSA build level. Exports are plaintext.
+
 ### SBOM & Secrets
 
 ```bash
@@ -206,9 +208,9 @@ omg audit secrets -p ./src      # Scan a specific path
 omg audit log                   # View audit log entries (default: last 20)
 omg audit log -l 50             # More entries
 omg audit log -s error          # Filter by severity
-omg audit verify                # Check audit log for tampering
+omg audit verify                # Check consistency, not authenticity or completeness
 omg audit policy                # Show security policy status
-omg audit slsa <package-file>   # Check SLSA provenance
+omg audit slsa <package-file> --certificate-identity "$EXPECTED_SIGNER_IDENTITY"
 ```
 
 ---
@@ -221,8 +223,7 @@ omg env check                   # Check for drift against omg.lock
 omg env share                   # Upload environment to a secret GitHub Gist
 omg env share --public          # Public Gist instead
 omg env share -d "Team env"     # Custom Gist description
-export GITHUB_TOKEN=...         # Required for share/sync
-omg env sync https://gist.github.com/user/abc123   # Restore from a shared Gist
+omg env sync https://gist.github.com/user/abc123   # Download lockfile and check drift; install nothing
 ```
 
 ### Team Workspace
@@ -482,11 +483,10 @@ omg run dev            # Start coding!
 ### Speed Up Searches
 
 ```bash
-# Ensure daemon is running (5-11ms searches!)
-omg daemon
+# Start the matching omgd binary in a separate terminal
+omg daemon --foreground
 
-# Without daemon: ~100-150ms direct queries
-# With daemon: ~5-11ms (12-24x faster!)
+# Measure with a fixed query and sources; no universal speedup is guaranteed.
 ```
 
 ### Parallel Operations
@@ -548,7 +548,7 @@ More help: [Troubleshooting Guide](./troubleshooting.md).
 
 ## 💡 Pro Tips
 
-1. **Use the daemon for speed** — start it with `omg daemon` for 5-11ms searches.
+1. **Measure repeated queries.** Compare the same query and sources with the daemon running.
 2. **Version files = auto-switch** — create `.nvmrc`, `.python-version` etc. and let the shell hook switch for you.
 3. **Lock early, lock often** — run `omg env capture` after every major change.
 4. **Preview before acting** — `--dry-run` exists on `install`, `remove`, `update`, `clean`, `snapshot restore`, `migrate import`, and `audit fix`.

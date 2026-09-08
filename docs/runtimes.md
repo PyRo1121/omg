@@ -364,7 +364,7 @@ All runtimes installed in user-local directory:
 
 - **No Sudo Required** - Never need administrative privileges
 - **Isolation** - Versions cannot interfere with each other
-- **Easy Cleanup** - `rm -rf ~/.local/share/omg/versions/node/20.10.0`
+- **Version removal** uses `omg use node 20.10.0 --uninstall`. Switch away from an active version first.
 
 ### Staged installations
 
@@ -429,11 +429,7 @@ grep "omg hook" ~/.zshrc  # Should exist
 curl -I https://nodejs.org/dist/
 ```
 
-**Try different mirror:**
-
-```bash
-omg config set node.mirror "https://npmmirror.com/mirrors/node"
-```
+`node.mirror` is not a supported config key. Inspect the provider error and network access. Do not bypass download integrity checks or substitute an untrusted mirror.
 
 **Check disk space:**
 

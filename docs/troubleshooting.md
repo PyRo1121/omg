@@ -35,7 +35,7 @@ omg status
 
 **Symptoms:**
 
-- Slow searches (>50ms instead of ~5-11ms)
+- Repeated searches are slower than your measured baseline with the same sources and query
 - `omg status` shows "Daemon: Not running"
 - Commands work but feel sluggish
 
@@ -172,8 +172,8 @@ rm ~/.zcompdump
 compinit
 
 # For Bash:
-omg completions bash --stdout > /etc/bash_completion.d/omg
-source /etc/bash_completion.d/omg
+omg completions bash
+source ~/.local/share/bash-completion/completions/omg
 ```
 
 ---
@@ -284,15 +284,15 @@ cat ~/.config/omg/policy.toml
 # 2. View package security grade
 omg info <package>
 
-# 3. Temporarily lower policy
-# Edit ~/.config/omg/policy.toml:
-# minimum_grade = "Community"
-# allow_aur = true
+# 3. Inspect the policy and rejection before deciding whether to proceed
+omg audit policy
+```
 
-# 4. Install package
-omg install <package>
+Do not lower security policy as a routine workaround. Obtain approval from the policy owner for any intended change. Native APT, DNF, and Homebrew install and upgrade paths refuse explicit policies they cannot enforce against the final transaction.
 
-# 5. Restore policy
+```bash
+# Preview only after resolving the policy requirement
+omg install --dry-run <package>
 ```
 
 ---
@@ -347,14 +347,10 @@ curl -I https://nodejs.org/dist/
 # 2. Check for proxy issues
 echo $http_proxy $https_proxy
 
-# 3. Increase timeout
-# In config.toml:
-# [network]
-# timeout = 60
-
-# 4. Try manual download
+# 3. Check available versions
 omg list node --available
-# Note the URL and download manually
+# There is no supported [network].timeout setting in config.toml.
+# Do not bypass download integrity checks to work around a timeout.
 
 # 5. Check disk space
 df -h ~/.local/share/omg/

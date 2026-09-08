@@ -24,18 +24,17 @@ All in a single Rust binary.
 
 ### Why is it called OMG?
 
-Because of the reaction we want you to have when you see how fast it is. 12-24x faster than pacman for searches.
+The name expands to "Oh My God!". Performance claims belong in the [benchmark evidence](../benchmarks/README.md), with their measured scope.
 
 ### What platforms are supported?
 
 | Platform | Status | Notes |
 |----------|--------|-------|
-| Arch Linux | ✅ Full | All features |
-| Manjaro | ✅ Full | Same as Arch |
-| EndeavourOS | ✅ Full | Same as Arch |
-| Debian/Ubuntu | 🔶 Experimental | No AUR equivalent |
-| Fedora/RHEL | 🔜 Planned | Coming soon |
-| macOS | 🔜 Planned | Homebrew integration |
+| Arch Linux | Alpha | ALPM and AUR backend |
+| Manjaro / EndeavourOS | Arch-derived | Validate native dependency compatibility; no blanket parity guarantee |
+| Debian/Ubuntu | Alpha | Native APT backend, different security coverage |
+| Fedora | Alpha | DNF backend; recorded v0.1.218 smoke failures |
+| macOS | Alpha | ARM64 release, Homebrew backend |
 | WSL | ✅ Supported | Uses the installed Linux distribution backend |
 | Native Windows | ❌ Unsupported | Use WSL |
 
@@ -57,18 +56,13 @@ cp target/release/omg ~/.local/bin/
 
 ### Does OMG collect any data?
 
-By default, OMG collects **anonymous** usage data to improve the product:
-- One-time install ping (random UUID, version, platform)
-- Command usage statistics
-- Error reports
-
-**No personal data, package names, or file contents are ever collected.**
+Installer telemetry requires consent and defaults to no. Runtime telemetry is opt-in. When enabled, it collects canonical command names, timings, success status, backend, session data, and a hashed machine identifier. See [privacy and telemetry](./security.md#privacy-and-telemetry) for scope and opt-out controls.
 
 ### How do I opt out of telemetry?
 
 **During installation:**
 ```bash
-curl -fsSL https://... | OMG_NO_TELEMETRY=1 bash
+OMG_NO_TELEMETRY=1 bash omg-install.sh
 ```
 
 **After installation:**
@@ -79,10 +73,7 @@ export OMG_TELEMETRY=0
 
 ### Where is data sent?
 
-Data is sent to `omg-api.latham.cloud`. The telemetry endpoint only accepts:
-- Install counts (for GitHub badge)
-- Anonymous command usage patterns
-- Error reports with stack traces (no user data)
+Telemetry uses the OMG service. Package backends, download providers, advisory APIs, and dashboard features also contact their respective services. Disabling telemetry does not disable those functional requests. Review the [telemetry client](../src/core/telemetry_client.rs) rather than assuming all outgoing data is telemetry.
 
 ---
 
@@ -90,24 +81,15 @@ Data is sent to `omg-api.latham.cloud`. The telemetry endpoint only accepts:
 
 ### How is OMG so fast?
 
-1. **No subprocess overhead** — Direct library integration (libalpm, rust-apt)
-2. **Persistent daemon** — In-memory package index with moka caching
-3. **Pure Rust** — No Python, no shell scripts
-4. **Binary protocol** — Bincode over Unix sockets for IPC
+The daemon caches package indexes in memory, and some backends use direct library or database reads. Other paths invoke native tools or contact network services. The binary IPC protocol does not eliminate those costs.
 
 ### What are the actual performance numbers?
 
-| Operation | OMG | pacman | Speedup |
-|-----------|-----|--------|---------|
-| Search | 5-11ms | 133ms | **12-24x** |
-| Info | 3-6ms | 138ms | **21-38x** |
-| Explicit list | <2ms | 14ms | **7-14x** |
+See [raw benchmark records and methodology](../benchmarks/README.md). Measurements depend on the artifact, host, backend, cache state, query, and enabled sources. They do not establish universal speedups.
 
 ### Does OMG need the daemon to be fast?
 
-The daemon provides maximum speed, but OMG works without it:
-- **With daemon**: 5-11ms searches (cached)
-- **Without daemon**: 50-200ms searches (direct libalpm)
+Most package queries have direct fallback paths. The daemon can reduce repeated query work. Vulnerability scans, metrics, and Unix SOC 2 export require it. See [daemon requirements](./daemon.md).
 
 ---
 
@@ -119,7 +101,7 @@ No. OMG uses pacman/libalpm under the hood. It's a faster interface, not a repla
 
 ### Does OMG replace yay/paru?
 
-Yes! OMG has built-in AUR support. You don't need a separate AUR helper.
+OMG includes AUR workflows, but does not promise every yay or paru option. Keep your existing tools until you have verified the operations you depend on.
 
 ### Can I use OMG and yay together?
 
@@ -146,7 +128,7 @@ enable_ccache = true
 
 ### What runtimes are supported?
 
-**Native (Pure Rust implementations):**
+OMG provides managers for:
 - Node.js
 - Python
 - Go
@@ -160,7 +142,7 @@ Unsupported runtime names fail explicitly; OMG does not download a fallback runt
 
 ### Does OMG replace nvm/pyenv/rustup?
 
-Yes, OMG can manage these runtimes directly. However, they can coexist if needed.
+OMG selects supported runtimes, but providers may delegate to tools such as rustup or ruby-build. It does not replace every provider feature. Avoid conflicting shell hooks.
 
 ### How does version detection work?
 
@@ -185,7 +167,7 @@ OMG rejects unsupported names with a list of native runtimes. It never downloads
 - **Vulnerability scanning** (ALSA + OSV.dev)
 - **SBOM generation** (CycloneDX 1.5)
 - **PGP verification** (Sequoia-OpenPGP)
-- **SLSA provenance** (Sigstore/Rekor)
+- **Artifact signatures** through supported Rekor entries, with an exact expected identity; no SLSA build-level verification
 - **Secret scanning** (20+ credential patterns)
 - **Audit logging** (hash-chained; user-owned logs are not authenticated)
 - **Policy enforcement** (grade-based blocking)
@@ -194,18 +176,14 @@ OMG rejects unsupported names with a list of native runtimes. It never downloads
 
 | Grade | Meaning |
 |-------|---------|
-| LOCKED | Core packages with SLSA + PGP |
-| VERIFIED | Official repo packages (PGP verified) |
+| LOCKED | Policy enum value; not conferred by core package names or the current SLSA verifier |
+| VERIFIED | Official repository source classification, not an independent verification receipt |
 | COMMUNITY | AUR packages |
 | RISK | Packages with known CVEs |
 
 ### Is OMG safe to use?
 
-Yes. OMG:
-- Verifies PGP signatures on official packages
-- Runs without root (except for system package installs via sudo)
-- Uses HTTPS for all network requests
-- Maintains hash-chained local audit logs
+OMG is alpha software and executes package or project code in several workflows. Use a recoverable machine, review community packages, and retain your native package tools. Signatures and local audit chains do not prove safety. Read [the security boundaries](../SECURITY.md#security-boundaries-and-retained-trust) before relying on them.
 
 ---
 

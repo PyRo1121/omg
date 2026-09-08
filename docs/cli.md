@@ -68,8 +68,7 @@ omg search node --limit 10
 
 **Performance:**
 
-- With daemon: ~5-11ms
-- Without daemon: ~50-200ms
+Latency depends on the backend, cache state, query, and enabled sources. See [benchmark scope and records](../benchmarks/README.md).
 
 ---
 
@@ -122,7 +121,7 @@ available AUR names. AUR names are cached for 24 hours; a cache miss may fetch t
 index with a bounded network timeout. If AUR is unavailable, local names remain
 available. Neither discovery path synchronizes package databases or installs packages.
 
-After [setting up shell completion](installation.md#3-optional-enable-shell-completions),
+After [setting up shell completion](shell-integration.md),
 try `omg install frfx<Tab>`. Package completion also works after `-y`, additional
 package names, and the `i` alias.
 
@@ -181,7 +180,7 @@ omg update [OPTIONS]
 | `--yes` | `-y` | Skip confirmation prompt |
 | `--dry-run` | | Show what would be updated without making changes |
 | `--fast` | `-f` | Fast mode: sync + upgrade in a single operation (no preview) |
-| `--turbo` | `-T` | Turbo mode: skip sync, use cached data, parallel extraction (fastest) |
+| `--turbo` | `-T` | Turbo mode: skip sync, use cached data, parallel extraction |
 | `--review` | | Force PKGBUILD review for each AUR build (on by default; see `aur.review_pkgbuild`) |
 
 **Examples:**
@@ -687,7 +686,7 @@ omg completions fish
 omg completions zsh --stdout > _omg
 ```
 
-Follow the printed shell setup instructions after installation. See [shell completion setup](installation.md#3-optional-enable-shell-completions) for Zsh's `fpath` and `compinit` configuration.
+Follow the printed shell setup instructions after installation. See [shell completion setup](shell-integration.md) for Zsh's `fpath` and `compinit` configuration.
 
 ---
 
@@ -777,22 +776,26 @@ omg audit [SUBCOMMAND]
 | Subcommand | Description |
 | ------------ | ------------- |
 | `scan` | Scan for vulnerabilities (default) |
-| `sbom` | Generate CycloneDX 1.5 SBOM |
+| `sbom` | Generate installed Arch package CycloneDX 1.5 inventory with advisory matching |
 | `secrets` | Scan for leaked credentials |
 | `log` | View audit log entries |
-| `verify` | Verify audit log integrity |
+| `verify` | Check local hash-chain consistency, not authenticity or completeness |
 | `policy` | Show security policy status |
-| `slsa <pkg>` | Check SLSA provenance |
+| `slsa <pkg>` | Check supported artifact signatures; requires exact `--certificate-identity`, establishes no SLSA build level |
 | `licenses` | Scan for software license compliance issues |
 | `fix` | Auto-fix vulnerabilities by upgrading packages |
 | `export` | Export compliance evidence for audit frameworks |
 | `eol` | Check end-of-life status for installed runtimes |
 
+`scan` requires the Unix daemon and does not fail solely because findings exist. `sbom` always requests Arch advisory matching; it fails on Debian-like systems and lacks a Fedora/macOS system backend. It does not resolve dependency edges. `licenses` and vulnerability auto-fix require the Arch backend.
+
+`omg audit export --framework soc2` requires the daemon and supported SBOM backend. The other accepted framework names return unimplemented errors. `--period` labels the export; it does not filter history. Output is plaintext and can be partial on failure. See [security limits](./security.md).
+
 **Options for `log`:**
 
 | Option | Short | Description |
 | -------- | ------- | ------------- |
-| `--limit` | `-l` | Number of entries to show (default: 20) |
+| `--limit` | `-l` | Entry limit; defaults to 20 on screen and all entries on export |
 | `--severity` | `-s` | Filter by severity (debug, info, warning, error, critical) |
 | `--export` | `-e` | Export logs to a file (CSV or JSON) |
 
@@ -825,8 +828,8 @@ omg audit verify
 # Show policy status
 omg audit policy
 
-# Check SLSA provenance
-omg audit slsa /path/to/package.pkg.tar.zst
+# Check an artifact against an independently trusted signer identity
+omg audit slsa ./package.pkg.tar.zst --certificate-identity "$EXPECTED_SIGNER_IDENTITY"
 ```
 
 ---
@@ -1519,7 +1522,7 @@ omg enterprise policy show
 ```
 
 **Report types:** monthly, quarterly, custom
-**Compliance frameworks:** soc2, iso27001, fedramp, hipaa, pci-dss
+**Accepted framework labels:** soc2, iso27001, fedramp, hipaa, pci-dss. This enterprise command generates the same generic Arch inventory bundle for each label, not framework-specific controls. It exports up to 100 recent audit entries. `--period` does not filter them. Files are plaintext, not encrypted or certified compliance evidence. See [enterprise export limits](./enterprise.md).
 
 > Note: policy management beyond `policy show` and self-hosted registry
 > management are not available in the CLI.

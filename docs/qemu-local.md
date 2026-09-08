@@ -65,7 +65,7 @@ Nightly-equivalent (published release + all safe tiers, x86_64 KVM host):
 
 The package lifecycle also requires a nonempty privileged audit log and runs
 `omg audit verify` against it. Directory modes and verification output are saved
-under guest evidence. See [Linux audit storage and migration](security.md#privileged-linux-audit-storage).
+under guest evidence. See [Linux audit storage and migration](security.md#audit-logging).
 
 ## What inventory results prove
 

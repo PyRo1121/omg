@@ -333,10 +333,7 @@ tmux attach -t omg-dash
 
 Use alongside system notifications for critical alerts:
 
-```bash
-# In a cron job or systemd timer
-omg audit scan 2>&1 | grep -q "high_severity" && notify-send "OMG: Security Alert"
-```
+Run `omg audit scan` and review the report. Its human-readable output is not a documented alert interface, and findings alone do not produce a failing exit status. Do not grep it for a JSON field such as `high_severity`.
 
 ---
 

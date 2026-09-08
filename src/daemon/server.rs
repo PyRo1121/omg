@@ -16,7 +16,7 @@ use tokio_util::codec::{FramedWrite, LengthDelimitedCodec};
 use tokio_util::sync::CancellationToken;
 
 use super::handlers::{DaemonState, handle_request};
-use super::protocol::{Request, Response, ResponseResult, error_codes};
+use super::protocol::{Request, Response, error_codes};
 use crate::core::metrics::GLOBAL_METRICS;
 use crate::core::security::{
     AuditEventType, AuditSeverity, audit_log_nonblocking, init_audit_logger,
@@ -28,13 +28,37 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// Status refresh interval (5 minutes)
 const STATUS_REFRESH_INTERVAL: Duration = Duration::from_mins(5);
 
-fn status_refresh_timer() -> tokio::time::Interval {
-    let mut timer = tokio::time::interval_at(
-        tokio::time::Instant::now() + STATUS_REFRESH_INTERVAL,
-        STATUS_REFRESH_INTERVAL,
-    );
-    timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    timer
+enum MaintenanceEvent {
+    Refresh,
+    Health,
+}
+
+struct MaintenanceSchedule {
+    refresh: tokio::time::Interval,
+    health: tokio::time::Interval,
+}
+
+impl MaintenanceSchedule {
+    fn new() -> Self {
+        let start = tokio::time::Instant::now();
+        let mut refresh =
+            tokio::time::interval_at(start + STATUS_REFRESH_INTERVAL, STATUS_REFRESH_INTERVAL);
+        let mut health = tokio::time::interval_at(
+            start + SOCKET_HEALTH_CHECK_INTERVAL,
+            SOCKET_HEALTH_CHECK_INTERVAL,
+        );
+        refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        health.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        Self { refresh, health }
+    }
+
+    async fn next(&mut self) -> MaintenanceEvent {
+        tokio::select! {
+            biased;
+            _ = self.refresh.tick() => MaintenanceEvent::Refresh,
+            _ = self.health.tick() => MaintenanceEvent::Health,
+        }
+    }
 }
 
 /// Memory cleanup interval (30 minutes) - matches mmap TTL
@@ -239,29 +263,25 @@ async fn run_with_status_path(
                 }
             }
 
-            // Pre-warm search cache with common queries for instant first searches
-            let state_search = Arc::clone(state);
-            if let Err(error) = tokio::task::spawn_blocking(move || {
-                let common_queries = ["", "linux", "python", "node", "firefox", "git"];
-                let index = state_search.index_snapshot();
-                for query in common_queries {
-                    let results = Arc::new(index.search(query, 50));
-                    if !state_search.with_current_index(&index, || {
-                        state_search
-                            .cache
-                            .insert_arc(query.to_string(), Arc::clone(&results));
-                    }) {
-                        break;
+            let index = state.index_snapshot();
+            for query in ["", "linux", "python", "node", "firefox", "git"] {
+                let results = match super::handlers::search_index_blocking(
+                    Arc::clone(&index),
+                    query.to_string(),
+                )
+                .await
+                {
+                    Ok(results) => Arc::new(results),
+                    Err(error) => {
+                        tracing::warn!("Search cache pre-warm failed: {error}");
+                        return;
                     }
+                };
+                if !state.with_current_index(&index, || {
+                    state.cache.insert_arc(query.to_string(), results);
+                }) {
+                    return;
                 }
-                tracing::debug!(
-                    "Pre-warmed search cache with {} common queries",
-                    common_queries.len()
-                );
-            })
-            .await
-            {
-                tracing::warn!("Search cache pre-warm task failed: {error}");
             }
         }
 
@@ -271,11 +291,7 @@ async fn run_with_status_path(
 
         // Track last cleanup time for periodic mmap cleanup
         let mut last_cleanup = tokio::time::Instant::now();
-        let mut maintenance = status_refresh_timer();
-        let mut socket_health = tokio::time::interval(SOCKET_HEALTH_CHECK_INTERVAL);
-        socket_health.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        // Consume the immediate first tick; the listener was just bound.
-        socket_health.tick().await;
+        let mut schedule = MaintenanceSchedule::new();
 
         loop {
             tokio::select! {
@@ -286,7 +302,8 @@ async fn run_with_status_path(
                     tracing::info!("Background worker shutting down");
                     break;
                 }
-                _ = maintenance.tick() => {
+                event = schedule.next() => match event {
+                MaintenanceEvent::Refresh => {
                     tracing::debug!("Refreshing system status cache...");
                     refresh_status(&state_worker, &fast_status_path).await;
                     // Independent of status publication: a failed scan must
@@ -303,7 +320,7 @@ async fn run_with_status_path(
                         last_cleanup = tokio::time::Instant::now();
                     }
                 }
-                _ = socket_health.tick() => {
+                MaintenanceEvent::Health => {
                     if !socket_path.exists() {
                         let failure = format!(
                             "Daemon socket {} was removed externally",
@@ -315,6 +332,7 @@ async fn run_with_status_path(
                         shutdown_trigger.cancel();
                         break;
                     }
+                }
                 }
             }
         }
@@ -733,18 +751,14 @@ async fn handle_client_with_idle_timeout(
 #[cfg(test)]
 mod tests {
     use super::super::protocol::{
-        PackageInfo, SearchResult, SecurityAuditResult, WirePackageSource,
+        PackageInfo, ResponseResult, SearchResult, SecurityAuditResult, WirePackageSource,
     };
     use super::*;
 
     #[tokio::test(start_paused = true)]
     async fn maintenance_deadline_survives_health_ticks() {
         let start = tokio::time::Instant::now();
-        let mut maintenance = status_refresh_timer();
-        let mut health = tokio::time::interval_at(
-            start + SOCKET_HEALTH_CHECK_INTERVAL,
-            SOCKET_HEALTH_CHECK_INTERVAL,
-        );
+        let mut schedule = MaintenanceSchedule::new();
         let deadline = start + Duration::from_mins(16);
         let mut refreshes = 0;
         let mut checks = 0;
@@ -752,8 +766,10 @@ mod tests {
             tokio::select! {
                 biased;
                 () = tokio::time::sleep_until(deadline) => break,
-                _ = maintenance.tick() => { refreshes += 1; }
-                _ = health.tick() => { checks += 1; }
+                event = schedule.next() => match event {
+                    MaintenanceEvent::Refresh => { refreshes += 1; }
+                    MaintenanceEvent::Health => { checks += 1; }
+                }
             }
         }
         assert_eq!(refreshes, 3);
@@ -1024,9 +1040,16 @@ mod tests {
         let directory = tempfile::tempdir()?;
         let data_dir = directory.path().join("data");
         std::fs::create_dir_all(&data_dir)?;
+        let names: Vec<_> = (0..100)
+            .map(|index| format!("linux-fixture-{index}"))
+            .collect();
+        let records: Vec<_> = names
+            .iter()
+            .map(|name| (name.as_str(), "1.0", "fixture"))
+            .collect();
         let state = Arc::new(super::super::handlers::DaemonState::new_isolated(
             &data_dir,
-            super::super::index::PackageIndex::empty(),
+            super::super::index::PackageIndex::from_records(&records),
             Arc::new(crate::package_managers::mock::MockPackageManager::new_in(
                 "arch", &data_dir,
             )),
@@ -1056,7 +1079,26 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
 
+        let response = handle_request(
+            Arc::clone(&state),
+            Request::Search {
+                id: 99,
+                query: "linux".into(),
+                limit: Some(100),
+            },
+        )
+        .await;
         server.abort();
+        match response {
+            Response::Success {
+                result: ResponseResult::Search(result),
+                ..
+            } => {
+                assert_eq!(result.total, 100);
+                assert_eq!(result.packages.len(), 100);
+            }
+            other => anyhow::bail!("warmed search failed: {other:?}"),
+        }
         Ok(())
     }
 }

@@ -1,230 +1,87 @@
 # OMG
 
-**The fastest unified package manager for Arch Linux + universal runtime version manager.**
+**Your packages. Your runtimes. One CLI.**
 
-> **Alpha.** OMG is alpha software. The CLI, flags, and on-disk formats can change without compatibility guarantees. Use it on machines you can recover, and file issues when something breaks.
+Search your distro's packages, switch Node.js or Python versions, and run project tasks without remembering a different command for each tool. OMG combines package backends, runtime version management, and environment drift checks in a Rust CLI.
 
-[![Benchmark evidence](https://img.shields.io/badge/benchmarks-scope%20and%20raw%20data-blue?style=flat-square)](benchmarks/README.md)
-[![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
-[![Rust](https://img.shields.io/badge/rust-1.95%2B-orange?style=flat-square)](https://www.rust-lang.org)
-[![codecov](https://codecov.io/gh/PyRo1121/omg/branch/main/graph/badge.svg?style=flat-square)](https://codecov.io/gh/PyRo1121/omg)
+**Spend less time switching tools. [Start with one project](docs/quickstart.md).** Select its runtime and run its existing tasks with OMG. Keep your native package manager available.
 
-OMG replaces `pacman`, `yay`, `nvm`, `pyenv`, `rustup`, `rbenv`, and `jenv` with a single binary. It queries packages in **about 11ms** (13ms mean) via a background daemon that keeps repository indexes in memory.
+> OMG is alpha software. Commands and on-disk formats can change. Try package mutations in a disposable VM or on a machine you can recover. Back up important data before upgrades or migrations.
 
-## Contents
+[Installation](docs/installation.md) · [CLI reference](docs/cli.md) · [Security limits](docs/security.md) · [Report a bug](https://github.com/PyRo1121/omg/issues)
 
-- [Quick Install](#quick-install)
-- [60-Second Tour](#60-second-tour)
-- [Key Features](#key-features)
-- [Release smoke evidence and performance](#release-smoke-evidence-and-performance)
-- [Supported Language Runtimes](#supported-language-runtimes)
-- [CLI Command Reference](#cli-command-reference-selected)
-- [Support](#support)
-- [License](#license)
+## Try it without changing system packages
 
----
-
-## Before & After
+Release installation requires GitHub CLI (`gh`) for archive attestation verification, plus `curl` and the platform dependencies listed in the [installation guide](docs/installation.md). Download the installer for review instead of piping it directly into a shell:
 
 ```bash
-# Before: 7 tools, 7 syntaxes, 7 configuration files
-pacman -Ss firefox          # Official repositories
-yay -S spotify              # AUR packages
-nvm install 22 && nvm use 22# Node.js
-pyenv install 3.12          # Python
-rustup default stable       # Rust
-rbenv install 3.3.0         # Ruby
+curl --proto '=https' --tlsv1.2 -fsSL https://omg.latham.cloud/install.sh -o omg-install.sh
+less omg-install.sh
+OMG_NO_TELEMETRY=1 OMG_SKIP_SHELL=1 bash omg-install.sh
+export PATH="$HOME/.local/bin:$PATH"
+omg --version
+omg --help
+```
 
-# After: Just OMG
-omg search firefox
-omg install spotify
+The installer writes to `~/.local/bin` by default. These options disable install telemetry and automatic shell edits. The downloaded script is executable code from a mutable endpoint. For a pinned bootstrap, review and run a checkout at a commit you trust. Do not bypass a failed checksum or attestation check.
+
+In an existing Node.js project:
+
+```bash
 omg use node 22
-omg use python 3.12
-omg use rust stable
-omg use ruby 3.3.0
+omg run build
 ```
 
----
+`omg use` downloads a runtime if needed and changes the selected version. Inspect the project's `package.json` scripts and run `build` only if it is defined. `omg run` requires a task name. Tasks execute project code, so use a repository you trust.
 
-## Quick Install
+For directory-based switching, add the matching [shell hook](docs/shell-integration.md) after reviewing what it does.
 
-### Universal Installer (Linux & macOS)
+## What you can do
 
-```bash
-curl -fsSL https://omg.latham.cloud/install.sh | bash
-```
+- **Use one package command vocabulary.** Search, install, remove, and update through the backend built for your platform. On Arch, search official repositories and AUR, or pass `--no-aur` for official results only.
+- **Select runtimes per project.** Manage Node.js, Python, Rust, Go, Bun, Ruby, Java, and Pi. Existing version files can guide selection. Providers and platform availability differ. See [runtimes](docs/runtimes.md).
+- **Run existing tasks.** `omg run` discovers tasks from supported project manifests, including `package.json`, `Cargo.toml`, and `Makefile`.
+- **Make environment drift visible.** `omg env capture` writes `omg.lock`; `omg env check` compares it with the current machine. Sharing a lockfile does not install dependencies or guarantee identical machines.
+- **Inspect before changing packages.** Use `omg info ripgrep`, `omg why ripgrep`, and `omg install --dry-run ripgrep` before an installation. A dry run is not a sandbox or an approval of package code.
 
-### Arch Linux (AUR)
+OMG does not replace every capability of pacman, APT, DNF, Homebrew, rustup, or language-specific tools. Some operations delegate to those tools.
 
-```bash
-# Prebuilt binary (fastest)
-yay -S omg-bin
+## Choose the right platform build
 
-# Build from source
-yay -S omg
-```
+The release workflow builds Linux x86_64 archives for Arch, Debian, Ubuntu, and Fedora, plus a macOS ARM64 archive. Availability of an archive does not establish feature parity.
 
-### From Source
+- **Arch Linux.** The ALPM backend supports official packages and AUR workflows. AUR builds execute community code and need review.
+- **Debian and Ubuntu.** The native APT backend supports package operations. Security inventory and policy capabilities differ from Arch.
+- **Fedora.** The DNF backend exists, but the recorded `v0.1.218` package smoke tests failed. Fixed local candidates are not proof that a published release is fixed.
+- **macOS.** The release target is Apple Silicon with a Homebrew backend. There is no Intel macOS release artifact in the current workflow.
+- **Windows.** Use a supported Linux distribution inside WSL. Native Windows is not supported.
 
-```bash
-cargo install omg --git https://github.com/PyRo1121/omg --locked
-# Default features target Arch (`arch`). On Debian/Ubuntu use `--features debian`,
-# on Fedora `--features fedora` (see CONTRIBUTING.md). `make build/test/install`
-# shorthand hardcodes `--features arch` for the same reason.
-```
+Check [installation and backend limits](docs/installation.md) before choosing a binary. Do not use an Arch build on another distribution.
 
-### Shell Integration
+## Security evidence, with explicit limits
 
-Add instant directory-based runtime switching to your shell configuration:
+The release workflow generates a CycloneDX dependency SBOM from Cargo metadata and attests release archives and the SBOM through GitHub Actions. The installer verifies the selected archive against the release tag and workflow.
 
-```bash
-# Zsh (~/.zshrc)
-eval "$(omg hook zsh)"
+The local `omg audit sbom` command is different. It generates an installed-package CycloneDX 1.5 inventory with Arch advisory matching. It does not reconstruct a complete dependency graph, and its current CLI path does not support Debian, Fedora, or macOS SBOM generation.
 
-# Bash (~/.bashrc)
-eval "$(omg hook bash)"
+`omg audit slsa` can verify supported Rekor artifact signatures with an exact expected certificate identity. It does **not** verify SLSA build provenance or establish SLSA Levels 1–3. Local audit chains establish consistency, not authenticity. Exported inventories and audit evidence are plaintext, not encrypted compliance archives.
 
-# Fish (~/.config/fish/config.fish)
-omg hook fish | source
-```
+Read the [security reference](docs/security.md) and [enterprise export limits](docs/enterprise.md) before using reports as evidence. OMG does not certify HIPAA, SOC 2, ISO 27001, PCI DSS, or FedRAMP compliance.
 
----
+## Performance you can inspect
 
-## 60-Second Tour
+The optional daemon keeps package indexes in memory. Its benefit depends on the backend, query, cache state, and enabled sources. We do not claim a universal speedup or equivalent output across competing package managers.
 
-```bash
-# 1. Search packages across official repos and AUR in ~11ms
-omg search ripgrep
+The [benchmark guide](benchmarks/README.md) links methodology and raw records. The [published-artifact smoke record](benchmarks/records/release-smoke-v0.1.218-local.json) and [local QEMU receipt](benchmarks/records/qemu-four-distros-20260905.json) identify their tested artifacts. Smoke durations are not CLI latency benchmarks, and local debug candidates are not released binaries.
 
-# 2. Install official packages or AUR packages with auto-elevation
-omg install visual-studio-code-bin
+## Take the next step
 
-# 3. Switch language versions instantly
-omg use node 22
-omg use python 3.12
+**[Follow the quickstart](docs/quickstart.md), then try OMG on a recoverable development machine.** If a command fails, [open an issue](https://github.com/PyRo1121/omg/issues) with `omg --version`, your distribution, the command, and redacted output. That gives maintainers a reproducible case.
 
-# 4. Run project scripts with auto-detected runtime versions
-omg run dev
-
-# 5. Lock your exact package and runtime environment for teammates
-omg env capture
-
-# 6. Launch the interactive terminal dashboard
-omg dash
-```
-
----
-
-## Key Features
-
-### Faster Package Operations
-OMG uses direct `libalpm` integration and an in-memory repository index on Arch. A recorded local development run measured daemon-backed search at 13.1 ms mean. That run did not establish equivalent search output or cross-distribution release performance. See [benchmark scope and evidence](benchmarks/README.md).
-
-### Universal Runtime Manager
-Manage Node.js, Bun, Python, Go, Rust, Ruby, Java, and Pi from one CLI. OMG honors existing `.nvmrc`, `.python-version`, `rust-toolchain.toml`, and `.tool-versions` files automatically.
-
-### Seamless AUR & Dependency Resolution
-Build and install AUR packages safely unprivileged as your regular user. Multi-package builds run in parallel with build artifact cleanup.
-
-### Unified Task Runner
-`omg run <task>` inspects your directory, detects `package.json`, `Cargo.toml`, `Makefile`, `pyproject.toml`, or `deno.json`, and executes the task with the required runtime version pre-loaded.
-
-### Environment Fingerprinting
-`omg env capture` records installed packages and active runtimes into `omg.lock`. Teammates can run `omg env check` to detect drift and keep environments consistent.
-
-### Terminal Dashboard
-`omg dash` launches an interactive terminal UI for monitoring package updates, disk space, active runtimes, and system health at a glance.
-
----
-
-## Release smoke evidence and performance
-
-The published `v0.1.218` x86_64 artifacts were tested locally in disposable Docker
-containers using runner commit `e77c60ef`. These are single-run smoke durations,
-not CLI latency benchmarks. Each includes package-index preparation, assertions,
-and container cleanup. Archive downloads and image pulls are excluded.
-
-- Arch passed search, install, and remove in 4, 2, and 4 seconds.
-- Debian passed those cases in 11, 12, and 13 seconds.
-- Ubuntu passed those cases in 24, 26, and 24 seconds.
-- Fedora search and install failed in 12 and 9 seconds. Removal setup failed in
-  9 seconds before removal executed. Fedora is not passing package coverage.
-
-[Recorded results and artifact digests](benchmarks/records/release-smoke-v0.1.218-local.json)
-identify the binaries and pinned container images. A separate
-[CI runs of the same runner](https://github.com/PyRo1121/omg/actions)
-contain transcripts and uploaded cleanup evidence. These results prove only
-these package cases on these images, not every command or every Linux distribution.
-The [local headless QEMU runner](scripts/README.md#benchmark-qemush) now passes
-boot, reboot, sudo, and package lifecycles on all four supported x86_64 baselines.
-The [live receipt](benchmarks/records/qemu-four-distros-20260905.json) contains
-artifact hashes and 240 warm timing samples. Debian and Fedora use fixed local
-candidates. These results do not mean their published artifacts are fixed, that
-every CLI command passes, or that debug-build timings establish release speedups.
-
-Run the current suite from a shell with Docker access:
-
-```bash
-./scripts/release-smoke.sh --release v0.1.218 --distro all \
-  --evidence-dir "$HOME/.cache/build-targets/omg-smoke-evidence"
-```
-
-The command currently exits nonzero because Fedora does not pass. See
-[benchmark methodology, limitations, and the researched QEMU design](benchmarks/README.md)
-for the distinction between smoke coverage and performance. Historical
-[Arch development measurements](benchmarks/records/20260903_015949-5c43ddcc/)
-remain available, but are not release-wide speedup claims.
-
----
-
-## Supported Language Runtimes
-
-OMG natively handles version switching and installation for major ecosystems:
-
-| Runtime | Version Detection Files | Default Target |
-| :--- | :--- | :--- |
-| **Node.js** | `.nvmrc`, `.node-version`, `package.json` | Official prebuilt binaries |
-| **Python** | `.python-version`, `pyproject.toml` | Standalone optimized builds |
-| **Rust** | `rust-toolchain.toml`, `rust-toolchain` | Official rustup toolchains |
-| **Go** | `.go-version`, `go.mod` | Official archive distributions |
-| **Bun** | `.bun-version`, `package.json` | Official release builds |
-| **Ruby** | `.ruby-version`, `Gemfile` | Ruby-build provider |
-| **Java** | `.java-version` | Adoptium Temurin OpenJDK |
-
----
-
-## CLI Command Reference (selected)
-
-| Command | Description |
-| :--- | :--- |
-| `omg search <query>` | Search packages in official repositories and AUR |
-| `omg install <pkg...>` | Install system or community packages |
-| `omg remove <pkg...>` | Remove packages (`-r` removes unneeded dependencies) |
-| `omg update` | Upgrade all system and AUR packages |
-| `omg use <runtime> [ver]` | Install and switch to a language version |
-| `omg run <task>` | Execute project scripts with correct runtimes |
-| `omg doctor` | Diagnose environment, PATH, and mirror configuration |
-| `omg clean` | Remove orphaned packages and clean package caches |
-| `omg dash` | Open the interactive terminal dashboard |
-| `omg why <pkg>` | Trace dependency chains explaining why a package is installed |
-| `omg size` | View package disk usage breakdown and dependency trees |
-
-Run `omg --help` or see the [CLI documentation](docs/cli.md) for full argument details.
-
-**More docs:** [CLI Reference](docs/cli.md) · [Cheatsheet](docs/cheatsheet.md) · [Installation](docs/installation.md) · [Configuration](docs/configuration.md) · [Runtimes](docs/runtimes.md) · [Troubleshooting](docs/troubleshooting.md) · [FAQ](docs/faq.md) · [Security](docs/security.md) · [Contributing](CONTRIBUTING.md)
-
----
-
-## Support
-
-- **Issues:** [github.com/PyRo1121/omg/issues](https://github.com/PyRo1121/omg/issues)
-- **Security:** report vulnerabilities privately to **<olen@latham.cloud>** (see [SECURITY.md](SECURITY.md)). Do not open public issues for security reports.
-- **Docs:** [CLI Reference](docs/cli.md) · [Troubleshooting](docs/troubleshooting.md) · [FAQ](docs/faq.md)
-
----
+- [Configuration](docs/configuration.md), [package operations](docs/packages.md), and [troubleshooting](docs/troubleshooting.md).
+- [Contribute a focused fix or documentation correction](CONTRIBUTING.md).
+- Report vulnerabilities privately to <olen@latham.cloud>. See [SECURITY.md](SECURITY.md).
 
 ## License
 
-OMG is free and open-source software licensed under the [MIT License](LICENSE).
-
-Copyright (c) 2024-2026 Olen Latham.
+OMG is [MIT licensed](LICENSE). Copyright 2024–2026 Olen Latham.

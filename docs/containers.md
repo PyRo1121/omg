@@ -82,8 +82,8 @@ omg container shell --workdir /workspace
 # Add environment variables
 omg container shell --env NODE_ENV=development
 
-# Mount additional volumes
-omg container shell --volume ~/.ssh:/root/.ssh:ro
+# Mount nonsecret reference files
+omg container shell --volume "$PWD/docs:/reference:ro"
 ```
 
 ---
@@ -285,33 +285,7 @@ omg container exec web -- omg run test
 
 ## ⚙️ Configuration
 
-### Runtime Preference
-
-Set preferred runtime in `~/.config/omg/config.toml`:
-
-```toml
-[container]
-runtime = "podman"  # or "docker"
-```
-
-### Default Options
-
-```toml
-[container]
-# Default user inside containers
-user = "1000:1000"
-
-# Always mount these paths
-volumes = [
-    "~/.gitconfig:/etc/gitconfig:ro",
-    "~/.ssh:/root/.ssh:ro"
-]
-
-# Environment variables
-env = [
-    "TERM=xterm-256color"
-]
-```
+OMG detects Podman before Docker. There is no supported `[container]` section in `config.toml`. Pass `--env`, `--volume`, and `--workdir` to the relevant command instead. Run `omg container run --help` or `omg container shell --help` for their flags.
 
 ---
 
@@ -337,8 +311,10 @@ OMG prefers Podman for rootless container execution:
 2. **Read-only mounts when possible**
 
    ```bash
-   omg container shell --volume ~/.ssh:/root/.ssh:ro
+   omg container shell --volume "$PWD/docs:/reference:ro"
    ```
+
+Read-only mounts prevent writes, not reading or exfiltration. Do not mount SSH private keys into an untrusted image.
 
 3. **Avoid privileged mode**
 
@@ -391,7 +367,7 @@ podman logs <container-id>
 docker logs <container-id>
 
 # Try running interactively
-omg container run -it <image> -- bash
+omg container run -i <image> -- bash
 ```
 
 ---
