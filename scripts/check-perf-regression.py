@@ -17,6 +17,11 @@ class Measurement:
     samples: int | None
 
 
+# benchmark-hyperfine.sh labels the timed OMG driver "OMG"; older records used
+# "OMG (Daemon)". Accept both instead of hardcoding one.
+DAEMON_LABELS = ("OMG", "OMG (Daemon)")
+
+
 def extract_command_measurement(json_path: str, command: str) -> Measurement | None:
     """Extract one command's timing distribution from Hyperfine JSON."""
     try:
@@ -50,6 +55,15 @@ def extract_command_measurement(json_path: str, command: str) -> Measurement | N
         times = result.get("times")
         samples = len(times) if isinstance(times, list) and len(times) > 1 else None
         return Measurement(mean_ms=mean_ms, stddev_ms=stddev_ms, samples=samples)
+    return None
+
+
+def extract_daemon_measurement(json_path: str) -> Measurement | None:
+    """Resolve the OMG driver under its current or legacy hyperfine label."""
+    for label in DAEMON_LABELS:
+        found = extract_command_measurement(json_path, label)
+        if found is not None:
+            return found
     return None
 
 
@@ -123,7 +137,7 @@ def check_regression() -> int:
     current_search = None
     current_pacman = None
     for json_path in hyperfine_json_paths:
-        current_search = extract_command_measurement(json_path, "OMG (Daemon)")
+        current_search = extract_daemon_measurement(json_path)
         if current_search is not None:
             current_pacman = extract_command_measurement(json_path, "pacman")
             break
@@ -137,9 +151,7 @@ def check_regression() -> int:
         return 1
     status_path = "benchmark_results/status.json"
     current_status = (
-        extract_command_measurement(status_path, "OMG (Daemon)")
-        if os.path.exists(status_path)
-        else None
+        extract_daemon_measurement(status_path) if os.path.exists(status_path) else None
     )
 
     baseline_search_ms = parse_positive_number(baseline.get("search_ms"))

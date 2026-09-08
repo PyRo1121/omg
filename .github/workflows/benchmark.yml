@@ -111,15 +111,19 @@ jobs:
           # Use hyperfine for statistical rigor and JSON export
           ./benchmark-hyperfine.sh --fast 2>&1 | tee benchmark_output.txt
 
-          # Extract metrics from the hyperfine search JSON. Command names come
-          # from --command-name in benchmark-hyperfine.sh.
+          # Extract metrics from the hyperfine search JSON. Current runs emit
+          # "OMG"; older records used "OMG (Daemon)".
           SEARCH_JSON="benchmark_results/search.json"
           if [ ! -f "$SEARCH_JSON" ]; then
             echo "::error::hyperfine did not produce $SEARCH_JSON"
             exit 1
           fi
 
-          SEARCH_TIME=$(jq -r '.results[] | select(.command == "OMG (Daemon)") | .mean' "$SEARCH_JSON" | awk '{printf "%.1f", $1 * 1000}')
+          SEARCH_TIME=$(jq -r '
+            ([.results[] | select(.command == "OMG")][0].mean) //
+            ([.results[] | select(.command == "OMG (Daemon)")][0].mean) //
+            empty
+          ' "$SEARCH_JSON" | awk '{printf "%.1f", $1 * 1000}')
           echo "search_time=${SEARCH_TIME}" >> $GITHUB_OUTPUT
 
           PACMAN_TIME=$(jq -r '.results[] | select(.command == "pacman") | .mean' "$SEARCH_JSON" | awk '{printf "%.1f", $1 * 1000}')

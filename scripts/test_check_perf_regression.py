@@ -18,6 +18,7 @@ def run_gate(
     baseline_speedup: str | None,
     current_search_ms: float,
     current_pacman_ms: float | None,
+    daemon_command: str = "OMG (Daemon)",
     current_search_stddev_ms: float | None = None,
     current_pacman_stddev_ms: float | None = None,
     search_samples: int | None = None,
@@ -42,7 +43,7 @@ def run_gate(
         )
 
         search_result: dict[str, object] = {
-            "command": "OMG (Daemon)",
+            "command": daemon_command,
             "mean": current_search_ms / 1000,
         }
         if current_search_stddev_ms is not None:
@@ -65,7 +66,7 @@ def run_gate(
         )
         if current_status_ms is not None:
             status_result: dict[str, object] = {
-                "command": "OMG (Daemon)",
+                "command": daemon_command,
                 "mean": current_status_ms / 1000,
             }
             if current_status_stddev_ms is not None:
@@ -169,6 +170,17 @@ class PerformanceRegressionGateTests(unittest.TestCase):
             baseline_speedup=None,
             current_search_ms=7.0,
             current_pacman_ms=None,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_current_omg_label_is_accepted(self) -> None:
+        result = run_gate(
+            baseline_search_ms=6.4,
+            baseline_speedup="29.4x",
+            current_search_ms=7.0,
+            current_pacman_ms=219.0,
+            daemon_command="OMG",
         )
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
