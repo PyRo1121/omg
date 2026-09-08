@@ -102,6 +102,16 @@ fn canonical_runtime_name(runtime: &str) -> String {
     }
 }
 
+fn validate_requested_version(runtime: &str, version: &str) -> Result<()> {
+    let version = if runtime == "node" {
+        version.strip_prefix("lts/").unwrap_or(version)
+    } else {
+        version
+    };
+    crate::core::security::validate_runtime_version(version)?;
+    Ok(())
+}
+
 pub async fn use_version(runtime: &str, version: Option<&str>) -> Result<()> {
     crate::core::security::validate_package_name(runtime)?;
     let runtime = canonical_runtime_name(runtime);
@@ -120,7 +130,7 @@ pub async fn use_version(runtime: &str, version: Option<&str>) -> Result<()> {
         );
         v.clone()
     };
-    crate::core::security::validate_runtime_version(&version)?;
+    validate_requested_version(&runtime, &version)?;
 
     ui::print_header("OMG", &format!("Switching {runtime} to version {version}"));
     ui::print_spacer();
@@ -472,7 +482,22 @@ pub async fn list_versions(runtime: Option<&str>, available: bool, json: bool) -
 
 #[cfg(test)]
 mod tests {
-    use super::canonical_runtime_name;
+    use super::{canonical_runtime_name, validate_requested_version};
+
+    #[test]
+    fn node_lts_requests_do_not_relax_directory_validation() {
+        assert!(validate_requested_version("node", "lts/iron").is_ok());
+        assert!(validate_requested_version("node", "lts/jod").is_ok());
+        assert!(validate_requested_version("node", "22.0.0").is_ok());
+        for version in ["lts/", "lts/..", "lts/../../tmp", "lts/iron/extra"] {
+            assert!(
+                validate_requested_version("node", version).is_err(),
+                "{version}"
+            );
+        }
+        assert!(validate_requested_version("python", "lts/iron").is_err());
+        assert!(crate::core::security::validate_runtime_version("lts/iron").is_err());
+    }
 
     #[test]
     fn runtime_versions_value_is_valid_json_with_expected_fields() {
