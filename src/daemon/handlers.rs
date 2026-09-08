@@ -808,7 +808,9 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
                 licenses: Vec::new(),
                 source: WirePackageSource::Official,
             });
-            state.cache.insert_info_arc(Arc::clone(&detailed));
+            state.with_current_index(&index, || {
+                state.cache.insert_info_arc(Arc::clone(&detailed));
+            });
             return Response::Success {
                 id,
                 result: ResponseResult::Info(Arc::unwrap_or_clone(detailed)),
@@ -862,7 +864,9 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
                         source: WirePackageSource::Aur,
                     });
 
-                    state.cache.insert_info_arc(Arc::clone(&detailed));
+                    state.with_current_index(&index, || {
+                        state.cache.insert_info_arc(Arc::clone(&detailed));
+                    });
                     return Response::Success {
                         id,
                         result: ResponseResult::Info(Arc::unwrap_or_clone(detailed)),
@@ -888,7 +892,9 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
         }
     }
 
-    state.cache.insert_info_miss(&package);
+    state.with_current_index(&index, || {
+        state.cache.insert_info_miss(&package);
+    });
 
     not_found_error(id, format!("Package not found: {package}"))
 }
@@ -1404,6 +1410,149 @@ mod tests {
             DaemonState::new_isolated(directory.path(), PackageIndex::empty(), package_manager)
                 .expect("create isolated daemon state");
         (directory, Arc::new(state))
+    }
+
+    type BackendFuture<'a, T> =
+        std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<T>> + Send + 'a>>;
+
+    struct PausedInfoBackend {
+        inner: crate::package_managers::mock::MockPackageManager,
+        started: tokio::sync::Notify,
+        resume: tokio::sync::Notify,
+    }
+
+    impl PackageManager for PausedInfoBackend {
+        fn name(&self) -> &'static str {
+            self.inner.name()
+        }
+        fn search(&self, query: &str) -> BackendFuture<'_, Vec<crate::core::Package>> {
+            self.inner.search(query)
+        }
+        fn install(&self, packages: &[String]) -> BackendFuture<'_, ()> {
+            self.inner.install(packages)
+        }
+        fn remove(&self, packages: &[String]) -> BackendFuture<'_, ()> {
+            self.inner.remove(packages)
+        }
+        fn update(&self) -> BackendFuture<'_, ()> {
+            self.inner.update()
+        }
+        fn sync(&self) -> BackendFuture<'_, ()> {
+            self.inner.sync()
+        }
+        fn info(&self, package: &str) -> BackendFuture<'_, Option<crate::core::Package>> {
+            let lookup = self.inner.info(package);
+            Box::pin(async move {
+                let result = lookup.await;
+                self.started.notify_one();
+                self.resume.notified().await;
+                result
+            })
+        }
+        fn list_installed(&self) -> BackendFuture<'_, Vec<crate::core::Package>> {
+            self.inner.list_installed()
+        }
+        fn get_status(&self, fast: bool) -> BackendFuture<'_, (usize, usize, usize, usize)> {
+            self.inner.get_status(fast)
+        }
+        fn list_explicit(&self) -> BackendFuture<'_, Vec<String>> {
+            self.inner.list_explicit()
+        }
+        fn list_updates(
+            &self,
+        ) -> BackendFuture<'_, Vec<crate::package_managers::types::UpdateInfo>> {
+            self.inner.list_updates()
+        }
+        fn is_installed(&self, package: &str) -> BackendFuture<'_, bool> {
+            self.inner.is_installed(package)
+        }
+    }
+
+    #[tokio::test]
+    async fn info_fallback_cannot_repopulate_cache_after_index_refresh() {
+        for package in ["git", "new-package"] {
+            let directory = tempfile::tempdir().expect("temporary daemon directory");
+            let backend = Arc::new(PausedInfoBackend {
+                inner: crate::package_managers::mock::MockPackageManager::new_in(
+                    "arch",
+                    directory.path(),
+                ),
+                started: tokio::sync::Notify::new(),
+                resume: tokio::sync::Notify::new(),
+            });
+            let state = Arc::new(
+                DaemonState::new_isolated(directory.path(), PackageIndex::empty(), backend.clone())
+                    .expect("isolated daemon"),
+            );
+            let request_state = state.clone();
+            let request = tokio::spawn(async move {
+                handle_request(
+                    request_state,
+                    Request::Info {
+                        id: 1,
+                        package: package.to_string(),
+                    },
+                )
+                .await
+            });
+            tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                backend.started.notified(),
+            )
+            .await
+            .expect("backend lookup started");
+            state.replace_index(PackageIndex::from_records(&[(
+                package,
+                "99.0",
+                "fresh metadata",
+            )]));
+            backend.resume.notify_one();
+            let response = tokio::time::timeout(std::time::Duration::from_secs(5), request)
+                .await
+                .expect("lookup resumed")
+                .expect("lookup task completed");
+            if package == "git" {
+                assert!(matches!(
+                    response,
+                    Response::Success {
+                        result: ResponseResult::Info(_),
+                        ..
+                    }
+                ));
+            } else {
+                assert!(matches!(
+                    response,
+                    Response::Error {
+                        code: error_codes::PACKAGE_NOT_FOUND,
+                        ..
+                    }
+                ));
+            }
+            assert!(
+                state.cache.get_info(package).is_none(),
+                "stale positive cache for {package}"
+            );
+            assert!(
+                !state.cache.is_info_miss(package),
+                "stale negative cache for {package}"
+            );
+            let current = handle_request(
+                state,
+                Request::Info {
+                    id: 2,
+                    package: package.to_string(),
+                },
+            )
+            .await;
+            let Response::Success {
+                result: ResponseResult::Info(info),
+                ..
+            } = current
+            else {
+                panic!("fresh indexed package must be visible, got {current:?}");
+            };
+            assert_eq!(info.version, "99.0");
+        }
     }
 
     #[test]
