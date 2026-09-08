@@ -483,16 +483,7 @@ async fn handle_refresh_index(state: Arc<DaemonState>, id: RequestId) -> Respons
     let disk_newer_than_loaded = {
         #[cfg(feature = "arch")]
         {
-            match crate::package_managers::pacman_db::AlpmCatalogEpoch::observe() {
-                Ok(disk) => {
-                    let loaded = *state
-                        .index_epoch
-                        .read()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    disk.disk_is_newer_than(loaded)
-                }
-                Err(_) => true,
-            }
+            state.catalog_needs_heal()
         }
         #[cfg(not(feature = "arch"))]
         {
