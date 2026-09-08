@@ -20,6 +20,7 @@ migrate-export	["migrate","export","--output","${ROOT}/manifest.json"]	isolated-
 migrate-import	["migrate","import","${ROOT}/manifest.json","--dry-run"]	read	arch:0,debian:0,ubuntu:0,fedora:1	pass	migrate-export	hermetic	hermetic:pass	-	tempdir-drop
 clean	["clean","--all","--dry-run"]	read	arch:0,debian:1,ubuntu:1,fedora:0	pass	-	hermetic	hermetic:pass	-	tempdir-drop
 explicit	["explicit","--count"]	read	0	pass	-	hermetic	hermetic:pass	-	tempdir-drop
+explicit-shortcut	["ec"]	read	0	pass	-	hermetic	hermetic:pass	-	tempdir-drop
 sync	["sync","--help"]	help-boundary	0	pass	-	hermetic	hermetic:pass	-	tempdir-drop
 use	["use","invalid-runtime","1.0.0"]	controlled-error	1	pass	-	hermetic	hermetic:pass	-	tempdir-drop
 list	["list"]	read	0	pass	-	hermetic	hermetic:pass	-	tempdir-drop

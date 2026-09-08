@@ -31,7 +31,7 @@ This guide documents every OMG command with detailed explanations, examples, and
 | **Configuration** | `config`, `daemon`, `account`, `generate-man` |
 | **Enterprise** | `fleet`, `enterprise` |
 
-> Global flags (`-v`/`--verbose`, `-q`/`--quiet`, `--json`, `--all-commands`) work with every command. `omg --help` hides advanced commands unless `--all-commands` is passed. See [🌍 Global Options](#-global-options).
+> The parser accepts global flags (`-v`/`--verbose`, `-q`/`--quiet`, `--json`, `--all-commands`), but individual commands and early fast paths need not implement every output mode. Do not assume a stable JSON schema without checking that command. `omg --help` hides advanced commands unless `--all-commands` is passed. See [🌍 Global Options](#-global-options).
 
 ---
 
@@ -234,8 +234,7 @@ omg info visual-studio-code-bin
 
 **Performance:**
 
-- With daemon: ~3-6ms (cached)
-- Without daemon: ~50-200ms
+See [benchmark evidence](../benchmarks/README.md); timings depend on backend, artifact, sources, and cache state.
 
 ---
 
@@ -308,8 +307,7 @@ omg explicit --count
 
 **Performance:**
 
-- With daemon: <2ms
-- Without daemon: ~14ms
+Measure this operation on the selected backend with recorded cache conditions; no universal latency is guaranteed.
 
 ---
 
@@ -868,7 +866,7 @@ omg doctor [OPTIONS]
 | -------- | ------------- |
 | `--network` | Test network connectivity to package mirrors |
 | `--eol` | Check for end-of-life runtime versions |
-| `--turbo` | Enable turbo mode check (zero-sudo package operations via Linux capabilities) |
+| `--turbo` | Prime sudo credentials and remove legacy file capabilities; does not grant capability-based package access |
 
 **Checks performed:**
 
@@ -1256,8 +1254,8 @@ omg env capture
 # Check for drift
 omg env check
 
-# Share environment (requires GITHUB_TOKEN)
-export GITHUB_TOKEN=your_token
+# Share environment (supply GITHUB_TOKEN through your credential manager;
+# never store a literal token in shell history or startup files)
 omg env share
 
 # Sync from shared environment
@@ -1671,7 +1669,7 @@ omg license pricing
 
 # Use instead
 omg account status
-omg account link <token>
+omg account link --token-stdin
 omg account unlink
 ```
 
@@ -1683,7 +1681,7 @@ omg account <SUBCOMMAND>
 
 | Subcommand | Description |
 | ------------ | ------------- |
-| `link <token>` | Link this machine with a dashboard token |
+| `link --token-stdin` | Read the dashboard token from standard input, not argv |
 | `status` | Show whether this machine is linked |
 | `unlink` | Remove the local dashboard identity |
 
@@ -1719,20 +1717,20 @@ omg <subcommand>
 
 **Prompt counters:**
 
-| Subcommand | Description | Latency |
-| ------------ | ------------- | --------- |
-| `ec` | Explicit count | &lt;1ms |
-| `tc` | Total count | &lt;1ms |
-| `uc` | Updates count | &lt;1ms |
-| `oc` | Orphan count | &lt;1ms |
+- `ec`: explicit count
+- `tc`: total count
+- `uc`: update count
+- `oc`: orphan count
+
+These counters have no universal latency guarantee.
 
 **Hot-path commands:**
 
-| Subcommand | Description | Latency |
-| ------------ | ------------- | --------- |
-| `status` | System status | ~3ms |
-| `search` / `s` | Search packages | daemon speed |
-| `info` / `i` | Package info | daemon speed |
+- `status`: system status
+- `search` / `s`: package search
+- `info` / `i`: package details
+
+Execution paths and costs depend on the backend and daemon availability.
 
 **Examples:**
 

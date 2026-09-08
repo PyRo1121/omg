@@ -12,7 +12,9 @@ use omg_lib::cli::Cli;
 fn explicit_shortcut_uses_the_same_isolated_state_as_explicit_count() {
     for distro in ["arch", "debian", "fedora"] {
         let project = TestProject::for_distro(distro);
-        project.mock_install("git", "2.43.0").expect("seed installed git");
+        project
+            .mock_install("git", "2.43.0")
+            .expect("seed installed git");
         let listing = project.run(&["--json", "explicit"]);
         listing.assert_success();
         let payload: serde_json::Value =
@@ -22,7 +24,11 @@ fn explicit_shortcut_uses_the_same_isolated_state_as_explicit_count() {
         for command in [&["explicit", "--count"][..], &["ec"][..]] {
             let result = project.run(command);
             result.assert_success();
-            let actual = result.stdout.trim().parse::<usize>().expect("package count");
+            let actual = result
+                .stdout
+                .trim()
+                .parse::<usize>()
+                .expect("package count");
             assert_eq!(actual, expected, "{distro}: {command:?}");
         }
     }

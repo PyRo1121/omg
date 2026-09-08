@@ -139,7 +139,7 @@ self.history = entries.into_iter().rev().take(10).collect();
 
 ## ⏱️ Auto-Refresh
 
-The dashboard automatically refreshes every 10 seconds:
+The current application loop checks for a refresh after five seconds; data availability and fetch duration still depend on the backend:
 
 ```rust
 pub async fn tick(&mut self) -> Result<()> {
@@ -151,7 +151,7 @@ pub async fn tick(&mut self) -> Result<()> {
 }
 ```
 
-Manual refresh with `r` key is instant.
+The `r` key requests a refresh; it does not guarantee immediate data retrieval.
 
 ---
 

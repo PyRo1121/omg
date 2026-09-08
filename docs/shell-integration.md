@@ -18,7 +18,7 @@ OMG provides deep shell integration that:
 
 1. **Automatically updates PATH** when you change directories
 2. **Detects version files** and activates the correct runtime
-3. **Provides instant completions** for all commands
+3. **Provides shell completions**, whose behavior depends on shell setup and available metadata
 4. **Exposes ultra-fast functions** for shell prompts
 
 ---
@@ -210,7 +210,7 @@ These read from a cached status file updated by the daemon:
 | `omg-oc` | Orphan count |
 | `omg-uc` | Updates count |
 
-### Fresh Functions (~1ms)
+### Fresh Functions
 
 These read the status file directly:
 
@@ -261,12 +261,7 @@ end
 
 ### Performance Comparison
 
-| Method | Latency | Use Case |
-| -------- | --------- | ---------- |
-| `omg-ec` (cached) | &lt;1μs | Prompts |
-| `omg-explicit-count` (fresh) | ~1ms | Scripts |
-| `omg explicit --count` | ~<2ms | Commands |
-| `pacman -Qq \| wc -l` | ~14ms | Fallback |
+Cached prompt values avoid a fresh query but can be stale. Compare fresh queries separately, with the same backend and cache conditions. See [benchmark evidence](../benchmarks/README.md); this guide establishes no timing thresholds.
 
 ---
 
@@ -497,7 +492,7 @@ omg status
 
 # 2. Check hook-env timing
 time omg hook-env -s zsh
-# Should be under 10ms
+# Record the result and compare against your own baseline.
 
 # 3. If slow, the daemon may be down
 omg daemon

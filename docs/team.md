@@ -1,387 +1,59 @@
 ---
-title: Team Collaboration
-sidebar_position: 21
-description: Environment lockfiles, drift detection, and team sync
+title: Team Environments
+sidebar_position: 40
+description: Share environment records and inspect drift
 ---
 
-# Team Collaboration
+# Team environments
 
-**Environment Sharing, Drift Detection, and Team Sync**
+OMG can capture and share environment records. It does not ensure identical machines, install all dependencies during synchronization, or replace your source-control and access-management policies.
 
-OMG provides collaborative features that ensure all team members work with identical development environments.
+## Capture and review
 
----
-
-## 🎯 Overview
-
-Team collaboration features:
-
-- **Environment Lockfiles** — Capture exact runtime versions and packages
-- **Drift Detection** — Alert when environments diverge
-- **Gist Sharing** — Share environments via GitHub Gists
-- **Team Sync** — Centralized environment management
-
----
-
-## 📦 Environment Lockfiles
-
-### What's Captured
-
-The `omg.lock` file captures:
-
-- **Runtime versions**: Node, Python, Go, Rust, Ruby, Java, Bun
-- **Explicit packages**: Packages you explicitly installed
-- **Environment fingerprint**: SHA256 hash for quick comparison
-
-### Capture Environment
+From the project directory:
 
 ```bash
-# Create omg.lock in current directory
 omg env capture
-```
-
-Example output (`omg.lock`):
-
-```json
-{
-  "schema_version": 1,
-  "runtimes": {
-    "node": "20.10.0",
-    "python": "3.12.0"
-  },
-  "packages": [
-    "firefox",
-    "neovim"
-  ],
-  "timestamp": 1768735800,
-  "hash": "a1b2c3d4e5f6..."
-}
-```
-
-Field notes: `packages` is a flat list of explicit package names, `timestamp` is unix time, and `hash` covers runtimes + packages. Newer `schema_version` values are rejected by older OMG instead of guessed (see `src/core/env/fingerprint.rs`).
-
-### Check for Drift
-
-```bash
 omg env check
 ```
 
-Output:
+Capture writes `omg.lock`. Review its runtime versions, explicit package inventory, and fingerprint before committing or uploading it. It may disclose internal package names or other private environment information. A fingerprint describes recorded inputs; it is not a proof of complete reproducibility.
 
-```
-✓ Environment matches omg.lock
-
-# Or if there's drift:
-⚠ Environment drift detected:
-  - node: expected 20.10.0, found 20.11.0
-  - Missing package: visual-studio-code-bin
-```
-
----
-
-## 🔗 Sharing Environments
-
-### Share via GitHub Gist
+## Share a record
 
 ```bash
-# Set GitHub token
-export GITHUB_TOKEN=ghp_xxxxxxxxxxxx
-
-# Share current environment
 omg env share
 ```
 
-Output:
+Supply the required `GITHUB_TOKEN` through an approved credential manager or CI secret store. Do not type literal tokens into shell commands, commit them, print them, or add them to `.zshrc`. Use the minimum permissions needed and revoke credentials through your provider when no longer needed.
 
-```
-✓ Environment shared!
-  URL: https://gist.github.com/username/abc123def456
-  
-Share this URL with your team.
-```
+The default Gist is secret, meaning unlisted, not encrypted or restricted to named team members. `--public` makes it public. Obtain approval before uploading private inventory or changing its visibility.
 
-### Sync from Shared Environment
+## Receive and compare
 
 ```bash
-# Sync from a teammate's environment
-omg env sync https://gist.github.com/username/abc123def456
-```
-
-This will:
-
-1. Download the lockfile (Gist URL or ID)
-2. Overwrite local `omg.lock`
-3. Report drift against your environment (install nothing itself — act on the report yourself)
-
----
-
-## 👥 Team Workspaces
-
-### Initialize Team
-
-```bash
-# Create team workspace
-omg team init mycompany/frontend
-
-# With custom name
-omg team init mycompany/frontend --name "Frontend Team"
-```
-
-This writes the team workspace config only, then prompts you to run `omg env capture` for the initial lock (commit `omg.lock` to your repo; teammates run `omg team pull` to sync).
-
-### Join Existing Team
-
-```bash
-# Join from a team remote (HTTPS gist.github.com URL with a Gist ID — other hosts are rejected)
-omg team join https://gist.github.com/mycompany/abc123def456
-```
-
-### Team Commands
-
-```bash
-# Check team sync status
-omg team status
-
-# Push your environment to team lock
-omg team push
-
-# Pull team lock and check for drift
-omg team pull
-
-# List team members and their sync status
-omg team members
-```
-
----
-
-## 🔄 Workflow Patterns
-
-### New Project Setup
-
-```bash
-# 1. Create project
-mkdir my-project && cd my-project
-git init
-
-# 2. Set up version files
-echo "20.10.0" > .nvmrc
-echo "3.12.0" > .python-version
-
-# 3. Install runtimes
-omg use node 20.10.0
-omg use python 3.12.0
-
-# 4. Capture environment
-omg env capture
-
-# 5. Commit
-git add omg.lock .nvmrc .python-version
-git commit -m "chore: add environment configuration"
-```
-
-### Daily Sync Workflow
-
-```bash
-# Start of day
-git pull
-omg env check  # Check for drift
-
-# If drift detected, pull the team lock:
-omg team pull   # Pull team lock and check drift
-
-# Or restore from a shared Gist:
-# omg env sync <gist-url>
-
-# Work...
-# ...
-
-# End of day (if you changed environment)
-omg env capture
-git add omg.lock
-git commit -m "chore: update environment lock"
-```
-
-### Onboarding New Team Members
-
-**For the new member:**
-
-```bash
-# 1. Install OMG
-curl -fsSL https://omg.latham.cloud/install.sh | bash
-
-# 2. Setup shell
-echo 'eval "$(omg hook zsh)"' >> ~/.zshrc
-source ~/.zshrc
-
-# 3. Clone project
-git clone git@github.com:company/project.git
-cd project
-
-# 4. Verify against the committed lockfile
-omg env check
-
-# 5. Verify
-omg env check
-omg which node
-omg which python
-```
-
----
-
-## 🔍 Fingerprinting
-
-### How Fingerprints Work
-
-The environment fingerprint is a SHA256 hash of:
-
-- All active runtime versions
-- Explicit package list (sorted)
-
-This allows quick comparison without sending full package lists.
-
-### Compare Environments
-
-There is no separate fingerprint subcommand; compare environments with the
-commands that exist today:
-
-```bash
-# Check the local machine against omg.lock
-omg env check
-
-# Compare two lock files directly
-omg diff --from teammate-omg.lock omg.lock
-```
-
----
-
-## 🛡️ Best Practices
-
-### 1. Version Control Your Lockfile
-
-```gitignore
-# .gitignore - DO NOT ignore omg.lock
-# Include it in version control
-```
-
-```bash
-git add omg.lock
-git commit -m "chore: update environment lock"
-```
-
-### 2. Use Version Files
-
-Create explicit version files for each runtime:
-
-```bash
-# Node.js
-echo "20.10.0" > .nvmrc
-
-# Python
-echo "3.12.0" > .python-version
-
-# Rust
-cat > rust-toolchain.toml << 'EOF'
-[toolchain]
-channel = "1.75.0"
-components = ["rustfmt", "clippy"]
-EOF
-```
-
-### 3. Check Before Push
-
-Add to your workflow:
-
-```bash
-# Pre-push check
+omg env sync https://gist.github.com/USER/GIST_ID
 omg env check
 ```
 
-Or add a Git hook:
+Sync downloads the environment record and checks drift; it installs nothing. Review the downloaded record before applying changes. Install required runtimes and packages explicitly with backend-compatible commands, then check again. A major runtime selector such as `22` is not an exact version pin.
 
-```bash
-# .git/hooks/pre-push
-#!/bin/bash
-omg env check || exit 1
-```
+A successful drift check does not establish identical transitive dependencies, operating-system state, secrets, compiler flags, or build outputs. Retain ecosystem lockfiles and your normal build verification.
 
-### 4. Automate in CI
+## Team commands are a separate interface
 
-```yaml
-# .github/workflows/ci.yml
-- name: Check Environment
-  run: omg env check
-```
+Inspect `omg team --help` for workspace initialization, joining, status, push/pull, membership, activity, and golden-path commands. Their service availability and authorization requirements are separate from Gist sharing. Joining, pushing, or running setup instructions can modify local or remote state. Review the target and operation before proceeding.
 
----
+CLI environment sharing is not proof of website organization membership, billing entitlement, invitation delivery, or enterprise compliance. Those have separate authorization and verification boundaries.
 
-## 🔧 Configuration
+## CI
 
-### GitHub Token
+Prepare a backend-compatible runner using a reviewed, pinned installer and verified release archive as described in [installation](./installation.md). Do not execute a moving installer URL directly from the network. Provide only the credentials required by that job; pull-request code must not gain access to publishing or organization tokens.
 
-For sharing via Gist:
+Run `omg env check` against a reviewed record after preparing the environment. Treat `omg run` as execution of repository-controlled code, not a sandbox. See [task runner](./task-runner.md) and [integrations](./integrations.md).
 
-```bash
-# Option 1: Environment variable
-export GITHUB_TOKEN=ghp_xxxxxxxxxxxx
+## Troubleshooting
 
-# Option 2: In shell config
-echo 'export GITHUB_TOKEN=ghp_xxxx' >> ~/.zshrc
-```
+For missing credentials, inspect credential-manager configuration without printing values. For drift, inspect the reported package/runtime differences rather than overwriting the shared lockfile to clear the failure. For failed downloads or malformed records, preserve the error and original file; do not weaken validation.
 
-Required scopes:
-
-- `gist` (for creating Gists)
-
-### Team Settings
-
-Run `omg team init mycompany/frontend --name "Frontend Team"` to generate `.omg/team.toml`. Run `omg team join <gist-url>` to configure a remote.
-
-The generated TOML uses flat `team_id`, `name`, `member_id`, `remote_url`, and `auto_push` fields. It does not support `[team]` and `[sync]` sections or the `auto_check` and `auto_prompt` settings. Review lockfile inventory before uploading it to a Gist.
-
----
-
-## 🔍 Troubleshooting
-
-### "GITHUB_TOKEN not set"
-
-```bash
-# Create a token at https://github.com/settings/tokens
-# With 'gist' scope
-
-export GITHUB_TOKEN=ghp_xxxxxxxxxxxx
-```
-
-### Drift Detected but Nothing Changed
-
-```bash
-# Re-capture environment
-omg env capture
-
-# Check what's different
-# Check what's different against the lock
-diff <(cat omg.lock | jq '.runtimes') <(omg which node; omg which python) || true
-# Or simply:
-omg env check
-```
-
-### Sync Fails
-
-```bash
-# Check URL is accessible
-curl -I <gist-url>
-
-# Try manual sync
-curl -s <gist-raw-url> > omg.lock
-omg env check
-```
-
----
-
-## 📚 See Also
-
-- [Workflows](./workflows.md) — Team onboarding workflow
-- [Configuration](./configuration.md) — Environment settings and patterns
-- [Quick Start](./quickstart.md) — Initial setup
-- [Security](./security.md) — Secure environment sharing and compliance
-- [Integrations](./integrations.md) — CI/CD integration for team workflows
-- [Runtimes](./runtimes.md) — Runtime version management for teams
+See [runtimes](./runtimes.md), [security](./security.md), and [CLI reference](./cli.md).

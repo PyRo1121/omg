@@ -351,6 +351,11 @@ fn try_fast_counter(args: &[String]) -> Result<bool> {
         return Ok(false);
     };
 
+    if counter == FastCounter::Explicit {
+        packages::explicit_sync(true)?;
+        return Ok(true);
+    }
+
     if let Some(status) = omg_lib::core::fast_status::FastStatus::read_default() {
         print_fast_counter(
             counter,
