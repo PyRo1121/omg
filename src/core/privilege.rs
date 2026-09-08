@@ -554,6 +554,37 @@ fn payload_command(
     command
 }
 
+/// Whether sudo itself refused to execute the re-exec path, as opposed to
+/// the payload running and failing (#300: containers deny magic-link
+/// execution with `sudo: unable to execute /proc/<pid>/exe: ...`). Both
+/// conditions must hold: sudo's diagnostic wording AND the exact path sudo
+/// was given, so a payload echoing similar wording can never trigger a
+/// second execution.
+fn sudo_refused_to_execute(stderr: &str, exe: &std::path::Path) -> bool {
+    stderr.contains("unable to execute") && stderr.contains(&*exe.to_string_lossy())
+}
+
+/// Canonical-path fallback for a refused /proc/PID/exe re-exec.
+///
+/// Returns `None` (no fallback) unless every condition holds:
+/// - the refused primary really is a /proc magic link, so canonical-path
+///   primaries (macOS, already-retried) never loop or retry;
+/// - the live image still resolves to that same install path (a
+///   ` (deleted)` suffix means the binary was replaced mid-run and the
+///   inode-pinning the proc path provides must not be surrendered);
+/// - the canonical path is root-trusted per [`trusted_executable_path`],
+///   so the retry cannot be redirected at an attacker-writable binary.
+fn fallback_executable(proc_exe: &std::path::Path) -> Option<std::path::PathBuf> {
+    if !proc_exe.starts_with("/proc") {
+        return None;
+    }
+    let live = std::fs::read_link("/proc/self/exe").ok()?;
+    if live.to_string_lossy().ends_with(" (deleted)") {
+        return None;
+    }
+    trusted_executable_path(&live).ok()
+}
+
 /// Run the omg payload under sudo exactly once and return its exit status
 /// without terminating this process.
 ///
@@ -676,19 +707,59 @@ async fn sudo_payload_status_in(
     }
 
     // Authenticated non-interactively: run the payload exactly once and
-    // propagate its result. Never retried — a failing elevated command must
-    // surface its own error, not trigger a second execution.
-    payload_command(sudo_program, &exe, args, true)
-        .status()
-        .await
-        .map_err(|e| {
-            anyhow::anyhow!(
-                "Failed to elevate privileges: {e}\n\
+    // propagate its result. A failing elevated command surfaces its own
+    // error — never retried, with one exception below.
+    //
+    // Stderr is piped (not inherited) on this path so a sudo-side refusal
+    // to execute the re-exec binary can be told apart from a payload that
+    // ran and failed. Buffered output is forwarded to the real stderr
+    // before returning, preserving what the caller would have seen.
+    let mut attempt = payload_command(sudo_program, &exe, args, true);
+    attempt.stderr(std::process::Stdio::piped());
+    let child = attempt.spawn().map_err(|e| {
+        anyhow::anyhow!(
+            "Failed to elevate privileges: {e}\n\
              \n\
              Run 'omg doctor --turbo' interactively to prime sudo credentials\n\
              before retrying."
-            )
-        })
+        )
+    })?;
+    let output = child.wait_with_output().await.map_err(|e| {
+        anyhow::anyhow!(
+            "Failed to elevate privileges: {e}\n\
+             \n\
+             Run 'omg doctor --turbo' interactively to prime sudo credentials\n\
+             before retrying."
+        )
+    })?;
+    use std::io::Write as _;
+    let _ = std::io::stderr().write_all(&output.stderr);
+    if !output.status.success()
+        && sudo_refused_to_execute(&String::from_utf8_lossy(&output.stderr), &exe)
+    {
+        // Sole retry: sudo never executed the binary (the payload ran zero
+        // times — no side effects to repeat), and the canonical install path
+        // verified root-trusted. Environments that deny magic-link execution
+        // (containers, #300) elevate through the pinned live image instead.
+        if let Some(canonical) = fallback_executable(&exe) {
+            tracing::debug!(
+                "Re-exec path refused; retrying elevation via {}",
+                canonical.display()
+            );
+            return payload_command(sudo_program, &canonical, args, true)
+                .status()
+                .await
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "Failed to elevate privileges: {e}\n\
+                     \n\
+                     Run 'omg doctor --turbo' interactively to prime sudo credentials\n\
+                     before retrying."
+                    )
+                });
+        }
+    }
+    Ok(output.status)
 }
 
 /// Re-execute the current command under sudo, replacing this process.
@@ -876,6 +947,62 @@ mod tests {
             lines[1],
             format!("-n -- /usr/bin/omg {ELEVATED_MARKER} sync"),
             "cached credentials must keep the payload noninteractive"
+        );
+    }
+
+    /// #300: containers deny executing the /proc/PID/exe re-exec path
+    /// (`sudo: unable to execute /proc/710/exe: Permission denied`) while a
+    /// payload that ran and failed reports its own error. Only the sudo-side
+    /// refusal — naming the exact path sudo was given — may trigger the
+    /// canonical-path fallback; anything else must run exactly once.
+    #[test]
+    fn sudo_exec_refusal_detector_recognizes_sudo_diagnostic() {
+        let exe = std::path::Path::new("/proc/710/exe");
+        assert!(sudo_refused_to_execute(
+            "sudo: unable to execute /proc/710/exe: Permission denied\n",
+            exe
+        ));
+        assert!(!sudo_refused_to_execute("", exe));
+        assert!(!sudo_refused_to_execute(
+            "sudo: a password is required\n",
+            exe
+        ));
+        assert!(!sudo_refused_to_execute(
+            "Error: Failed to synchronize AUR database\n",
+            exe
+        ));
+        // Same diagnostic shape but for a different path: not our re-exec.
+        assert!(!sudo_refused_to_execute(
+            "sudo: unable to execute /usr/bin/other: Permission denied\n",
+            exe
+        ));
+        // A payload echoing sudo-like wording without the re-exec path:
+        // still exactly-once, never a fallback retry.
+        assert!(!sudo_refused_to_execute(
+            "hook failed: unable to execute pacman-key\n",
+            exe
+        ));
+    }
+
+    #[tokio::test]
+    async fn child_failure_never_triggers_a_second_sudo_invocation() {
+        // Single-execution invariant: a payload that ran and failed must
+        // surface its error, not execute again via any fallback.
+        let (_directory, sudo, log) = fake_sudo(0, 1);
+        let status = sudo_payload_status_in(
+            &sudo,
+            std::path::PathBuf::from("/proc/710/exe"),
+            false,
+            &["sync"],
+        )
+        .await
+        .expect("fake sudo should execute");
+        assert_eq!(status.code(), Some(1));
+        let invocations = std::fs::read_to_string(log).expect("read fake sudo log");
+        assert_eq!(
+            invocations.lines().count(),
+            2,
+            "preflight plus exactly one payload, no fallback retry"
         );
     }
 
