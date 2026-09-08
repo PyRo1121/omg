@@ -238,7 +238,13 @@ impl UsageStats {
 
     fn save_to(&self, path: &std::path::Path) -> Result<()> {
         let content = serde_json::to_vec_pretty(self).context("Failed to serialize usage stats")?;
-        crate::core::safe_ops::atomic_write_file_sync(path, content)
+        crate::core::safe_ops::atomic_write_file_sync(path, content)?;
+        // An elevated (sudo) run re-owns the file as root via the rename
+        // above, locking the real user out of their own stats (#290).
+        if let Err(error) = crate::core::safe_ops::restore_original_user_ownership(path) {
+            tracing::warn!("Failed to restore usage stats ownership: {error:#}");
+        }
+        Ok(())
     }
 
     /// Record a command execution.
@@ -461,7 +467,7 @@ fn load_for_tracking() -> Option<UsageStats> {
     }
 }
 
-/// Acquire the cross-process usage lock (`usage.json.lock`) so a full
+/// Acquire the cross-process usage lock (`usage.lock`) so a full
 /// load-modify-save cycle cannot interleave with another omg invocation
 /// (which would silently lose counters to last-writer-wins). The lock is
 /// released when the returned file is dropped. Same pattern as
@@ -471,30 +477,74 @@ fn lock_usage_file() -> Option<std::fs::File> {
 }
 
 fn lock_file_at(lock_path: &std::path::Path) -> Option<std::fs::File> {
-    let lock = match std::fs::OpenOptions::new()
-        .create(true)
-        .read(true)
-        .write(true)
-        .truncate(false)
-        .open(lock_path)
-    {
-        Ok(lock) => lock,
+    match acquire_usage_lock(lock_path) {
+        Ok(lock) => Some(lock),
         Err(error) => {
             tracing::warn!(
-                "Failed to open usage lock {}: skipping this update ({error})",
+                "Failed to acquire usage lock {}: skipping this update ({error:#})",
                 lock_path.display()
             );
-            return None;
+            None
         }
-    };
-    if let Err(error) = lock.lock() {
-        tracing::warn!(
-            "Failed to lock usage stats {}: skipping this update ({error})",
-            lock_path.display()
-        );
-        return None;
     }
-    Some(lock)
+}
+
+fn acquire_usage_lock(lock_path: &Path) -> Result<std::fs::File> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+
+    use nix::fcntl::OFlag;
+    use nix::unistd::{User, fchown};
+
+    let original_user = if crate::core::is_root() {
+        std::env::var_os("SUDO_USER")
+            .or_else(|| std::env::var_os("DOAS_USER"))
+            .map(|name| {
+                let name = name.to_str().context("Original user name is not UTF-8")?;
+                User::from_name(name)
+                    .context("Failed to resolve original user")?
+                    .context("Original user account does not exist")
+            })
+            .transpose()?
+    } else {
+        None
+    };
+
+    let mut options = std::fs::OpenOptions::new();
+    options
+        .read(true)
+        .write(true)
+        .mode(0o600)
+        // NONBLOCK prevents a substituted FIFO from hanging before validation.
+        .custom_flags((OFlag::O_NOFOLLOW | OFlag::O_NONBLOCK).bits());
+    let (lock, created) = match options.create_new(true).open(lock_path) {
+        Ok(lock) => (lock, true),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            (options.create_new(false).open(lock_path)?, false)
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let metadata = lock.metadata().context("Failed to inspect usage lock")?;
+    anyhow::ensure!(metadata.is_file(), "Usage lock is not a regular file");
+    anyhow::ensure!(
+        metadata.nlink() == 1,
+        "Usage lock must have exactly one link"
+    );
+
+    if let Some(account) = original_user {
+        if created {
+            // Only an exclusively created inode is safe to give away. An existing
+            // inode could be a hardlink whose other name was removed before stat.
+            fchown(&lock, Some(account.uid), Some(account.gid))
+                .context("Failed to restore usage lock ownership")?;
+        } else {
+            anyhow::ensure!(
+                metadata.uid() == account.uid.as_raw(),
+                "Existing usage lock is not owned by the original user; refusing ownership transfer"
+            );
+        }
+    }
+    lock.lock().context("Failed to lock usage stats")?;
+    Ok(lock)
 }
 
 /// Run a load-modify-save cycle while holding the usage file lock.
@@ -695,6 +745,79 @@ mod tests {
     use super::*;
 
     #[test]
+    fn usage_lock_creates_and_reopens_regular_file_without_truncation() {
+        let directory = tempfile::tempdir().expect("lock directory");
+        let path = directory.path().join("usage.lock");
+        let lock = lock_file_at(&path).expect("create regular lock");
+        assert!(lock.metadata().expect("lock metadata").is_file());
+        drop(lock);
+        std::fs::write(&path, b"keep").expect("lock contents");
+        let _lock = lock_file_at(&path).expect("reopen regular lock");
+        assert_eq!(std::fs::read(&path).expect("read lock"), b"keep");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn usage_lock_rejects_symlink_and_preserves_target() {
+        use std::os::unix::fs::{MetadataExt, symlink};
+
+        let directory = tempfile::tempdir().expect("lock directory");
+        let target = directory.path().join("target");
+        let path = directory.path().join("usage.lock");
+        std::fs::write(&target, b"keep").expect("target contents");
+        let before = std::fs::metadata(&target).expect("target metadata");
+        symlink(&target, &path).expect("symlink lock");
+
+        assert!(lock_file_at(&path).is_none());
+        assert!(
+            std::fs::symlink_metadata(&path)
+                .expect("link metadata")
+                .is_symlink()
+        );
+        let after = std::fs::metadata(&target).expect("target metadata");
+        assert_eq!(
+            (after.uid(), after.gid(), after.mode()),
+            (before.uid(), before.gid(), before.mode())
+        );
+        assert_eq!(std::fs::read(&target).expect("read target"), b"keep");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn usage_lock_rejects_hardlink_and_preserves_target() {
+        use std::os::unix::fs::MetadataExt;
+
+        let directory = tempfile::tempdir().expect("lock directory");
+        let target = directory.path().join("target");
+        let path = directory.path().join("usage.lock");
+        std::fs::write(&target, b"keep").expect("target contents");
+        std::fs::hard_link(&target, &path).expect("hardlink lock");
+        let before = std::fs::metadata(&target).expect("target metadata");
+
+        assert!(lock_file_at(&path).is_none());
+        let after = std::fs::metadata(&target).expect("target metadata");
+        assert_eq!(
+            (after.uid(), after.gid(), after.mode(), after.nlink()),
+            (before.uid(), before.gid(), before.mode(), before.nlink())
+        );
+        assert_eq!(std::fs::read(&target).expect("read target"), b"keep");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn usage_lock_rejects_fifo_and_directory() {
+        let directory = tempfile::tempdir().expect("lock directory");
+        assert!(lock_file_at(directory.path()).is_none());
+        let fifo = directory.path().join("usage.lock");
+        nix::unistd::mkfifo(
+            &fifo,
+            nix::sys::stat::Mode::S_IRUSR | nix::sys::stat::Mode::S_IWUSR,
+        )
+        .expect("fifo lock");
+        assert!(lock_file_at(&fifo).is_none());
+    }
+
+    #[test]
     fn usage_sync_refuses_to_post_when_telemetry_is_disabled() {
         // W8-B-02 regression: a valid account must not bypass the telemetry
         // opt-out; dashboard usage sync posts only when BOTH conditions hold.
@@ -781,6 +904,26 @@ mod tests {
     }
 
     #[test]
+    fn saved_usage_stats_roundtrip_and_keep_owner() {
+        // #290 wiring: save_to must persist through the ownership-restore
+        // step. Non-root the restore is a no-op, so the roundtrip and the
+        // file owner must be unaffected by its presence.
+        let directory = tempfile::tempdir().expect("create temporary directory");
+        let path = directory.path().join("usage.json");
+        let mut stats = UsageStats::default();
+        stats.total_commands = 7;
+        stats.save_to(&path).expect("save must succeed");
+        let loaded = UsageStats::load_from(&path).expect("saved stats must load");
+        assert_eq!(loaded.total_commands, 7);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let owner = std::fs::metadata(&path).expect("stat saved file").uid();
+            assert_eq!(owner, rustix::process::geteuid().as_raw());
+        }
+    }
+
+    #[test]
     fn missing_usage_stats_load_as_empty() {
         let directory = tempfile::tempdir().expect("create temporary directory");
         let stats = UsageStats::load_from(&directory.path().join("missing.json"))
@@ -807,7 +950,8 @@ mod tests {
                 barrier.wait();
                 for _ in 0..UPDATES_PER_WRITER {
                     // Same lock + load-modify-save shape as the public track* functions.
-                    let _lock = lock_file_at(&path.with_extension("lock"));
+                    let _lock = lock_file_at(&path.with_extension("lock"))
+                        .expect("writer must acquire lock");
                     let mut stats = UsageStats::load_from(&path).expect("valid usage stats");
                     stats.record_command_on(
                         "search",
