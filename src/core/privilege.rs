@@ -88,6 +88,8 @@ fn elevation_executable() -> anyhow::Result<std::path::PathBuf> {
 /// Environment variables stripped from every sudo child. One list so a new
 /// scrub variable cannot be added in one elevation path and missed in another.
 const PRIVILEGED_ENV_SCRUB: &[&str] = &[
+    // APT configuration can define root-executed transaction hooks.
+    "APT_CONFIG",
     // Force terminal-based password prompt, never GUI askpass
     "SUDO_ASKPASS",
     "SSH_ASKPASS",
@@ -823,6 +825,7 @@ mod tests {
             .map(|(key, _)| key.to_string_lossy().into_owned())
             .collect();
         for name in [
+            "APT_CONFIG",
             "LD_PRELOAD",
             "LD_LIBRARY_PATH",
             "DYLD_INSERT_LIBRARIES",
@@ -841,6 +844,37 @@ mod tests {
                 "{name} must be scrubbed from sudo children"
             );
         }
+    }
+
+    #[test]
+    fn system_command_does_not_inherit_apt_config() {
+        const CHILD: &str = "OMG_APT_CONFIG_SCRUB_TEST_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            assert!(std::env::var_os("APT_CONFIG").is_some());
+            let output = super::system_command("printenv")
+                .unwrap()
+                .arg("APT_CONFIG")
+                .output()
+                .unwrap();
+            assert_eq!(output.status.code(), Some(1));
+            assert!(output.stdout.is_empty());
+            return;
+        }
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "core::privilege::tests::system_command_does_not_inherit_apt_config",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env("APT_CONFIG", "/untrusted/apt.conf")
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "isolated environment regression failed: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
     }
 
     #[tokio::test]
