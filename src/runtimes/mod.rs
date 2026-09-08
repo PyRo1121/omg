@@ -20,6 +20,7 @@ pub(crate) mod pi;
 pub(crate) mod python;
 pub(crate) mod ruby;
 pub(crate) mod rust;
+pub(crate) mod swift;
 pub(crate) mod tool_registry;
 pub(crate) mod zig;
 
