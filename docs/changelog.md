@@ -642,6 +642,7 @@ Bring in the QEMU lifecycle runner, contract-driven smoke tests, failure evidenc
 
 ### 🔧 Maintenance
 
+- Checkpoint benchmark recording and QEMU trigger updates
 - Checkpoint QEMU transaction follow-up
 - Checkpoint concurrent QEMU transaction and fixture work
 - Checkpoint concurrent benchmark fixture work
