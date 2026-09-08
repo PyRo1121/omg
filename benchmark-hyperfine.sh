@@ -2,18 +2,12 @@
 set -euo pipefail
 
 # ============================================================================
-# OMG Performance Benchmark with Hyperfine (Industry Best Practice)
+# OMG command measurements with Hyperfine
 # ============================================================================
 #
-# This benchmark uses hyperfine (https://github.com/sharkdp/hyperfine),
-# the industry-standard CLI benchmarking tool used by ripgrep, fd, and bat.
-#
-# ADVANTAGES OVER CUSTOM BASH TIMING:
-# - Statistical rigor with outlier detection (Modified Z-score method)
-# - Automatic run count determination for confidence intervals
-# - Warm/cold cache benchmarking support
-# - JSON export for CI regression detection
-# - 40-60% faster execution than manual bash loops
+# Hyperfine: https://github.com/sharkdp/hyperfine
+# Raw samples and exit codes are retained. Timing validity does not establish
+# workload equivalence; guest comparisons check package identity and version.
 #
 # REQUIREMENTS:
 #   omg install hyperfine       # Arch Linux
@@ -114,6 +108,7 @@ fi
 
 EXPORT_DIR=${OMG_BENCH_EXPORT_DIR:-benchmark_results}
 mkdir -p "$EXPORT_DIR"
+EXPORT_DIR="$(cd "$EXPORT_DIR" && pwd)"
 BENCH_SOURCE_CACHE="${OMG_BENCH_SOURCE_CACHE:-${OMG_CACHE_DIR:-$HOME/.cache/omg}}"
 
 RED='\033[0;31m'
@@ -155,10 +150,10 @@ run_hyperfine() {
     local json="$1"
     local md="$2"
     shift 2
-    hyperfine --shell=none --output=pipe --input=null \
+    hyperfine --shell=none --output=pipe \
         --warmup "$WARMUP" --min-runs "$MIN_RUNS" --max-runs "$MAX_RUNS" \
         --export-json "$json" --export-markdown "$md" \
-        "$@"
+        "$@" < /dev/null
 }
 
 preflight_match() {
@@ -241,11 +236,14 @@ if [[ "$GUEST_MODE" == true ]]; then
     export OMG_SOCKET_PATH="$EXPORT_DIR/no-daemon.sock"
     export OMG_CACHE_DIR="$EXPORT_DIR/cache"
     export OMG_DATA_DIR="$EXPORT_DIR/data"
-    mkdir -p "$OMG_CACHE_DIR" "$OMG_DATA_DIR"
+    export OMG_CONFIG_DIR="$EXPORT_DIR/config"
+    export OMG_NO_TELEMETRY=1
+    mkdir -p "$OMG_CACHE_DIR" "$OMG_DATA_DIR" "$OMG_CONFIG_DIR"
     "$OMG" info tree > "$EXPORT_DIR/omg-info.stdout" 2> "$EXPORT_DIR/omg-info.stderr"
     "${native[@]}" > "$EXPORT_DIR/native-info.stdout" 2> "$EXPORT_DIR/native-info.stderr"
     normalize_info() {
         awk -v rpm_release="$1" '
+          {sub(/^[[:space:]]+/, ""); sub(/[[:space:]]+$/, "")}
           /^(Name|Package)[[:space:]]*:/ {sub(/^[^:]*:[[:space:]]*/, ""); name=$0; names++}
           /^Version[[:space:]]*:/ {sub(/^[^:]*:[[:space:]]*/, ""); version=$0; versions++}
           /^Release[[:space:]]*:/ {sub(/^[^:]*:[[:space:]]*/, ""); release=$0; releases++}
@@ -264,6 +262,8 @@ if [[ "$GUEST_MODE" == true ]]; then
     cmp "$EXPORT_DIR/omg-identity.tsv" "$EXPORT_DIR/native-identity.tsv"
     sha256sum "$OMG" > "$EXPORT_DIR/binary-sha256.txt"
     hyperfine --version > "$EXPORT_DIR/hyperfine-version.txt"
+    "$native_name" --version > "$EXPORT_DIR/native-version.txt" 2>&1
+    "$OMG" --version > "$EXPORT_DIR/omg-version.txt"
     uname -a > "$EXPORT_DIR/kernel.txt"
     cp /etc/os-release "$EXPORT_DIR/os-release"
     printf -v omg_command '%q ' "$OMG" info tree
@@ -276,6 +276,13 @@ if [[ "$GUEST_MODE" == true ]]; then
         (.times|length) >= $minimum and (.times|length) <= $maximum and
         (.times|length) == (.exit_codes|length) and all(.exit_codes[]; . == 0))
     ' "$EXPORT_DIR/info.json" >/dev/null
+    "$OMG" info tree > "$EXPORT_DIR/omg-info-after.stdout" 2> "$EXPORT_DIR/omg-info-after.stderr"
+    "${native[@]}" > "$EXPORT_DIR/native-info-after.stdout" 2> "$EXPORT_DIR/native-info-after.stderr"
+    normalize_info false "$EXPORT_DIR/omg-info-after.stdout" > "$EXPORT_DIR/omg-identity-after.tsv"
+    normalize_info "$([[ "$distro" == fedora ]] && echo true || echo false)" \
+        "$EXPORT_DIR/native-info-after.stdout" > "$EXPORT_DIR/native-identity-after.tsv"
+    cmp "$EXPORT_DIR/omg-identity.tsv" "$EXPORT_DIR/omg-identity-after.tsv"
+    cmp "$EXPORT_DIR/native-identity.tsv" "$EXPORT_DIR/native-identity-after.tsv"
     jq -n --arg distro "$distro" --arg baseline "$native_name" \
         --argjson warmup "$WARMUP" \
         '{schema_version:1, complete:true, distro:$distro, operation:"info",

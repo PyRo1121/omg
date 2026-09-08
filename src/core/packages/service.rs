@@ -248,22 +248,18 @@ impl PackageService {
 
     /// Remove packages
     pub async fn remove(&self, packages: &[String], _recursive: bool) -> Result<()> {
-        // Every requested package must appear in history even when its info
-        // lookup misses (e.g. installed but absent from the repo index);
-        // otherwise we mutate packages that history will never mention.
+        let installed: std::collections::HashMap<_, _> = self
+            .backend
+            .list_installed()
+            .await?
+            .into_iter()
+            .map(|package| (package.name, package.version.version_string()))
+            .collect();
         let mut changes = Vec::with_capacity(packages.len());
         for pkg in packages {
-            let known = self.backend.info(pkg).await?;
-            let (name, old_version) = match known {
-                Some(info) => {
-                    let version = info.version.version_string();
-                    (info.name, Some(version))
-                }
-                None => (pkg.clone(), None),
-            };
             changes.push(PackageChange {
-                name,
-                old_version,
+                name: pkg.clone(),
+                old_version: installed.get(pkg).cloned(),
                 new_version: None,
                 source: self.backend.name().to_string(),
             });
@@ -374,7 +370,7 @@ impl PackageService {
             unused_mut,
             reason = "mutated only when the Arch AUR branch is compiled"
         )]
-        let mut updates = self.official_updates().await?;
+        let mut updates = self.backend.list_updates().await?;
 
         #[cfg(feature = "arch")]
         if let Some(aur) = &self.aur_client {
@@ -393,24 +389,6 @@ impl PackageService {
         }
 
         Ok(updates)
-    }
-
-    async fn official_updates(&self) -> Result<Vec<UpdateInfo>> {
-        #[cfg(unix)]
-        if let Ok(mut client) = crate::core::client::DaemonClient::connect().await
-            && let Ok(entries) = client.list_updates().await
-        {
-            return Ok(entries
-                .into_iter()
-                .map(|entry| UpdateInfo {
-                    name: entry.name,
-                    old_version: entry.old_version,
-                    new_version: entry.new_version,
-                    repo: entry.repo,
-                })
-                .collect());
-        }
-        self.backend.list_updates().await
     }
 
     /// Get package info
@@ -558,6 +536,45 @@ mod tests {
         > {
             Box::pin(async { Ok(Vec::new()) })
         }
+    }
+
+    #[tokio::test]
+    async fn removal_history_records_installed_not_candidate_version() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let backend = Arc::new(crate::package_managers::mock::MockPackageManager::new_in(
+            "debian",
+            directory.path(),
+        ));
+        backend.set_installed_version("fixture", "1.0.0")?;
+        backend.set_available_version("fixture", "2.0.0")?;
+        let history = HistoryManager::new_in(directory.path().join("history.json"))?;
+        let service = PackageService::builder(backend).history(history).build()?;
+        service.remove(&["fixture".into()], false).await?;
+        let transactions = service.history.as_ref().unwrap().load()?;
+        assert_eq!(transactions.len(), 1);
+        assert_eq!(
+            transactions[0].changes[0].old_version.as_deref(),
+            Some("1.0.0")
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn updates_come_from_the_injected_inventory() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let backend = Arc::new(crate::package_managers::mock::MockPackageManager::new_in(
+            "debian",
+            directory.path(),
+        ));
+        backend.set_installed_version("isolated-fixture", "1.0.0")?;
+        backend.set_available_version("isolated-fixture", "2.0.0")?;
+        let service = PackageService::builder(backend).without_history().build()?;
+        let updates = service.list_updates().await?;
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].name, "isolated-fixture");
+        assert_eq!(updates[0].old_version, "1.0.0");
+        assert_eq!(updates[0].new_version, "2.0.0");
+        Ok(())
     }
 
     #[test]

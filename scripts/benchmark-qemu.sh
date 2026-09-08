@@ -321,6 +321,10 @@ if [[ -n "$inventory_tiers" ]]; then
   cp "$here/qemu-inventory.sh" "$work/qemu-inventory.sh"
   cp "$tsv" "$work/cases.tsv"
 fi
+if [[ "$benchmark" == true ]]; then
+  cp "$here/../benchmark-hyperfine.sh" "$work/benchmark-hyperfine.sh"
+  sha256sum "$work/benchmark-hyperfine.sh" > "$work/benchmark-driver-sha256.txt"
+fi
 cat > "$work/guest-check.sh" <<'GUEST'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -380,12 +384,12 @@ version=$("${version_cmd[@]}")
 [[ $(awk '$1 == "Version:" {print $2}' evidence/omg-info.txt) == "$version" ]]
 if [[ "$benchmark" == true ]]; then
   case "$distro" in
-    arch) sudo -n pacman -S --noconfirm --needed hyperfine || exit 120 ;;
-    debian|ubuntu) sudo -n env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends hyperfine || exit 120 ;;
-    fedora) sudo -n dnf install -y hyperfine || exit 120 ;;
+    arch) sudo -n pacman -S --noconfirm --needed hyperfine jq || exit 120 ;;
+    debian|ubuntu) sudo -n env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends hyperfine jq || exit 120 ;;
+    fedora) sudo -n dnf install -y hyperfine jq || exit 120 ;;
   esac
-  hyperfine --shell=none --output=pipe --warmup 3 --runs 30 --export-json evidence/info.json \
-    --command-name 'OMG installed info' "$bin info tree" --command-name 'Native info' "${native[*]}"
+  OMG_BENCH_BINARY="$bin" OMG_BENCH_EXPORT_DIR="$HOME/evidence/benchmarks" \
+    bash "$HOME/benchmark-hyperfine.sh" --guest || exit 120
 fi
 sudo -n "$bin" remove --yes tree
 if installed >/dev/null 2>&1; then echo 'package remains installed' >&2; exit 1; fi
@@ -433,6 +437,9 @@ GUEST
 opts=(-i client-key -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=known_hosts)
 timeout 60 docker exec -w /work/guest "$controller" scp "${opts[@]}" -P 2222 "/work/release/$archive" bench@127.0.0.1:release.tar.gz
 timeout 60 docker exec -w /work/guest "$controller" scp "${opts[@]}" -P 2222 /work/guest-check.sh bench@127.0.0.1:guest-check.sh
+if [[ "$benchmark" == true ]]; then
+  timeout 60 docker exec -w /work/guest "$controller" scp "${opts[@]}" -P 2222 /work/benchmark-hyperfine.sh bench@127.0.0.1:benchmark-hyperfine.sh
+fi
 rc=0
 timeout 600 docker exec -w /work/guest "$controller" ssh "${opts[@]}" -p 2222 bench@127.0.0.1 "bash guest-check.sh '$distro' '$tag' '$digest' '$benchmark' '$arch' '$guest_uname' '$inventory_tiers'" > "$work/guest-check.log" 2>&1 || rc=$?
 timeout 60 docker exec -w /work/guest "$controller" scp -r "${opts[@]}" -P 2222 bench@127.0.0.1:evidence /work/guest/ > "$work/evidence-copy.log" 2>&1
