@@ -88,6 +88,32 @@ class BenchmarkAdmissionTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertIn("install or remove", result.stderr)
 
+    def test_transaction_count_is_bounded_before_guest_start(self) -> None:
+        script = Path(__file__).resolve().parents[1] / "scripts/benchmark-qemu.sh"
+        for count in ("0", "101", "-1", "1;exit 0"):
+            result = subprocess.run(
+                ["/bin/bash", str(script), "--benchmark-transactions", count],
+                cwd=self.source,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=10,
+            )
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+
+    def test_guest_and_development_modes_are_exclusive(self) -> None:
+        script = Path(__file__).resolve().parents[1] / "benchmark-hyperfine.sh"
+        result = subprocess.run(
+            ["/bin/bash", str(script), "--guest", "--update"],
+            cwd=self.source,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("mutually exclusive", result.stderr)
+
     def test_command_metadata_preserves_every_argument(self) -> None:
         script = Path(__file__).resolve().parents[1] / "benchmark-hyperfine.sh"
         body = script.read_text(encoding="utf-8").split("command_json() {\n", 1)[1]
