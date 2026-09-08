@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use crate::cli::{style, ui};
 #[cfg(unix)]
-use crate::core::client::DaemonClient;
+use crate::core::client::SyncDaemonClient;
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
 use crate::core::env::distro::is_debian_like;
 #[cfg(unix)]
@@ -57,8 +57,8 @@ pub fn info_sync(package: &str) -> Result<bool> {
 
     // Try daemon first (ULTRA FAST - <1ms)
     #[cfg(unix)]
-    if let Ok(mut client) = DaemonClient::connect_sync_with_timeout(DAEMON_INFO_TIMEOUT)
-        && let Ok(info) = client.info_sync(package)
+    if let Ok(mut client) = SyncDaemonClient::acquire_with_timeout(DAEMON_INFO_TIMEOUT)
+        && let Ok(info) = client.info(package)
     {
         display_detailed_info(&info);
 

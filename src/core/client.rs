@@ -51,8 +51,8 @@ pub fn wait_for_daemon_ready(
     for _ in 0..attempts {
         std::thread::sleep(interval);
         if socket_path.exists()
-            && let Ok(mut client) = DaemonClient::connect_sync()
-            && client.ping_sync().is_ok()
+            && let Ok(mut client) = SyncDaemonClient::acquire()
+            && client.ping().is_ok()
         {
             return true;
         }
@@ -79,20 +79,25 @@ fn connect_sync_stream_with_timeout(timeout: Duration) -> Result<SyncUnixStream>
     Ok(stream)
 }
 
-fn connect_sync_stream() -> Result<SyncUnixStream> {
-    connect_sync_stream_with_timeout(REQUEST_TIMEOUT)
-}
-
 /// Get the default socket path
 #[must_use]
 pub fn default_socket_path() -> PathBuf {
     crate::core::paths::socket_path()
 }
 
-/// IPC Client for daemon communication
+/// Asynchronous IPC client. Synchronous callers use [`SyncDaemonClient`].
+///
+/// Transport mismatches are rejected at compile time rather than after connecting:
+///
+/// ```compile_fail
+/// use omg_lib::core::client::DaemonClient;
+/// use omg_lib::daemon::protocol::Request;
+/// fn wrong_transport(client: &mut DaemonClient) {
+///     let _ = client.call_sync(&Request::Ping { id: 1 });
+/// }
+/// ```
 pub struct DaemonClient {
-    framed: Option<Framed<UnixStream, LengthDelimitedCodec>>,
-    sync_stream: Option<SyncUnixStream>,
+    framed: Framed<UnixStream, LengthDelimitedCodec>,
     request_id: AtomicU64,
 }
 
@@ -152,8 +157,7 @@ impl DaemonClient {
                             .new_codec(),
                     );
                     return Ok(Self {
-                        framed: Some(framed),
-                        sync_stream: None,
+                        framed,
                         request_id: AtomicU64::new(1),
                     });
                 }
@@ -188,29 +192,10 @@ impl DaemonClient {
         }
     }
 
-    /// Connect to the daemon synchronously (sub-millisecond).
-    pub fn connect_sync() -> Result<Self> {
-        Self::connect_sync_with_timeout(REQUEST_TIMEOUT)
-    }
-
-    /// Connect synchronously with a caller-specific request timeout.
-    pub fn connect_sync_with_timeout(timeout: Duration) -> Result<Self> {
-        if Self::daemon_disabled() {
-            anyhow::bail!("Daemon disabled by environment");
-        }
-        let stream = connect_sync_stream_with_timeout(timeout)?;
-
-        Ok(Self {
-            framed: None,
-            sync_stream: Some(stream),
-            request_id: AtomicU64::new(1),
-        })
-    }
-
     /// Send a request and get response
     pub async fn call(&mut self, request: Request) -> Result<ResponseResult> {
         let id = request.id();
-        let framed = self.framed.as_mut().context("Client is in sync mode")?;
+        let framed = &mut self.framed;
 
         // Encode and send (versioned frame). The send shares the same timeout
         // budget as the read: a wedged daemon that stops draining its socket
@@ -230,36 +215,10 @@ impl DaemonClient {
         decode_response(&response_bytes, id)
     }
 
-    /// Send a request and get response synchronously (ultra fast)
-    pub fn call_sync(&mut self, request: &Request) -> Result<ResponseResult> {
-        let stream = self
-            .sync_stream
-            .as_mut()
-            .context("Client is in async mode")?;
-        sync_roundtrip(stream, request)
-    }
-
-    /// Get package info synchronously
-    pub fn info_sync(&mut self, package: &str) -> Result<DetailedPackageInfo> {
-        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
-        let response = self.call_sync(&Request::Info {
-            id,
-            package: package.to_string(),
-        })?;
-        extract_response(response, id, as_info)
-    }
-
     /// Ping the daemon
     pub async fn ping(&mut self) -> Result<String> {
         let id = self.request_id.fetch_add(1, Ordering::SeqCst);
         let response = self.call(Request::Ping { id }).await?;
-        extract_response(response, id, as_ping)
-    }
-
-    /// Ping the daemon synchronously
-    pub fn ping_sync(&mut self) -> Result<String> {
-        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
-        let response = self.call_sync(&Request::Ping { id })?;
         extract_response(response, id, as_ping)
     }
 
@@ -447,8 +406,7 @@ fn as_suggest(response: ResponseResult) -> Option<Vec<String>> {
 }
 
 /// Serialize `request`, exchange one length-delimited frame with the daemon,
-/// and validate the response ID. Shared by the sync client paths above and
-/// [`SyncDaemonClient`].
+/// and validate the response ID for [`SyncDaemonClient`].
 fn sync_roundtrip(stream: &mut SyncUnixStream, request: &Request) -> Result<ResponseResult> {
     let id = request.id();
     let request_bytes = crate::daemon::protocol::encode_frame(request)
@@ -462,26 +420,37 @@ fn sync_roundtrip(stream: &mut SyncUnixStream, request: &Request) -> Result<Resp
 
 /// Synchronous client for non-async contexts
 pub struct SyncDaemonClient {
-    stream: Option<SyncUnixStream>,
+    stream: SyncUnixStream,
     request_id: AtomicU64,
 }
 
 impl SyncDaemonClient {
     /// Create a new sync connection to the daemon
     pub fn acquire() -> Result<Self> {
+        Self::acquire_with_timeout(REQUEST_TIMEOUT)
+    }
+
+    /// Connect synchronously with caller-specific socket read and write timeouts.
+    pub fn acquire_with_timeout(timeout: Duration) -> Result<Self> {
         if DaemonClient::daemon_disabled() {
             anyhow::bail!("Daemon disabled by environment");
         }
         Ok(Self {
-            stream: Some(connect_sync_stream()?),
+            stream: connect_sync_stream_with_timeout(timeout)?,
             request_id: AtomicU64::new(1),
         })
     }
 
     /// Send a request and get response
     pub fn call(&mut self, request: &Request) -> Result<ResponseResult> {
-        let stream = self.stream.as_mut().context("Connection not available")?;
-        sync_roundtrip(stream, request)
+        sync_roundtrip(&mut self.stream, request)
+    }
+
+    /// Ping the daemon without an async runtime.
+    pub fn ping(&mut self) -> Result<String> {
+        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
+        let response = self.call(&Request::Ping { id })?;
+        extract_response(response, id, as_ping)
     }
 
     /// Get package info
