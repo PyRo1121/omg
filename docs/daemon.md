@@ -14,8 +14,8 @@ The OMG daemon (`omgd`) is an optional speed boost: it keeps package indices in 
 
 When the daemon starts, it resolves its operating environment and establishes a secure communication channel:
 
-- **Socket Resolution**: It identifies the optimal path for the Unix socket, prioritizing the user's runtime directory (`$XDG_RUNTIME_DIR`) and falling back to systemic shared locations.
-- **Cleanup and Bind**: It ensures a fresh start by removing any stale socket files and binding with strict `0600` permissions (user read/write only).
+- **Socket Resolution**: It identifies the optimal path for the Unix socket in this order: `$OMG_SOCKET_PATH` override, `$XDG_RUNTIME_DIR/omg.sock`, `/run/user/<uid>/omg.sock`, `/tmp/omg-<uid>/omg.sock`, and finally a user-private `<data-dir>/run/omg.sock` used only when the `/tmp` fallback exists but fails validation (e.g. pre-created by another local user).
+- **Cleanup and Bind**: It ensures a fresh start by removing any stale socket files and binding with strict `0600` permissions (user read/write only). The parent directory is created mode `0700` and is enforced on bind and connect to be a real non-symlink directory owned by the current uid with no group/world bits.
 - **Detached Launch**: `omg daemon` (no subcommands) discards stdout and stderr. Run `omgd` directly or through a service manager configured to capture output when you need logs. For daemon status, use `omg daemon-status`; `omg audit` (scan and compliance export) and `omg metrics` require a running daemon.
 
 ### 2. State Management

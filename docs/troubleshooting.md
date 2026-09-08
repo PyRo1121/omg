@@ -45,11 +45,12 @@ omg status
 # 1. Start the daemon
 omg daemon
 
-# 2. If that fails, check for stale socket
-ls -la $XDG_RUNTIME_DIR/omg.sock
+# 2. If that fails, check for stale socket (use whichever path exists;
+#    see Socket Resolution order in daemon.md)
+ls -la $XDG_RUNTIME_DIR/omg.sock /tmp/omg-$UID/omg.sock 2>/dev/null
 
 # 3. Remove stale socket if present
-rm $XDG_RUNTIME_DIR/omg.sock
+rm -f $XDG_RUNTIME_DIR/omg.sock /tmp/omg-$UID/omg.sock
 
 # 4. Start daemon in foreground to see errors
 omgd
@@ -95,7 +96,8 @@ journalctl --user -u omgd -n 50
 **Solutions:**
 
 ```bash
-# 1. Check socket ownership
+# 1. Check socket ownership (also try /tmp/omg-$UID/omg.sock when
+#    $XDG_RUNTIME_DIR is unset; see Socket Resolution order in daemon.md)
 ls -la $XDG_RUNTIME_DIR/omg.sock
 
 # 2. Remove and recreate socket
@@ -671,8 +673,8 @@ pkill omgd
 mv ~/.local/share/omg ~/.local/share/omg.bak
 mv ~/.config/omg ~/.config/omg.bak
 
-# 3. Remove socket
-rm $XDG_RUNTIME_DIR/omg.sock
+# 3. Remove socket (also /tmp/omg-$UID/omg.sock if that fallback is in use)
+rm -f $XDG_RUNTIME_DIR/omg.sock /tmp/omg-$UID/omg.sock
 
 # 4. Reinstall if needed
 cd /path/to/omg
