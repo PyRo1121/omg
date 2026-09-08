@@ -429,7 +429,10 @@ unset FAKE_INVENTORY_RESULT FAKE_INVENTORY_EXIT FAKE_INVENTORY_SHAPE OMG_SMOKE_S
 export FAKE_QEMU_GUEST_EXIT=1
 assert_rc 1 "$qemu_runner" --distro arch --release v9.9.9 --staged-dir "$scratch/valid" --inventory-tiers hermetic --evidence-dir "$scratch/qemu-blocked-inventory"
 blocked_results=$(find "$scratch/qemu-blocked-inventory" -path '*/inventory/results.json' -print -quit)
-jq -e 'length == 167 and all(.[]; .result == "BLOCKED")' "$blocked_results" >/dev/null || fail 'lifecycle failure hid requested coverage'
+blocked_ids=$(awk -F '\t' 'NR > 1 && $7 ~ /(^|,)hermetic(,|$)/ {print "qemu-arch-" $1}' \
+  "$repo_root/tests/cli_behavior_inventory.tsv" | jq -Rsc 'split("\n") | map(select(length > 0)) | sort')
+jq -e --argjson expected "$blocked_ids" '(map(.case_id) | sort) == $expected and all(.[]; .result == "BLOCKED")' \
+  "$blocked_results" >/dev/null || fail 'lifecycle failure hid requested coverage'
 export FAKE_QEMU_GUEST_EXIT=0
 assert_rc 2 "$qemu_runner" --inventory-tiers "hermetic';exit 0;'"
 assert_rc 2 "$qemu_runner" --inventory-tiers $'hermetic\n\047;exit 0;\047'

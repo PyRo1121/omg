@@ -60,11 +60,23 @@ class BenchmarkAdmissionTests(unittest.TestCase):
         script = Path(__file__).resolve().parents[1] / "benchmark-hyperfine.sh"
         body = script.read_text(encoding="utf-8").split("    command_json() {\n", 1)[1]
         body = body.split("\n    }\n", 1)[0]
-        invocation = 'command_json() {\n' + body + '\n}\ncommand_json "$@"\n'
-        arguments = ["program", "with spaces", "--flag", "", "quote'\"value", "line\nbreak"]
+        invocation = "command_json() {\n" + body + '\n}\ncommand_json "$@"\n'
+        arguments = [
+            "program",
+            "with spaces",
+            "--flag",
+            "",
+            "quote'\"value",
+            "line\nbreak",
+        ]
         result = subprocess.run(
-            ["/bin/bash", "-s", "--", "fixture label", *arguments], input=invocation,
-            cwd=self.source, capture_output=True, text=True, check=False, timeout=10,
+            ["/bin/bash", "-s", "--", "fixture label", *arguments],
+            input=invocation,
+            cwd=self.source,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         payload: object = json.loads(result.stdout)
