@@ -130,8 +130,8 @@ mod debian_version {
 
         let (epoch, rest) = split_deb_epoch(version);
         epoch.hash(state);
-        let (upstream, revision) = split_deb_revision(rest);
-        for mut part in [upstream, revision] {
+        let parts: [&str; 2] = split_deb_revision(rest).into();
+        for mut part in parts {
             while !part.is_empty() {
                 let (non_digits, rest) = split_at_deb_digit(part);
                 let (digits, rest) = split_at_deb_non_digit(rest);
