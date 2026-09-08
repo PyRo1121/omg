@@ -140,13 +140,23 @@ passwords, or a production environment dump in this file.
 The reporter sends one failure-summary event per invocation containing only case
 IDs, distribution names, result categories, exit codes, elapsed seconds, release,
 and run ID. It does not upload stdout, stderr, guest disks, serial logs, credentials,
-or arbitrary input fields. `PASS`, `EXPECTED_REJECTION`, and `BLOCKED` cases are
-not sent as errors. Full diagnostics stay in local evidence.
+or arbitrary input fields. `PRODUCT_FAIL`, `HARNESS_ERROR`, and inventory `FAIL`
+rows are sent. Other verdicts are not sent as errors. QEMU combines validated
+inventory observations with the final lifecycle result in `sentry-results.json`.
+Authoritative result files remain unchanged. Full diagnostics stay local.
+
+Input files are limited to 1 MiB. Sanitized failure metadata is limited to
+250,000 characters. Oversized reports fail explicitly rather than dropping rows.
+Only `release-smoke` and `qemu-matrix` are accepted environment labels.
 
 Transport is bounded to eight seconds, and the coordinator allows at most twelve
-seconds for reporting. It does not retry automatically. `reporting.log` records
+seconds for reporting, followed by a two-second kill grace. It does not retry automatically. `reporting.log` records
 acceptance or failure without the DSN. HTTP acceptance is not proof that an event
-is visible in the project UI. Replay a saved failure report explicitly with:
+is visible in the project UI. The log records the attempted event ID before
+sending. Fingerprints include the release and sorted failure identities, so a
+changed failure set can create another issue. This follows Sentry's documented
+[grouping by fingerprint](https://docs.sentry.io/platforms/javascript/guides/node/enriching-events/fingerprinting/).
+Replay a saved failure report explicitly with:
 
 ```bash
 OMG_SMOKE_RELEASE=v0.1.218 ./scripts/report-smoke-sentry.sh /path/to/run/results.json

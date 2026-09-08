@@ -29,6 +29,8 @@ on:
       - "rust-toolchain.toml"
       - ".cargo/**"
       - "scripts/benchmark-qemu.sh"
+      - "scripts/qemu-inventory.sh"
+      - "scripts/test-release-smoke.sh"
       - ".github/workflows/qemu-matrix.yml"
   schedule:
     # Nightly, staggered off docker-e2e's 02:00 slot.
@@ -40,23 +42,23 @@ on:
         type: string
         default: ""
       distro:
-        description: "Single distro (empty = all four)"
+        description: "Guest distro"
         type: choice
-        options: ["", arch, debian, ubuntu, fedora]
-        default: ""
+        options: [all, arch, debian, ubuntu, fedora]
+        default: all
       arch:
-        description: "Guest arch (empty = both; arm64 runs staged legs only)"
+        description: "Guest arch (all includes arm64 staged legs)"
         type: choice
-        options: ["", x64, arm64]
-        default: ""
+        options: [all, x64, arm64]
+        default: all
       staged:
         description: "Build PR binaries and test via --staged-dir"
         type: boolean
         default: false
 
 concurrency:
-  group: qemu-${{ github.ref }}-${{ matrix.distro }}
-  # Nightly evidence must never be cancelled by a newer push.
+  group: qemu-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'schedule' && 'nightly' || 'interactive' }}
+  # Keep manual runs out of the nightly cancellation group.
   cancel-in-progress: ${{ github.event_name != 'schedule' }}
 
 permissions:
@@ -354,7 +356,7 @@ jobs:
       (needs.build-staged.result == 'success' || needs.build-staged.result == 'skipped') &&
       (needs.build-staged-ubuntu.result == 'success' || needs.build-staged-ubuntu.result == 'skipped')
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -410,16 +412,16 @@ jobs:
         # disposable guest can safely do (mutations on, credentials off).
         # The arch input gates dispatch runs (x64 legs skip arm64-only runs).
         if: >-
-          (github.event_name != 'workflow_dispatch' || inputs.distro == '' || inputs.distro == matrix.distro) &&
-          (github.event_name != 'workflow_dispatch' || inputs.arch == '' || inputs.arch == 'x64')
+          (github.event_name != 'workflow_dispatch' || inputs.distro == 'all' || inputs.distro == matrix.distro) &&
+          (github.event_name != 'workflow_dispatch' || inputs.arch == 'all' || inputs.arch == 'x64')
         run: |
           args=(--distro "${{ matrix.distro }}" --release "${{ steps.tag.outputs.value }}")
           if [[ "${{ github.event_name }}" == 'pull_request' || "${{ inputs.staged }}" == 'true' ]]; then
-            args+=(--staged-dir staged --inventory-tiers container)
+            args+=(--staged-dir staged --inventory-tiers hermetic,container --inventory-allow-mutations)
           else
             # No nested-container: guests have no docker-in-guest (yet).
             # Declared-ux rows (self-update-*, daemon-foreground) self-skip.
-            args+=(--inventory-tiers qemu,container,network,pty --inventory-allow-mutations)
+            args+=(--inventory-tiers hermetic,qemu,container,network,pty --inventory-allow-mutations)
           fi
           ./scripts/benchmark-qemu.sh "${args[@]}"
 
@@ -446,7 +448,7 @@ jobs:
       needs.build-staged-arm.result == 'success' &&
       needs.build-staged-ubuntu-arm.result == 'success'
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 45
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -491,14 +493,14 @@ jobs:
           echo "value=$tag" >> "$GITHUB_OUTPUT"
 
       - name: Run disposable ARM guest lifecycle + inventory rows
-        # Staged-only legs run the fast container tier, like x64 PR legs.
+        # Match x64 staged coverage, including the 167-row CLI inventory.
         if: >-
-          (github.event_name != 'workflow_dispatch' || inputs.distro == '' || inputs.distro == matrix.distro) &&
-          (github.event_name != 'workflow_dispatch' || inputs.arch == '' || inputs.arch == 'arm64')
+          (github.event_name != 'workflow_dispatch' || inputs.distro == 'all' || inputs.distro == matrix.distro) &&
+          (github.event_name != 'workflow_dispatch' || inputs.arch == 'all' || inputs.arch == 'arm64')
         run: |
           ./scripts/benchmark-qemu.sh --arch aarch64 --distro "${{ matrix.distro }}" \
             --release "${{ steps.tag.outputs.value }}" \
-            --staged-dir staged --inventory-tiers container
+            --staged-dir staged --inventory-tiers hermetic,container --inventory-allow-mutations
 
       - name: Upload guest evidence
         if: always()

@@ -51,15 +51,77 @@ Native macOS smoke (on a Mac):
 Full QEMU guests (needs KVM + Docker):
 
 ```bash
-./scripts/benchmark-qemu.sh --distro all --release vX.Y.Z --staged-dir <dir> --inventory-tiers container
-./scripts/benchmark-qemu.sh --arch aarch64 --distro debian --release vX.Y.Z --staged-dir <arm-dir> --inventory-tiers container  # ARM host only
+./scripts/benchmark-qemu.sh --distro all --release vX.Y.Z --staged-dir <dir> --inventory-tiers hermetic,container --inventory-allow-mutations
+./scripts/benchmark-qemu.sh --arch aarch64 --distro debian --release vX.Y.Z --staged-dir <arm-dir> --inventory-tiers hermetic,container --inventory-allow-mutations  # ARM host only
 ```
 
 Nightly-equivalent (published release + all safe tiers, x86_64 KVM host):
 
 ```bash
-./scripts/benchmark-qemu.sh --distro all --release vX.Y.Z --inventory-tiers qemu,container,network,pty --inventory-allow-mutations
+./scripts/benchmark-qemu.sh --distro all --release vX.Y.Z --inventory-tiers hermetic,qemu,container,network,pty --inventory-allow-mutations
 ```
+
+## What inventory results prove
+
+The inventory currently has 184 rows: 167 hermetic-tier contracts, three
+container package contracts, and 14 declaration-only rows. The `hermetic`
+tier names the fixture-based Rust test contracts. Running these rows in a
+real guest is not hermetic: runtime downloads and other network operations
+still need network access. Guest images are pinned, but package index refreshes
+use live repositories. Saved repository hashes and package versions identify the
+observed run, not a promise of identical future repository contents.
+Do not report all commands tested when declared,
+credentialed, or otherwise gated rows were skipped.
+
+The runner validates the inventory before executing commands. It replays
+per-row prerequisite chains in fresh working directories, expands `${ROOT}`
+as a literal fixture path, and checks declared JSON and artifact assertions
+when the command succeeds. A known defect remains a failure, not a pass.
+The guest fixture provides Podman on Fedora and requires no container engine on
+the other three images. Container command exit expectations reflect that fixture.
+An unexpected engine configuration fails setup rather than changing expectations.
+Gated or failed prerequisites block their dependents. Missing receipts,
+transport failures, and empty execution selections fail the harness.
+
+A guest-side supervisor records completed CLI exits separately from executor
+exits. A CLI returning 125 is not a timeout-tool failure. Guest-side deadlines
+terminate commands independently of SSH. Each row
+retains stdout, stderr, prerequisite output, and a completion receipt under
+`inventory/rows/`. `inventory/input-sha256.txt` identifies the runner and TSV.
+`inventory/metadata.json` records the binary path, tiers, deadlines, and opt-ins. Existing inventory evidence cannot be overwritten.
+Working directories and installed runtime state disappear with the guest;
+only cwd-local fixtures are isolated per row, not the guest's home directory
+or package database. Native ARM and macOS results require their own runners.
+
+## Evidence contracts and sources
+
+- [GNU timeout](https://www.gnu.org/software/coreutils/manual/html_node/timeout-invocation.html)
+  defines exit 124 for a deadline, 125 for a timeout-tool failure, and 126 or 127
+  for invocation failures. Exit 137 alone does not identify what received SIGKILL
+  or prove an out-of-memory event. Guest receipts and cleanup evidence are needed
+  in addition to the transport exit.
+- [OpenSSH exit status](https://man.openbsd.org/ssh#EXIT_STATUS) returns the remote
+  command status, or 255 for an SSH error. The runner therefore requires a guest
+  completion receipt before accepting a product exit.
+- [Podman exec exit status](https://docs.podman.io/en/latest/markdown/podman-exec.1.html#exit-status)
+  uses 125 for Podman errors. The missing-container fixture on Fedora returns
+  that status through OMG. The guest supervisor distinguishes it from a
+  timeout-tool failure with the same number.
+- [GitHub release assets](https://docs.github.com/en/rest/releases/assets#get-a-release-asset)
+  expose a `digest` field. The Python installation row uses 3.12.14 from
+  [PBS release 20260901](https://github.com/astral-sh/python-build-standalone/releases/tag/20260901),
+  whose standard x86_64 GNU/Linux archive has digest
+  `sha256:936c246dfdbbfa7cb22dd01814a21f582a892689fae96b06071a5e433baffa22`.
+  This identifies the observed asset, not a guarantee that future assets have digests.
+- [Sentry fingerprints](https://docs.sentry.io/platforms/javascript/guides/node/enriching-events/fingerprinting/)
+  control issue grouping. Local `reporting.log` proves an attempted event ID and
+  HTTP intake acceptance or failure. Indexed visibility requires looking up that
+  event ID in Sentry. See [reporter limits](../scripts/README.md#optional-sentry-reporting).
+
+These references define tool contracts. A passing OMG claim additionally needs
+its frozen runner and inventory hashes, artifact checksum, guest identity,
+selected row results, and completion receipt. A documentation citation is not
+execution evidence.
 
 ## Filing issues (and the coming PRs) from a local run
 
@@ -124,7 +186,7 @@ resolve-on-green would close it too).
 1. `--print-pins` + all fixture suites green (`test-release-smoke`,
    `test-qa-file-issue`, `test-qa-open-pr`, `test-qa-audit`).
 2. Container smoke on your build, all four distros.
-3. QEMU guests per distro with `--inventory-tiers container`.
+3. QEMU guests per distro with `--inventory-tiers hermetic,container --inventory-allow-mutations`.
 4. File with `--dry-run`, review, then file for real.
 5. Summarize what failed for the audit — paste-ready, secrets scrubbed:
 
