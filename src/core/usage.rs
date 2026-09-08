@@ -206,11 +206,6 @@ impl UsageStats {
     fn path() -> Result<PathBuf> {
         let data_dir = crate::core::paths::data_dir();
         std::fs::create_dir_all(&data_dir)?;
-        // A first-run-elevated invocation creates the data dir as root;
-        // re-own it like history writes do so later unprivileged runs work.
-        if let Err(error) = crate::core::safe_ops::restore_original_user_ownership(&data_dir) {
-            tracing::warn!("Failed to restore usage dir ownership: {error:#}");
-        }
         Ok(data_dir.join("usage.json"))
     }
 
@@ -244,11 +239,6 @@ impl UsageStats {
     fn save_to(&self, path: &std::path::Path) -> Result<()> {
         let content = serde_json::to_vec_pretty(self).context("Failed to serialize usage stats")?;
         crate::core::safe_ops::atomic_write_file_sync(path, content)?;
-        // An elevated run re-owns the file as root via the rename above;
-        // mirror the history.json handling so unprivileged runs keep working.
-        if let Err(error) = crate::core::safe_ops::restore_original_user_ownership(path) {
-            tracing::warn!("Failed to restore usage file ownership: {error:#}");
-        }
         Ok(())
     }
 
@@ -498,22 +488,9 @@ fn acquire_usage_lock(lock_path: &Path) -> Result<std::fs::File> {
     use std::os::unix::fs::MetadataExt;
     use std::path::Component;
 
-    use nix::unistd::{User, fchown};
     use rustix::fs::{Mode, OFlags, open, openat};
 
-    let original_user = if crate::core::is_root() {
-        std::env::var_os("SUDO_USER")
-            .or_else(|| std::env::var_os("DOAS_USER"))
-            .map(|name| {
-                let name = name.to_str().context("Original user name is not UTF-8")?;
-                User::from_name(name)
-                    .context("Failed to resolve original user")?
-                    .context("Original user account does not exist")
-            })
-            .transpose()?
-    } else {
-        None
-    };
+    let owner = nix::unistd::geteuid().as_raw();
 
     let parent = lock_path.parent().context("Usage lock has no parent")?;
     let name = lock_path
@@ -537,26 +514,20 @@ fn acquire_usage_lock(lock_path: &Path) -> Result<std::fs::File> {
         }
     }
     let directory = std::fs::File::from(directory);
-    if let Some(account) = &original_user {
-        let metadata = directory.metadata()?;
-        anyhow::ensure!(
-            metadata.uid() == account.uid.as_raw() && metadata.mode() & 0o022 == 0,
-            "Usage lock directory must be owned by the original user and not writable by others"
-        );
-    }
+    let metadata = directory.metadata()?;
+    anyhow::ensure!(
+        metadata.uid() == owner && metadata.mode() & 0o022 == 0,
+        "Usage lock directory must be owned by the effective user and not writable by others"
+    );
 
     // Keep lookup anchored to the opened directory even if an ancestor is replaced.
     let flags = OFlags::RDWR | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC;
-    let (lock, created) = match openat(
+    let lock = openat(
         &directory,
         name,
-        flags | OFlags::CREATE | OFlags::EXCL,
+        flags | OFlags::CREATE,
         Mode::RUSR | Mode::WUSR,
-    ) {
-        Ok(lock) => (lock, true),
-        Err(rustix::io::Errno::EXIST) => (openat(&directory, name, flags, Mode::empty())?, false),
-        Err(error) => return Err(error.into()),
-    };
+    )?;
     let lock = std::fs::File::from(lock);
     let metadata = lock.metadata()?;
     anyhow::ensure!(metadata.is_file(), "Usage lock is not a regular file");
@@ -564,17 +535,10 @@ fn acquire_usage_lock(lock_path: &Path) -> Result<std::fs::File> {
         metadata.nlink() == 1,
         "Usage lock must have exactly one link"
     );
-    if let Some(account) = original_user {
-        if created {
-            // Existing inodes must never be handed to another user, even with one link.
-            fchown(&lock, Some(account.uid), Some(account.gid))?;
-        } else {
-            anyhow::ensure!(
-                metadata.uid() == account.uid.as_raw(),
-                "Existing usage lock is not owned by the original user"
-            );
-        }
-    }
+    anyhow::ensure!(
+        metadata.uid() == owner,
+        "Usage lock is not owned by the effective user"
+    );
     lock.lock().context("Failed to lock usage stats")?;
     Ok(lock)
 }
@@ -775,6 +739,45 @@ pub async fn sync_usage_now() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires isolated user/mount namespaces with the state fixture mounted at /var/lib"]
+    fn elevated_state_roundtrip_preserves_caller_files() -> Result<()> {
+        use std::os::unix::fs::MetadataExt;
+
+        anyhow::ensure!(crate::core::is_root(), "Requires namespace UID 0");
+        anyhow::ensure!(
+            std::fs::read_to_string("/var/lib/.omg-state-isolation-fixture")? == "isolated",
+            "Missing isolated mount fixture"
+        );
+        let caller_dir = PathBuf::from(std::env::var("OMG_DATA_DIR")?);
+        let caller_history = caller_dir.join("history.json");
+        let caller_usage = caller_dir.join("usage.json");
+        let history_before = std::fs::read(&caller_history)?;
+        let usage_before = std::fs::read(&caller_usage)?;
+
+        let path = UsageStats::path()?;
+        assert_eq!(path, PathBuf::from("/var/lib/omg/usage.json"));
+        let _lock = acquire_usage_lock(&path.with_extension("lock"))?;
+        let mut stats = UsageStats::default();
+        stats.record_command("search", 1);
+        stats.save()?;
+        assert_eq!(UsageStats::load()?.total_commands, 1);
+        assert_eq!(std::fs::metadata(&path)?.uid(), 0);
+        let history = crate::core::history::HistoryManager::new()?;
+        history.save(&[])?;
+        assert!(history.load()?.is_empty());
+        assert_eq!(std::fs::metadata("/var/lib/omg/history.json")?.uid(), 0);
+
+        assert_eq!(std::fs::read(&caller_history)?, history_before);
+        assert_eq!(std::fs::read(&caller_usage)?, usage_before);
+        assert!(
+            std::fs::symlink_metadata(&caller_history)?
+                .file_type()
+                .is_symlink()
+        );
+        Ok(())
+    }
 
     #[test]
     fn usage_lock_rejects_symlink_without_changing_target() {

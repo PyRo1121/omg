@@ -297,6 +297,8 @@ go 1.21.0
 
 ## 🌐 Environment Variables
 
+Data and cache overrides below apply to unprivileged processes. Root uses `/var/lib/omg` for data and daemon state and `/var/cache/omg` for caches, ignoring caller home, XDG, and OMG storage overrides. Existing user files remain in place; see [privileged state storage](security.md#privileged-state-storage).
+
 OMG respects these environment variables:
 
 | Variable | Purpose | Default |

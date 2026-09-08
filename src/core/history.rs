@@ -258,11 +258,6 @@ impl HistoryManager {
             serde_json::to_vec_pretty(history).context("Failed to serialize history")?;
         content.push(b'\n');
         crate::core::safe_ops::atomic_write_file_sync(&self.log_path, content)?;
-        // An elevated (sudo) run re-owns the file as root via the rename
-        // above, locking the real user out of their own history.
-        if let Err(error) = crate::core::safe_ops::restore_original_user_ownership(&self.log_path) {
-            tracing::warn!("Failed to restore history file ownership: {error:#}");
-        }
         Ok(())
     }
 
@@ -429,9 +424,6 @@ impl HistoryManager {
             }
             return Err(error);
         }
-        if let Err(error) = crate::core::safe_ops::restore_original_user_ownership(&archive_path) {
-            tracing::warn!("Failed to restore history archive ownership: {error:#}");
-        }
         archive
             .sync_all()
             .context("Failed to sync retired history before replacing the live log")?;
@@ -463,11 +455,6 @@ impl HistoryManager {
         let lock = options
             .open(&lock_path)
             .with_context(|| format!("Failed to open history lock: {}", lock_path.display()))?;
-        // An elevated (sudo) run creates the lock as root, locking the real
-        // user out of their own history on the next unprivileged run.
-        if let Err(error) = crate::core::safe_ops::restore_original_user_ownership(&lock_path) {
-            tracing::warn!("Failed to restore history lock ownership: {error:#}");
-        }
         lock.lock()
             .with_context(|| format!("Failed to lock package history: {}", lock_path.display()))?;
 

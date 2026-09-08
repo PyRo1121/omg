@@ -6,7 +6,17 @@ description: Vulnerability scanning, SBOM, PGP verification, and audit logging
 
 # Security Model
 
-OMG implements enterprise-grade security with defense-in-depth: vulnerability scanning, PGP verification, SLSA provenance, SBOM generation, secret scanning, tamper-evident audit logging, and configurable security policies. All operations are user-isolated with minimal privilege requirements.
+OMG provides package verification, vulnerability scanning, audit logging, and configurable security policies. Some package operations require elevation; user state and privileged state are stored separately.
+
+## Privileged state storage
+
+Processes running as root use `/var/lib/omg` for data and daemon state, and `/var/cache/omg` for caches. Caller-supplied `OMG_DATA_DIR`, `OMG_DAEMON_DATA_DIR`, `OMG_CACHE_DIR`, home variables, and XDG variables do not select these privileged storage locations. Unprivileged paths and overrides are unchanged. These system directories must remain administrator-controlled; do not redirect them to user-writable storage.
+
+History, usage files, locks, and AUR metadata stay owned by the process that writes them. OMG no longer transfers ownership through a pathname after publication.
+
+Existing user files are neither moved nor rewritten. Read existing user history without sudo; `sudo omg history` reads entries in the separate root store. There is no automatic import of user-editable history into privileged storage. Operations recorded by an unprivileged parent can still appear in that parent's history, so the root store is not a complete machine audit trail. Root and user caches may need separate refreshes.
+
+This boundary does not authenticate all package metadata or replace the separate configuration and policy checks.
 
 ## Quick Reference
 

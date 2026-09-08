@@ -4,7 +4,7 @@
 //! debug builds: the override machinery is compiled out of release binaries so
 //! production path resolution cannot be redirected at runtime.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 #[cfg(any(test, debug_assertions))]
 use std::sync::OnceLock;
 #[cfg(any(test, debug_assertions))]
@@ -99,35 +99,15 @@ fn elevated_home_from_lookup(
     lookup(user)
 }
 
-#[cfg(target_os = "macos")]
-fn default_data_dir_for_home(home: &Path) -> PathBuf {
-    home.join("Library/Application Support/omg")
-}
-
-#[cfg(not(target_os = "macos"))]
-fn default_data_dir_for_home(home: &Path) -> PathBuf {
-    home.join(".local/share/omg")
-}
-
-#[cfg(target_os = "macos")]
-fn default_cache_dir_for_home(home: &Path) -> PathBuf {
-    home.join("Library/Caches/omg")
-}
-
-#[cfg(not(target_os = "macos"))]
-fn default_cache_dir_for_home(home: &Path) -> PathBuf {
-    home.join(".cache/omg")
-}
-
-/// Data directory (default: XDG data dir/omg or ~/.omg).
-/// Elevated child processes keep using the invoking user's state directory.
+/// Effective-user data directory. Root state is separate from caller-owned history.
+/// Unprivileged processes retain their existing XDG data dir/omg or ~/.omg.
 #[must_use]
 pub fn data_dir() -> PathBuf {
+    if crate::core::is_root() {
+        return PathBuf::from("/var/lib/omg");
+    }
     env_path("OMG_DATA_DIR").unwrap_or_else(|| {
-        elevated_user_home().map_or_else(
-            || dirs::data_dir().map_or_else(|| fallback_home_dir().join(".omg"), |d| d.join("omg")),
-            |home| default_data_dir_for_home(&home),
-        )
+        dirs::data_dir().map_or_else(|| fallback_home_dir().join(".omg"), |d| d.join("omg"))
     })
 }
 
@@ -144,10 +124,13 @@ pub fn sibling_binary(name: &str) -> Option<PathBuf> {
         .filter(|path| path.is_file())
 }
 
-/// Daemon data directory (default: XDG data dir/omg, falling back to
-/// `/var/lib/omg` when no XDG data directory can be resolved).
+/// Daemon data directory. Root daemons use the system data directory.
+/// Unprivileged daemons retain the XDG location or existing fallback.
 #[must_use]
 pub fn daemon_data_dir() -> PathBuf {
+    if crate::core::is_root() {
+        return data_dir();
+    }
     env_path("OMG_DAEMON_DATA_DIR").unwrap_or_else(|| {
         dirs::data_dir().map_or_else(|| PathBuf::from("/var/lib/omg"), |d| d.join("omg"))
     })
@@ -189,18 +172,15 @@ fn is_valid_username(name: &str) -> bool {
         && name.len() <= 256
 }
 
-/// Cache directory (default: XDG cache dir/omg or ~/.cache/omg).
-/// When running with sudo, uses the original user's cache directory.
+/// Effective-user cache directory. Root does not consume the invoking user's cache.
+/// Unprivileged processes retain their XDG cache dir/omg or ~/.cache/omg.
 #[must_use]
 pub fn cache_dir() -> PathBuf {
+    if crate::core::is_root() {
+        return PathBuf::from("/var/cache/omg");
+    }
     env_path("OMG_CACHE_DIR").unwrap_or_else(|| {
-        elevated_user_home().map_or_else(
-            || {
-                dirs::cache_dir()
-                    .map_or_else(|| fallback_home_dir().join(".cache/omg"), |d| d.join("omg"))
-            },
-            |home| default_cache_dir_for_home(&home),
-        )
+        dirs::cache_dir().map_or_else(|| fallback_home_dir().join(".cache/omg"), |d| d.join("omg"))
     })
 }
 
@@ -607,6 +587,33 @@ pub fn test_mode() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn elevated_state_ignores_caller_data_and_cache_paths() {
+        temp_env::with_vars(
+            [
+                ("OMG_DATA_DIR", Some("/untrusted/data")),
+                ("OMG_DAEMON_DATA_DIR", Some("/untrusted/daemon")),
+                ("OMG_CACHE_DIR", Some("/untrusted/cache")),
+                ("XDG_DATA_HOME", Some("/untrusted/xdg-data")),
+                ("XDG_CACHE_HOME", Some("/untrusted/xdg-cache")),
+                ("SUDO_HOME", Some("/untrusted/home")),
+                ("SUDO_USER", Some("root")),
+            ],
+            || {
+                if crate::core::is_root() {
+                    assert_eq!(data_dir(), PathBuf::from("/var/lib/omg"));
+                    assert_eq!(daemon_data_dir(), PathBuf::from("/var/lib/omg"));
+                    assert_eq!(cache_dir(), PathBuf::from("/var/cache/omg"));
+                } else {
+                    assert_eq!(data_dir(), PathBuf::from("/untrusted/data"));
+                    assert_eq!(daemon_data_dir(), PathBuf::from("/untrusted/daemon"));
+                    assert_eq!(cache_dir(), PathBuf::from("/untrusted/cache"));
+                }
+            },
+        );
+    }
 
     #[test]
     fn test_mode_requires_debug_build_and_explicit_truthy_value() {

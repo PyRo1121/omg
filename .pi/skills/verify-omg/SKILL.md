@@ -9,6 +9,8 @@ OMG's primary user surface is the `omg` CLI. `omgd` is a supporting daemon, `omg
 
 Run every command from the repository root. Never substitute the installed `~/.local/bin/omg`: verification must drive the binary built from the checkout.
 
+Run routine verification unprivileged. Root ignores caller data/cache overrides. Namespace-root checks require a private user/mount namespace with disposable directories bound over `/var/lib` and `/var/cache`; never drive as root against host system-state directories.
+
 ## Launch
 
 OMG is a short-lived CLI, so there is no server or shared process to keep alive. Build once, then run each drive through the supplied shell harness:
@@ -80,7 +82,7 @@ awk '/^--- stdout\+stderr ---$/ { capture=1; next } /^--- exit:/ { capture=0 } c
   | jq -e 'type == "array"' >/dev/null
 ```
 
-The current helper drives only read-only features and redirects all writable OMG state into the sandbox. If proving a future mutation, capture both the visible result and a second read-only observation of the isolated state it changed.
+The current helper drives only read-only features and redirects unprivileged writable OMG state into the sandbox. Namespace-root verification additionally needs the system-state bind mounts described above. If proving a future mutation, capture both the visible result and a second read-only observation of the isolated state it changed.
 
 ## Cleanup
 

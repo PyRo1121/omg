@@ -227,8 +227,7 @@ pub async fn sync_aur_metadata(
     match serde_json::to_vec(&new_meta) {
         Ok(meta_bytes) => {
             let result = tokio::task::spawn_blocking(move || {
-                persist_file_atomically(&meta_path, &meta_bytes)?;
-                crate::core::safe_ops::restore_original_user_ownership(&meta_path)
+                persist_file_atomically(&meta_path, &meta_bytes)
             })
             .await;
             match result {
@@ -302,13 +301,6 @@ fn validate_and_publish_metadata(
     std::fs::rename(&staged_index, index_path)
         .with_context(|| format!("Failed to publish AUR index at {}", index_path.display()))?;
     crate::core::safe_ops::sync_parent_directory_sync(index_path)?;
-    // An elevated sync re-owns these files as root via rename, locking the
-    // real user out of the metadata fast path.
-    for published in [archive_path, index_path] {
-        if let Err(error) = crate::core::safe_ops::restore_original_user_ownership(published) {
-            tracing::warn!("Failed to restore AUR metadata ownership: {error:#}");
-        }
-    }
     Ok(())
 }
 
