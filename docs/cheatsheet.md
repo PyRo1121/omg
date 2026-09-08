@@ -392,6 +392,7 @@ omg ci validate                 # Validate environment vs CI expectations
 omg ci cache                    # Recommended cache paths
 omg workspace init my-monorepo  # Workspace management (see omg workspace --help)
 omg hooks install               # Git hooks for env sync (see omg hooks --help)
+omg hooks uninstall             # Remove only exact, unmodified current OMG hooks
 omg privacy status              # Privacy settings & data (GDPR/CCPA)
 omg account status              # Optional dashboard account (replaces `omg license`)
 omg fleet status                # Enterprise fleet status
