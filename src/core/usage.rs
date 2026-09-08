@@ -472,7 +472,7 @@ fn load_for_tracking() -> Option<UsageStats> {
     }
 }
 
-/// Acquire the cross-process usage lock (`usage.json.lock`) so a full
+/// Acquire the cross-process usage lock (`usage.lock`) so a full
 /// load-modify-save cycle cannot interleave with another omg invocation
 /// (which would silently lose counters to last-writer-wins). The lock is
 /// released when the returned file is dropped. Same pattern as
@@ -917,6 +917,42 @@ mod tests {
         assert_eq!(std::fs::read(&path).expect("read fixture"), b"{not-json");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn saving_usage_replaces_symlink_without_changing_its_target() {
+        let directory = tempfile::tempdir().unwrap();
+        let target = directory.path().join("target");
+        let path = directory.path().join("usage.json");
+        std::fs::write(&target, b"untouched").unwrap();
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+        UsageStats::default().save_to(&path).unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"untouched");
+        assert!(!std::fs::symlink_metadata(&path).unwrap().is_symlink());
+        UsageStats::load_from(&path).unwrap();
+    }
+
+    #[test]
+    fn saved_usage_stats_roundtrip_and_keep_owner() {
+        // #290 wiring: save_to must persist through the ownership-restore
+        // step. Non-root the restore is a no-op, so the roundtrip and the
+        // file owner must be unaffected by its presence.
+        let directory = tempfile::tempdir().expect("create temporary directory");
+        let path = directory.path().join("usage.json");
+        let stats = UsageStats {
+            total_commands: 7,
+            ..UsageStats::default()
+        };
+        stats.save_to(&path).expect("save must succeed");
+        let loaded = UsageStats::load_from(&path).expect("saved stats must load");
+        assert_eq!(loaded.total_commands, 7);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let owner = std::fs::metadata(&path).expect("stat saved file").uid();
+            assert_eq!(owner, rustix::process::geteuid().as_raw());
+        }
+    }
+
     #[test]
     fn missing_usage_stats_load_as_empty() {
         let directory = tempfile::tempdir().expect("create temporary directory");
@@ -944,7 +980,8 @@ mod tests {
                 barrier.wait();
                 for _ in 0..UPDATES_PER_WRITER {
                     // Same lock + load-modify-save shape as the public track* functions.
-                    let _lock = lock_file_at(&path.with_extension("lock"));
+                    let _lock = lock_file_at(&path.with_extension("lock"))
+                        .expect("writer must acquire lock");
                     let mut stats = UsageStats::load_from(&path).expect("valid usage stats");
                     stats.record_command_on(
                         "search",

@@ -278,16 +278,15 @@ impl PackageManager for ArchPackageManager {
         fast: bool,
     ) -> Pin<Box<dyn Future<Output = AnyhowResult<(usize, usize, usize, usize)>> + Send + '_>> {
         Box::pin(async move {
-            if fast {
-                // Fast still reports REAL values: both reads are served from
-                // the warm pure-Rust caches (<5ms). Fabricating zeros here
-                // previously made `omg status --fast --json` claim there were
-                // no updates while the slow path reported them.
-                let (total, explicit, orphans) = super::pacman_db::get_counts_fast()?;
-                let updates = super::pacman_db::check_updates_cached()?.len();
-                return Ok((total, explicit, orphans, updates));
-            }
-            get_system_status()
+            tokio::task::spawn_blocking(move || {
+                if fast {
+                    let (total, explicit, orphans) = super::pacman_db::get_counts_fast()?;
+                    let updates = super::pacman_db::check_updates_cached()?.len();
+                    return Ok((total, explicit, orphans, updates));
+                }
+                get_system_status()
+            })
+            .await?
         })
     }
 

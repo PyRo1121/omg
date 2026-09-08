@@ -132,6 +132,7 @@ async fn run_full_sysupgrade() -> anyhow::Result<()> {
 /// these closures were no-ops, so an already-privileged invocation claimed
 /// success without upgrading anything.
 async fn run_sysupgrade() -> anyhow::Result<()> {
+    let history = crate::core::history::HistoryManager::new()?;
     let updates = crate::package_managers::get_update_list()?;
     let changes = history_changes(&updates);
     let result = tokio::task::spawn_blocking(|| {
@@ -144,7 +145,6 @@ async fn run_sysupgrade() -> anyhow::Result<()> {
     .await
     .context("System upgrade task failed")?;
 
-    let history = crate::core::history::HistoryManager::new()?;
     history.finish_operation(
         crate::core::history::TransactionType::Update,
         changes,

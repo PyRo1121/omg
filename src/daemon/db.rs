@@ -152,7 +152,7 @@ mod tests {
         }))?;
         std::fs::write(&cache.path, &bytes)?;
         assert!(
-            cache.get_status(Duration::from_secs(120))?.is_none(),
+            cache.get_status(Duration::from_mins(2))?.is_none(),
             "legacy status has no freshness evidence"
         );
         assert_eq!(std::fs::read(&cache.path)?, bytes);
@@ -202,7 +202,7 @@ mod tests {
             b"not json".to_vec(),
         ] {
             std::fs::write(&cache.path, &bytes)?;
-            assert!(cache.get_status(Duration::from_secs(120)).is_err());
+            assert!(cache.get_status(Duration::from_mins(2)).is_err());
             assert!(cache.set_status(&status()).is_err());
             cache.invalidate_status();
             assert_eq!(std::fs::read(&cache.path)?, bytes);
@@ -214,7 +214,7 @@ mod tests {
     fn current_status_round_trips_and_invalidation_removes_known_data() -> Result<()> {
         let directory = tempfile::tempdir()?;
         let cache = PersistentCache::new(directory.path())?;
-        let ttl = Duration::from_secs(120);
+        let ttl = Duration::from_mins(2);
         assert!(cache.get_status(ttl)?.is_none());
         cache.set_status(&status())?;
         assert_eq!(

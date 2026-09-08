@@ -33,6 +33,9 @@ pub enum Ecosystem {
     Ruby,
     Python,
     Java,
+    /// Tasks declared in `mise.toml`/`.mise.toml` `[tasks.*]` (mise parity:
+    /// OMG runs them natively instead of shelling out to `mise run`).
+    Mise,
 }
 
 impl std::fmt::Display for Ecosystem {
@@ -48,6 +51,7 @@ impl std::fmt::Display for Ecosystem {
             Self::Ruby => write!(f, "Ruby"),
             Self::Python => write!(f, "Python"),
             Self::Java => write!(f, "Java"),
+            Self::Mise => write!(f, "mise"),
         }
     }
 }
@@ -62,6 +66,7 @@ impl Ecosystem {
             Self::Ruby => 70,
             Self::Java => 60,
             Self::Php => 50,
+            Self::Mise => 45,
             Self::Make => 40,
         }
     }
@@ -334,6 +339,57 @@ impl TaskDetector {
         Ok(())
     }
 
+    /// Detect tasks declared in `mise.toml`/`.mise.toml` `[tasks.*]`.
+    ///
+    /// Only the portable subset maps to OMG: `run` as a string or array of
+    /// strings, executed sequentially through `sh -c`. Dependency edges
+    /// (`depends`), file-task directories, and templates stay out of scope
+    /// and are ignored rather than mis-executed.
+    fn detect_mise_tasks(&self, tasks: &mut Vec<Task>) -> Result<()> {
+        for filename in ["mise.toml", ".mise.toml"] {
+            let path = self.current_dir.join(filename);
+            let Some(content) = read_optional_file(&path)? else {
+                continue;
+            };
+            let document: toml::Value = toml::from_str(&content)
+                .with_context(|| format!("Failed to parse {}", path.display()))?;
+            let Some(declared) = document.get("tasks").and_then(toml::Value::as_table) else {
+                continue;
+            };
+            for (name, spec) in declared {
+                let Some(table) = spec.as_table() else {
+                    continue;
+                };
+                let runs: Vec<String> = match table.get("run") {
+                    Some(toml::Value::String(run)) => vec![run.clone()],
+                    Some(toml::Value::Array(steps)) => steps
+                        .iter()
+                        .filter_map(toml::Value::as_str)
+                        .map(str::to_owned)
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                if runs.is_empty() {
+                    continue;
+                }
+                crate::config::mise_env::parse_mise_env(spec, &self.current_dir)?;
+                let script = runs
+                    .iter()
+                    .map(|run| format!("{{\n{run}\n}}"))
+                    .collect::<Vec<_>>()
+                    .join(" && ");
+                tasks.push(Task {
+                    name: name.clone(),
+                    command: "sh".to_string(),
+                    args: vec!["-c".to_string(), script, name.clone()],
+                    source: filename.to_string(),
+                    ecosystem: Ecosystem::Mise,
+                });
+            }
+        }
+        Ok(())
+    }
+
     fn detect_java_tasks(&self, tasks: &mut Vec<Task>) {
         if self.current_dir.join("pom.xml").exists() {
             for t in ["clean", "compile", "test", "package", "install"] {
@@ -371,6 +427,7 @@ impl TaskDetector {
         self.detect_makefile_tasks(&mut tasks)?;
         self.detect_python_tasks(&mut tasks)?;
         self.detect_java_tasks(&mut tasks);
+        self.detect_mise_tasks(&mut tasks)?;
 
         if self.current_dir.join("Taskfile.yml").exists()
             || self.current_dir.join("Taskfile.yaml").exists()
@@ -507,7 +564,8 @@ pub fn run_task_advanced(
         anyhow::bail!("Invalid task name: {task_name}");
     }
 
-    let detector = TaskDetector::new(std::env::current_dir()?)?;
+    let current_dir = std::env::current_dir()?;
+    let detector = TaskDetector::new(current_dir.clone())?;
     let matches = detector.resolve(task_name, using, all)?;
 
     if matches.is_empty() {
@@ -548,11 +606,12 @@ pub fn run_task_advanced(
                     cmd,
                     &with_arg_separator(cmd, args, extra_args),
                     extra_args,
+                    None,
                 );
             }
         }
 
-        return execute_process(task_name, &[], extra_args);
+        return execute_process(task_name, &[], extra_args, None);
     }
 
     for task in matches {
@@ -564,10 +623,22 @@ pub fn run_task_advanced(
             style::accent(&task.source)
         );
 
+        let task_env = if task.ecosystem == Ecosystem::Mise {
+            let path = current_dir.join(&task.source);
+            let document: toml::Value = toml::from_str(&std::fs::read_to_string(&path)?)?;
+            let spec = document
+                .get("tasks")
+                .and_then(|tasks| tasks.get(&task.name))
+                .context("Selected mise task disappeared before execution")?;
+            Some(crate::config::mise_env::parse_mise_env(spec, &current_dir)?)
+        } else {
+            None
+        };
         execute_process(
             &task.command,
             &with_arg_separator(&task.command, task.args, extra_args),
             extra_args,
+            task_env.as_ref(),
         )?;
     }
 
@@ -776,7 +847,71 @@ struct Poetry {
     scripts: Option<HashMap<String, String>>,
 }
 
-fn execute_process(cmd: &str, args: &[String], extra_args: &[String]) -> Result<()> {
+fn command_environment(command: &Command) -> Result<HashMap<String, String>> {
+    let mut effective: HashMap<String, String> = std::env::vars().collect();
+    for (key, value) in command.get_envs() {
+        let key = key.to_str().context("Environment name is not UTF-8")?;
+        if let Some(value) = value {
+            effective.insert(
+                key.to_string(),
+                value
+                    .to_str()
+                    .context("Environment value is not UTF-8")?
+                    .to_string(),
+            );
+        } else {
+            effective.remove(key);
+        }
+    }
+    Ok(effective)
+}
+
+fn apply_resolved_environment(
+    command: &mut Command,
+    resolved: &crate::config::mise_env::ResolvedEnv,
+) -> Result<()> {
+    let mut effective = command_environment(command)?;
+    if !resolved.path_additions.is_empty() {
+        effective =
+            crate::config::mise_env::with_path_overlay(&effective, &resolved.path_additions);
+        if let Some(path) = effective.get("PATH") {
+            command.env("PATH", path);
+        }
+    }
+    for (key, value) in &resolved.set {
+        command.env(key, value);
+        effective.insert(key.clone(), value.clone());
+    }
+    for key in &resolved.unset {
+        command.env_remove(key);
+        effective.remove(key);
+    }
+    #[cfg(unix)]
+    for script in &resolved.sources {
+        let sourced = crate::config::mise_env::eval_sourced_file(script, &effective)?;
+        for (key, value) in sourced.set {
+            command.env(&key, &value);
+            effective.insert(key, value);
+        }
+        for key in sourced.unset {
+            command.env_remove(&key);
+            effective.remove(&key);
+        }
+    }
+    #[cfg(not(unix))]
+    anyhow::ensure!(
+        resolved.sources.is_empty(),
+        "_.source scripts require a Unix shell"
+    );
+    Ok(())
+}
+
+fn execute_process(
+    cmd: &str,
+    args: &[String],
+    extra_args: &[String],
+    task_env: Option<&crate::config::mise_env::MiseEnv>,
+) -> Result<()> {
     // Detect required runtime versions and inject them into PATH
     // This ensures 'npm' uses the correct node version, 'cargo' uses correct rust channel, etc.
     let current_dir = std::env::current_dir()?;
@@ -867,11 +1002,31 @@ fn execute_process(cmd: &str, args: &[String], extra_args: &[String]) -> Result<
         }
     }
 
+    // mise `[env]` parity (strict: tasks fail closed on missing files and
+    // unmet `required` entries). Resolved against the tool-augmented PATH so
+    // `tools = true` entries see their final value; `_.path` dirs slot after
+    // the tool bin dirs above.
+    let base_env = command_environment(&command)?;
+    let overlaid = crate::config::mise_env::with_path_overlay(&base_env, &path_additions);
+    let mise_env = crate::config::mise_env::load_mise_env_chain(
+        &current_dir,
+        &overlaid,
+        crate::config::mise_env::Strictness::Strict,
+    )?;
+
     if !path_additions.is_empty()
         && let Ok(current_path) = std::env::var("PATH")
     {
         let new_path = format!("{}:{}", path_additions.join(":"), current_path);
         command.env("PATH", new_path);
+    }
+
+    apply_resolved_environment(&mut command, &mise_env)?;
+
+    if let Some(parsed) = task_env {
+        let effective = command_environment(&command)?;
+        let resolved = crate::config::mise_env::resolve_task_env(parsed, &effective, &current_dir)?;
+        apply_resolved_environment(&mut command, &resolved)?;
     }
 
     let status = command
@@ -1815,5 +1970,123 @@ var_colon ::= value
             with_arg_separator("npm", vec!["run".into()], &[]),
             vec!["run".to_string()]
         );
+    }
+
+    #[test]
+    fn mise_toml_tasks_detect_string_and_array_runs() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join("mise.toml"),
+            "[tasks.hello]\nrun = \"echo hi\"\n[tasks.build]\nrun = [\"echo a\", \"echo b\"]\n[tasks.nodeps]\ndescription = \"no run key\"\n",
+        )
+        .unwrap();
+        let detector = TaskDetector::new(dir.path().to_path_buf()).unwrap();
+        let tasks = detector.detect().unwrap();
+        let hello = tasks.iter().find(|task| task.name == "hello").unwrap();
+        assert_eq!(hello.command, "sh");
+        assert_eq!(hello.args, vec!["-c", "{\necho hi\n}", "hello"]);
+        assert_eq!(hello.source, "mise.toml");
+        assert!(matches!(hello.ecosystem, Ecosystem::Mise));
+        let build = tasks.iter().find(|task| task.name == "build").unwrap();
+        assert_eq!(build.args[1], "{\necho a\n} && {\necho b\n}");
+        assert!(tasks.iter().all(|task| task.name != "nodeps"));
+    }
+
+    #[test]
+    fn mise_task_environment_is_passed_without_argv_secrets() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("vals.env"), "FROM_FILE=1\n").unwrap();
+        let document: toml::Value = toml::from_str(
+            "run = \"echo hi\"\n[env]\nA = \"1\"\nB = false\nD = \"{{config_root}}/bin\"\n[env._]\nfile = \"vals.env\"\npath = [\"p1\", \"p2\"]\nsource = \"s.sh\"\n",
+        )
+        .unwrap();
+        fs::write(dir.path().join("s.sh"), "export FROM_SOURCE=\"$A\"\n").unwrap();
+        let parsed = crate::config::mise_env::parse_mise_env(&document, dir.path()).unwrap();
+        let mut command = Command::new("sh");
+        command.args([
+            "-c",
+            "printf '%s|%s|%s' \"$FROM_FILE\" \"$D\" \"$FROM_SOURCE\"",
+        ]);
+        let resolved = crate::config::mise_env::resolve_task_env(
+            &parsed,
+            &command_environment(&command).unwrap(),
+            dir.path(),
+        )
+        .unwrap();
+        apply_resolved_environment(&mut command, &resolved).unwrap();
+        let output = command.output().unwrap();
+        assert!(output.status.success());
+        assert_eq!(
+            String::from_utf8(output.stdout).unwrap(),
+            format!("1|{}/bin|1", dir.path().display())
+        );
+        assert!(command.get_args().all(|arg| {
+            !arg.to_string_lossy()
+                .contains(&dir.path().display().to_string())
+        }));
+    }
+
+    #[test]
+    fn mise_task_env_detection_never_embeds_values() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join("mise.toml"),
+            "[tasks.with_env]\nrun = \"echo hi\"\n[tasks.with_env.env]\nA = \"1\"\n[tasks.plain]\nrun = \"echo yo\"\n[tasks.with_object]\nrun = \"echo obj\"\n[tasks.with_object.env]\nA = { value = \"x\" }\n",
+        )
+        .unwrap();
+        let detector = TaskDetector::new(dir.path().to_path_buf()).unwrap();
+        let tasks = detector.detect().unwrap();
+        let with_env = tasks.iter().find(|task| task.name == "with_env").unwrap();
+        assert_eq!(with_env.args[1], "{\necho hi\n}");
+        let plain = tasks.iter().find(|task| task.name == "plain").unwrap();
+        assert_eq!(plain.args[1], "{\necho yo\n}");
+        let with_object = tasks
+            .iter()
+            .find(|task| task.name == "with_object")
+            .unwrap();
+        assert_eq!(with_object.args[1], "{\necho obj\n}");
+    }
+
+    #[test]
+    fn mise_steps_stop_after_failure_and_preserve_first_argument() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("mise.toml"), "[tasks.stop]\nrun = ['false', 'echo skipped; echo must_not_run']\n[tasks.args]\nrun = 'printf %s \"$1\"'\n").unwrap();
+        let tasks = TaskDetector::new(dir.path().to_path_buf())
+            .unwrap()
+            .detect()
+            .unwrap();
+        let stop = tasks.iter().find(|task| task.name == "stop").unwrap();
+        let output = Command::new(&stop.command)
+            .args(&stop.args)
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        let args = tasks.iter().find(|task| task.name == "args").unwrap();
+        let output = Command::new(&args.command)
+            .args(&args.args)
+            .arg("first")
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"first");
+    }
+
+    #[test]
+    fn mise_task_env_rejects_unknown_directive() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join("mise.toml"),
+            "[tasks.bad]\nrun = \"echo hi\"\n[tasks.bad.env._]\nbogus = \"x\"\n",
+        )
+        .unwrap();
+        let detector = TaskDetector::new(dir.path().to_path_buf()).unwrap();
+        assert!(detector.detect().is_err());
+    }
+
+    #[test]
+    fn mise_ecosystem_resolves_by_name() {
+        assert!(Ecosystem::Mise.matches("mise"));
+        assert_eq!(Ecosystem::Mise.to_string(), "mise");
     }
 }

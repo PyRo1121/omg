@@ -67,6 +67,30 @@ class QuickGateOfflineTests(unittest.TestCase):
         )
 
 
+class QemuConcurrencyTests(unittest.TestCase):
+    def test_matrix_jobs_have_distinct_concurrency_groups(self) -> None:
+        workflow = CI_YML.with_name("qemu-matrix.yml").read_text(encoding="utf-8")
+        groups: list[str] = []
+        for job in ["build-staged", "build-staged-arm", "guest", "guest-arm"]:
+            block = job_block(workflow, job)
+            match = re.search(r"^      group: (.+)$", block, re.MULTILINE)
+            if match is None:
+                self.fail(f"{job} must declare its concurrency group")
+            group = match.group(1)
+            self.assertNotIn(
+                "github.job", group, "github.job is empty during group evaluation"
+            )
+            self.assertIn("github.workflow", group)
+            self.assertIn("github.event_name", group)
+            self.assertIn("matrix.distro", group)
+            groups.append(group)
+        self.assertEqual(
+            len(set(groups)),
+            len(groups),
+            "architecture/job legs must not cancel each other",
+        )
+
+
 class LocalCiGateExecutesTests(unittest.TestCase):
     def test_local_ci_gate_executes_recipes_instead_of_dry_run(self) -> None:
         text = CI_YML.read_text(encoding="utf-8")

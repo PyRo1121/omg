@@ -7,7 +7,10 @@ if [[ ${1:-} == --help ]]; then
 fi
 [[ $# == 1 ]] || { printf 'error: expected one results.json path\n' >&2; exit 2; }
 config="${OMG_SMOKE_SENTRY_CONFIG:-$HOME/.config/omg-smoke/sentry.json}"
-[[ -f "$config" ]] || exit 0
+[[ -f "$config" ]] || { printf 'Sentry reporting disabled: no configuration\n'; exit 0; }
+[[ -f "$1" && $(wc -c < "$1") -le 1048576 ]] || { printf 'Sentry input missing or exceeds 1 MiB\n' >&2; exit 2; }
+environment=${OMG_SMOKE_ENVIRONMENT:-release-smoke}
+case "$environment" in release-smoke|qemu-matrix) ;; *) printf 'Unsupported Sentry environment\n' >&2; exit 2 ;; esac
 for tool in jq curl; do
   command -v "$tool" >/dev/null || { printf 'reporting unavailable: missing %s\n' "$tool" >&2; exit 3; }
 done
@@ -28,21 +31,23 @@ failures="$(jq -ce '
     (.exit_code | type == "number" and floor == . and . >= -1 and . <= 255) and
     (.elapsed_seconds | type == "number" and . >= 0 and . <= 86400))
   then . else error("invalid result fields") end |
-  map(select(.result == "PRODUCT_FAIL" or .result == "HARNESS_ERROR") |
+  map(select(.result == "PRODUCT_FAIL" or .result == "HARNESS_ERROR" or .result == "FAIL") |
     {case_id, distro, result, exit_code, elapsed_seconds})
 ' "$1")"
-[[ "$(jq 'length' <<< "$failures")" != 0 ]] || exit 0
+[[ "$(jq 'length' <<< "$failures")" != 0 ]] || { printf 'Sentry report not needed: no failures\n'; exit 0; }
+[[ ${#failures} -le 250000 ]] || { printf 'Sentry failure metadata exceeds payload limit\n' >&2; exit 2; }
 if command -v uuidgen >/dev/null 2>&1; then
   event_id="$(uuidgen | tr -d '-' | tr -d '\n')"
 else
   event_id="$(tr -d '-' < /proc/sys/kernel/random/uuid)"
 fi
+printf 'Sentry sending event %s for run %s\n' "$event_id" "$run_id"
 http_code="$({
   jq -cn --slurpfile config "$config" --arg id "$event_id" '{event_id:$id,dsn:$config[0].dsn}'
   printf '{"type":"event"}\n'
   jq -cn --arg id "$event_id" --arg release "$release" --arg run_id "$run_id" \
     --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson failures "$failures" \
-    --arg environment "${OMG_SMOKE_ENVIRONMENT:-release-smoke}" \
+    --arg environment "$environment" \
     '{event_id:$id,timestamp:$timestamp,platform:"other",level:"error",logger:"omg-smoke",
       environment:$environment,release:$release,message:"OMG release smoke run has failures",
       fingerprint:["omg-smoke",$release,($failures | map(.distro+":"+.case_id+":"+.result) | sort | join(","))],

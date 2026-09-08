@@ -227,25 +227,11 @@ impl DaemonState {
     }
 
     pub(super) async fn status_counts(&self) -> anyhow::Result<(usize, usize, usize, usize)> {
-        if self.uses_production_backends() {
-            let pm_name = self.package_manager.name().to_string();
-            tokio::task::spawn_blocking(move || system_status_for_backend(&pm_name))
-                .await
-                .context("Status task panicked")?
-        } else {
-            self.package_manager.get_status(false).await
-        }
+        self.package_manager.get_status(false).await
     }
 
     pub(super) async fn explicit_packages(&self) -> anyhow::Result<Vec<String>> {
-        if self.uses_production_backends() {
-            let pm_name = self.package_manager.name().to_string();
-            tokio::task::spawn_blocking(move || explicit_packages_for_backend(&pm_name))
-                .await
-                .context("Explicit package task panicked")?
-        } else {
-            self.package_manager.list_explicit().await
-        }
+        self.package_manager.list_explicit().await
     }
 
     pub fn new() -> anyhow::Result<Self> {
@@ -512,7 +498,7 @@ async fn handle_refresh_index(state: Arc<DaemonState>, id: RequestId) -> Respons
 
 /// Run an index search on the blocking pool. Both search handlers share
 /// this so heavy scans never stall the async executor.
-async fn search_index_blocking(
+pub(super) async fn search_index_blocking(
     index: Arc<PackageIndex>,
     query: String,
 ) -> Result<Vec<PackageInfo>, String> {
@@ -877,75 +863,6 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
     });
 
     not_found_error(id, format!("Package not found: {package}"))
-}
-
-/// Query native status counts for a production package-manager backend.
-/// Dispatch a native backend query, keeping every feature-gated arm in one
-/// place. Disabled branches collapse to a single canonical error so the two
-/// query shapes can never drift apart. Adding a native backend means adding
-/// an arm here and updating the feature gates below.
-macro_rules! native_backend_query {
-    ($pm_name:expr, $debian:expr, $debian_pure:expr, $arch:expr) => {
-        match $pm_name {
-            "apt" => {
-                #[cfg(feature = "debian")]
-                {
-                    $debian
-                }
-                #[cfg(not(feature = "debian"))]
-                {
-                    Err(backend_disabled("Debian"))
-                }
-            }
-            "apt-pure" => {
-                #[cfg(any(feature = "debian", feature = "debian-pure"))]
-                {
-                    $debian_pure
-                }
-                #[cfg(not(any(feature = "debian", feature = "debian-pure")))]
-                {
-                    Err(backend_disabled("Debian"))
-                }
-            }
-            "pacman" => {
-                #[cfg(feature = "arch")]
-                {
-                    $arch
-                }
-                #[cfg(not(feature = "arch"))]
-                {
-                    Err(backend_disabled("Arch"))
-                }
-            }
-            other => Err(anyhow::anyhow!("Unsupported package manager: {other}")),
-        }
-    };
-}
-
-#[cold]
-fn backend_disabled(backend: &str) -> anyhow::Error {
-    anyhow::anyhow!("{backend} backend disabled")
-}
-
-/// Query native status counts for a production package-manager backend.
-pub(crate) fn system_status_for_backend(
-    pm_name: &str,
-) -> anyhow::Result<(usize, usize, usize, usize)> {
-    native_backend_query!(
-        pm_name,
-        crate::package_managers::apt_get_system_status(),
-        crate::package_managers::debian_db::get_counts_fast(),
-        crate::package_managers::get_system_status()
-    )
-}
-
-pub(crate) fn explicit_packages_for_backend(pm_name: &str) -> anyhow::Result<Vec<String>> {
-    native_backend_query!(
-        pm_name,
-        crate::package_managers::apt_list_explicit(),
-        crate::package_managers::debian_db::list_explicit_fast(),
-        crate::package_managers::list_explicit_fast()
-    )
 }
 
 /// Handle status request
@@ -1765,46 +1682,57 @@ mod tests {
         );
     }
 
-    #[test]
-    fn status_rejects_unknown_package_manager() {
-        let error = system_status_for_backend("homebrew")
-            .expect_err("unknown backends must not invent a healthy status");
-        assert!(
-            error.to_string().contains("Unsupported package manager"),
-            "got: {error}"
-        );
+    #[cfg(not(feature = "arch"))]
+    #[tokio::test]
+    async fn production_queries_use_the_selected_backend() {
+        for distro in ["fedora", "macos"] {
+            let directory = tempfile::tempdir().unwrap();
+            let manager = Arc::new(crate::package_managers::mock::MockPackageManager::new_in(
+                distro,
+                directory.path(),
+            ));
+            manager.install(&["git".into()]).await.unwrap();
+            let mut state =
+                DaemonState::new_isolated(directory.path(), PackageIndex::empty(), manager)
+                    .unwrap();
+            state.system_backends = RwLock::new(SystemBackendAccess::Production {});
+            assert_eq!(state.status_counts().await.unwrap(), (1, 1, 0, 0));
+            assert_eq!(state.explicit_packages().await.unwrap(), vec!["git"]);
+        }
     }
 
-    #[test]
-    #[cfg(not(any(feature = "debian", feature = "debian-pure")))]
-    fn apt_pure_status_without_debian_fails() {
-        let error = system_status_for_backend("apt-pure")
-            .expect_err("apt-pure without a Debian backend must not invent counts");
-        assert!(
-            error.to_string().contains("Debian backend disabled"),
-            "got: {error}"
-        );
+    #[tokio::test]
+    async fn backend_status_errors_do_not_become_healthy_counts() {
+        let directory = tempfile::tempdir().unwrap();
+        let manager = Arc::new(crate::package_managers::mock::MockPackageManager::new_in(
+            "fedora",
+            directory.path(),
+        ));
+        let state =
+            DaemonState::new_isolated(directory.path(), PackageIndex::empty(), manager).unwrap();
+        std::fs::write(
+            directory.path().join("mock_state_dnf.json"),
+            b"invalid json",
+        )
+        .unwrap();
+        assert!(state.status_counts().await.is_err());
     }
 
-    #[test]
-    fn explicit_rejects_unknown_package_manager() {
-        let error = explicit_packages_for_backend("homebrew")
-            .expect_err("unknown backends must not invent an empty explicit list");
-        assert!(
-            error.to_string().contains("Unsupported package manager"),
-            "got: {error}"
-        );
-    }
-
-    #[test]
-    #[cfg(not(any(feature = "debian", feature = "debian-pure")))]
-    fn apt_pure_explicit_without_debian_fails() {
-        let error = explicit_packages_for_backend("apt-pure")
-            .expect_err("apt-pure without a Debian backend must not invent an empty explicit list");
-        assert!(
-            error.to_string().contains("Debian backend disabled"),
-            "got: {error}"
-        );
+    #[tokio::test]
+    async fn backend_inventory_errors_do_not_become_empty_lists() {
+        let directory = tempfile::tempdir().unwrap();
+        let manager = Arc::new(crate::package_managers::mock::MockPackageManager::new_in(
+            "macos",
+            directory.path(),
+        ));
+        let state =
+            DaemonState::new_isolated(directory.path(), PackageIndex::empty(), manager).unwrap();
+        std::fs::write(
+            directory.path().join("mock_state_homebrew.json"),
+            b"invalid json",
+        )
+        .unwrap();
+        assert!(state.explicit_packages().await.is_err());
     }
 
     #[cfg(feature = "arch")]

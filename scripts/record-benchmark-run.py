@@ -8,17 +8,21 @@ is meant to be committed.
 Does not overwrite benchmarks/summary.json unless --update-gate is passed.
 That file is the reviewed regression baseline and automated runs must not move it.
 """
+
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import shutil
+import statistics
 import subprocess
 import sys
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-
+from typing import cast
 
 SCENARIOS = ("search", "info", "status", "explicit", "update")
 
@@ -102,7 +106,11 @@ def summarize_scenario(data: dict) -> list[dict]:
             {
                 "command": result.get("command"),
                 "mean_ms": round(ms(result, "mean"), 3),
-                "stddev_ms": round(ms(result, "stddev"), 3),
+                "stddev_ms": (
+                    round(ms(result, "stddev"), 3)
+                    if result.get("stddev") is not None
+                    else None
+                ),
                 "median_ms": round(ms(result, "median"), 3),
                 "min_ms": round(ms(result, "min"), 3),
                 "max_ms": round(ms(result, "max"), 3),
@@ -115,72 +123,109 @@ def summarize_scenario(data: dict) -> list[dict]:
     return rows
 
 
-def validate_results(source: Path) -> list[str]:
-    """Fail closed if the run did not measure real work."""
+@dataclass(frozen=True, slots=True)
+class Measurement:
+    command: str
+    samples: tuple[float, ...]
+    exit_codes: tuple[int, ...]
+
+
+def finite_duration(value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError("duration must be a number")
+    try:
+        duration = float(value)
+    except OverflowError as error:
+        raise ValueError("duration is outside the finite range") from error
+    if not math.isfinite(duration) or duration < 0:
+        raise ValueError("duration must be finite and nonnegative")
+    return duration
+
+
+def parse_measurement(value: object) -> Measurement:
+    """Admit samples and their receipts, never a desired performance outcome."""
+    if not isinstance(value, dict):
+        raise TypeError("measurement must be an object")
+    record = cast(dict[str, object], value)
+    command = record.get("command")
+    raw_samples = record.get("times")
+    raw_codes = record.get("exit_codes")
+    if not isinstance(command, str) or not command.strip():
+        raise ValueError("measurement has no command label")
+    if not isinstance(raw_samples, list) or not raw_samples:
+        raise ValueError(f"{command}: no timed samples")
+    if not isinstance(raw_codes, list) or len(raw_codes) != len(raw_samples):
+        raise ValueError(f"{command}: each sample needs an exit receipt")
+    samples = tuple(finite_duration(item) for item in cast(list[object], raw_samples))
+    codes: list[int] = []
+    for code in cast(list[object], raw_codes):
+        if isinstance(code, bool) or not isinstance(code, int):
+            raise TypeError(f"{command}: exit receipt must be an integer")
+        codes.append(code)
+    expected = {
+        "mean": statistics.mean(samples),
+        "median": statistics.median(samples),
+        "min": min(samples),
+        "max": max(samples),
+    }
+    if len(samples) > 1:
+        expected["stddev"] = statistics.stdev(samples)
+    elif record.get("stddev") is not None:
+        raise ValueError(f"{command}: one sample cannot establish standard deviation")
+    for field, actual in expected.items():
+        reported = finite_duration(record.get(field))
+        if not math.isclose(reported, actual, rel_tol=1e-8, abs_tol=1e-12):
+            raise ValueError(f"{command}: {field} does not match raw samples")
+    finite_duration(record.get("user"))
+    finite_duration(record.get("system"))
+    return Measurement(command, samples, tuple(codes))
+
+
+def validate_results(source: Path, required: tuple[str, ...] = ()) -> list[str]:
+    """Check samples and exits without requiring a preferred performance outcome."""
     errors: list[str] = []
     present = [name for name in SCENARIOS if (source / f"{name}.json").is_file()]
     if not present:
         errors.append(f"no hyperfine JSON in {source}")
         return errors
 
-    search = load_json(source / "search.json")
-    # `--update` archives only update.json. Require search.json for every
-    # other recorded set so incomplete search runs still fail closed.
-    update_only = present == ["update"]
-    if search is None and not update_only:
-        errors.append(f"search.json missing in {source}")
-        return errors
+    expected = required or (() if present == ["update"] else ("search",))
+    for name in expected:
+        if name not in present:
+            errors.append(f"{name}.json missing in {source}")
 
-    if search is not None:
-        daemon = find_result(search["results"], "OMG (Daemon)")
-        if daemon is None:
-            errors.append('search.json has no command named "OMG (Daemon)"')
-            return errors
-        if any(code != 0 for code in daemon.get("exit_codes") or [1]):
-            errors.append("OMG (Daemon) search had a non-zero exit")
-        daemon_mean = ms(daemon)
-        if daemon_mean < 1.0:
-            errors.append(
-                f"OMG (Daemon) search mean {daemon_mean:.2f} ms is too fast "
-                "(command likely did no work)"
-            )
-        if daemon_mean > 500.0:
-            errors.append(
-                f"OMG (Daemon) search mean {daemon_mean:.1f} ms is implausibly slow"
-            )
-
-        pacman = find_result(search["results"], "pacman")
-        if pacman is not None:
-            pacman_mean = ms(pacman)
-            if pacman_mean < 30.0:
-                errors.append(
-                    f"pacman search mean {pacman_mean:.1f} ms is too fast "
-                    "(likely not searching the sync databases)"
-                )
-            if daemon_mean >= pacman_mean:
-                errors.append(
-                    f"OMG search ({daemon_mean:.1f} ms) was not faster than pacman "
-                    f"({pacman_mean:.1f} ms)"
-                )
-            if ms(pacman, "user") < 0.02:
-                errors.append(
-                    f"pacman search user-time {ms(pacman, 'user'):.1f} ms is too low "
-                    "(CPU work missing)"
-                )
-
-    for name in SCENARIOS:
-        payload = load_json(source / f"{name}.json")
-        if payload is None:
+    for name in present:
+        try:
+            with (source / f"{name}.json").open("rb") as handle:
+                content = handle.read(1048577)
+            if len(content) > 1048576:
+                errors.append(f"{name}: measurement file exceeds 1 MiB")
+                continue
+            payload: object = json.loads(content)
+        except (OSError, UnicodeError, ValueError) as error:
+            errors.append(f"{name}: cannot read measurements: {error}")
             continue
-        for result in payload.get("results", []):
-            command = result.get("command", name)
-            codes = result.get("exit_codes") or []
-            if not codes:
-                errors.append(f"{name}/{command}: no exit codes recorded")
-            elif any(code != 0 for code in codes):
-                errors.append(f"{name}/{command}: non-zero exit in timed runs")
-            if not result.get("times"):
-                errors.append(f"{name}/{command}: no timed runs")
+        if not isinstance(payload, dict):
+            errors.append(f"{name}: expected an object")
+            continue
+        results = cast(dict[str, object], payload).get("results")
+        if not isinstance(results, list) or not results:
+            errors.append(f"{name}: no measurements")
+            continue
+        seen: set[str] = set()
+        for result in cast(list[object], results):
+            try:
+                measurement = parse_measurement(result)
+            except (TypeError, ValueError) as error:
+                errors.append(f"{name}: {error}")
+                continue
+            if measurement.command in seen:
+                errors.append(f"{name}: duplicate command label {measurement.command}")
+            seen.add(measurement.command)
+            if any(code != 0 for code in measurement.exit_codes):
+                errors.append(
+                    f"{name}/{measurement.command}: non-zero exit in timed runs"
+                )
     return errors
 
 
@@ -194,11 +239,15 @@ def render_latest_md(meta: dict, source: Path) -> str:
         f"- **When:** {meta['timestamp']}",
         f"- **Commit:** `{git.get('commit', '')}` (`{git.get('describe', '')}`)",
         f"- **Dirty tree:** {'yes' if git.get('dirty') else 'no'}",
-        f"- **Host:** {host.get('cpu') or host.get('machine')}, "
-        f"Linux {host.get('release')}, {host.get('ram_gib')} GiB RAM",
+        (
+            f"- **Host:** {host.get('cpu') or host.get('machine')}, "
+            f"Linux {host.get('release')}, {host.get('ram_gib')} GiB RAM"
+        ),
         f"- **Hyperfine:** {meta.get('hyperfine', 'unknown')}",
-        f"- **Flags:** `--shell=none --output=pipe`, warmup={meta.get('warmup')}, "
-        f"min-runs={meta.get('min_runs')}, max-runs={meta.get('max_runs')}",
+        (
+            f"- **Flags:** `--shell=none --output=pipe`, warmup={meta.get('warmup')}, "
+            f"min-runs={meta.get('min_runs')}, max-runs={meta.get('max_runs')}"
+        ),
         "",
         "Scratch output is gitignored (`benchmark_results/`). Canonical copies of the",
         "full hyperfine JSON (every run, every exit code) live under `benchmarks/records/`.",
@@ -266,12 +315,27 @@ def main() -> int:
         default="benchmark_results",
         help="Directory containing hyperfine JSON/MD (default: benchmark_results)",
     )
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--validate-only",
+        action="store_true",
+        help="Check measurements without creating records or changing metadata",
+    )
     parser.add_argument(
+        "--scenario",
+        action="append",
+        choices=SCENARIOS,
+        default=[],
+        help="Require this scenario (repeatable); useful for scoped guest measurements",
+    )
+    mode.add_argument(
         "--update-gate",
         action="store_true",
         help="Also write benchmarks/summary.json from this reviewed run",
     )
-    parser.add_argument("--id", default="", help="Record id (default: UTC timestamp + short sha)")
+    parser.add_argument(
+        "--id", default="", help="Record id (default: UTC timestamp + short sha)"
+    )
     parser.add_argument("--warmup", type=int, default=None)
     parser.add_argument("--min-runs", type=int, default=None)
     parser.add_argument("--max-runs", type=int, default=None)
@@ -285,12 +349,19 @@ def main() -> int:
         print(f"No hyperfine output directory at {source}", file=sys.stderr)
         return 1
 
-    errors = validate_results(source)
+    errors = validate_results(source, tuple(args.scenario))
     if errors:
-        print("Benchmark record rejected — numbers are not credible:", file=sys.stderr)
+        print(
+            "Benchmark record rejected — invalid or failed measurements:",
+            file=sys.stderr,
+        )
         for error in errors:
             print(f"  - {error}", file=sys.stderr)
         return 1
+
+    if args.validate_only:
+        print("Measurement validation passed (not a workload-equivalence assertion)")
+        return 0
 
     git = git_capture(root)
     host = host_capture()
@@ -308,7 +379,9 @@ def main() -> int:
 
     preflight = load_json(source / "preflight.json") or {}
     try:
-        hyperfine = subprocess.check_output(["hyperfine", "--version"], text=True).strip()
+        hyperfine = subprocess.check_output(
+            ["hyperfine", "--version"], text=True
+        ).strip()
     except (subprocess.CalledProcessError, FileNotFoundError):
         hyperfine = "unknown"
 
@@ -382,7 +455,9 @@ def main() -> int:
             "commit": git.get("commit", ""),
             "record": record_id,
         }
-        (root / "benchmarks" / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+        (root / "benchmarks" / "summary.json").write_text(
+            json.dumps(summary, indent=2) + "\n"
+        )
 
     index_path = root / "benchmarks" / "records" / "INDEX.md"
     index_lines = [

@@ -223,6 +223,27 @@ fn supported_distro_label(distro: Distro) -> Option<&'static str> {
     }
 }
 
+/// Whether a lists-dir entry is a package index the apt backend can parse:
+/// the name carries `_Packages` and the encoding is one
+/// `package_managers::debian_db` reads (uncompressed, lz4, gz, xz).
+/// InRelease metadata, lock files, and pdiff fragments do not count.
+fn is_apt_packages_index(path: &std::path::Path) -> bool {
+    let Some(filename) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    apt_lists_entry_has_index(filename)
+}
+
+/// Whether a lists directory holds at least one parseable package index.
+fn apt_lists_have_packages(lists: &std::path::Path) -> bool {
+    lists.is_dir()
+        && std::fs::read_dir(lists).is_ok_and(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .any(|entry| is_apt_packages_index(&entry.path()))
+        })
+}
+
 /// Check the Debian/Ubuntu infrastructure the apt backend actually depends
 /// on (W3-A-02): the dpkg status database and the APT package indexes that
 /// `package_managers::debian_db` parses directly. No other infrastructure is
@@ -250,12 +271,7 @@ fn check_debian_infra() -> usize {
     }
 
     let lists = std::path::Path::new("/var/lib/apt/lists");
-    let has_indexes = lists.is_dir()
-        && std::fs::read_dir(lists).is_ok_and(|entries| {
-            entries
-                .filter_map(Result::ok)
-                .any(|e| apt_lists_entry_has_index(&e.file_name().to_string_lossy()))
-        });
+    let has_indexes = apt_lists_have_packages(lists);
     if has_indexes {
         println!(
             "  {}",
@@ -278,12 +294,13 @@ fn check_debian_infra() -> usize {
 /// before testing the `_Packages` stem. `InRelease`/`Release` files alone
 /// are not indexes.
 fn apt_lists_entry_has_index(file_name: &str) -> bool {
-    let stem = file_name
-        .strip_suffix(".lz4")
-        .or_else(|| file_name.strip_suffix(".gz"))
-        .or_else(|| file_name.strip_suffix(".xz"))
-        .unwrap_or(file_name);
-    stem.ends_with("_Packages")
+    file_name.ends_with("_Packages")
+        || file_name.rsplit_once('.').is_some_and(|(name, encoding)| {
+            name.ends_with("_Packages")
+                && ["lz4", "gz", "xz"]
+                    .iter()
+                    .any(|supported| encoding.eq_ignore_ascii_case(supported))
+        })
 }
 
 /// Check the Arch Linux infrastructure the ALPM backend depends on:
@@ -931,6 +948,64 @@ mod tests {
         assert_eq!(parse_test_distro("rhel"), Distro::Fedora);
         assert_eq!(parse_test_distro("darwin"), Distro::MacOS);
         assert_eq!(parse_test_distro("nonsense"), Distro::Unknown);
+    }
+
+    /// #299: stock Debian/Ubuntu ships compressed indexes
+    /// (`*_Packages.lz4`, no uncompressed `*_Packages`), which the apt
+    /// backend parses — doctor must accept the same files it depends on.
+    #[test]
+    fn compressed_packages_indexes_count_as_healthy() {
+        let dir = tempfile::TempDir::new().expect("isolated lists dir");
+        for name in [
+            "deb.debian.org_debian_dists_bookworm_InRelease",
+            "deb.debian.org_debian_dists_bookworm_main_binary-amd64_Packages.lz4",
+            "lock",
+        ] {
+            std::fs::write(dir.path().join(name), b"").expect("fixture file");
+        }
+        assert!(apt_lists_have_packages(dir.path()));
+
+        let dir = tempfile::TempDir::new().expect("isolated lists dir");
+        for name in [
+            "mirror_dists_noble_main_binary-amd64_Packages.gz",
+            "mirror_dists_noble_main_binary-amd64_Packages.xz",
+            "mirror_dists_noble_main_binary-amd64_Packages",
+        ] {
+            std::fs::write(dir.path().join(name), b"").expect("fixture file");
+        }
+        assert!(apt_lists_have_packages(dir.path()));
+    }
+
+    #[test]
+    fn dotted_host_packages_indexes_count_as_healthy() {
+        for suffix in ["", ".lz4", ".gz", ".xz", ".LZ4", ".GZ", ".XZ"] {
+            let dir = tempfile::TempDir::new().expect("isolated lists dir");
+            let name =
+                format!("deb.debian.org_debian_dists_bookworm_main_binary-amd64_Packages{suffix}");
+            std::fs::write(dir.path().join(name), b"").expect("index fixture");
+            assert!(apt_lists_have_packages(dir.path()), "suffix {suffix:?}");
+        }
+    }
+
+    /// InRelease metadata, lock files, and pdiff fragments are not package
+    /// indexes; an empty or index-free lists dir stays an issue.
+    #[test]
+    fn non_index_lists_content_stays_an_issue() {
+        let dir = tempfile::TempDir::new().expect("isolated lists dir");
+        assert!(!apt_lists_have_packages(dir.path()));
+        for name in [
+            "deb.debian.org_debian_dists_bookworm_InRelease",
+            "lock",
+            "partial",
+            "mirror_main_binary-amd64_Packages.diff_Index",
+            "deb.debian.org_main_binary-amd64_Packages.bz2",
+            "deb.debian.org_main_binary-amd64_Packages.diff.gz",
+            "mirror_main_binary-amd64_Packages_backup",
+            "mirror_main_binary-amd64_Packages.gz.bak",
+        ] {
+            std::fs::write(dir.path().join(name), b"").expect("fixture file");
+        }
+        assert!(!apt_lists_have_packages(dir.path()));
     }
 
     // W3-A-03: exit contract — 0 issues is Ok (exit 0); any issue count is

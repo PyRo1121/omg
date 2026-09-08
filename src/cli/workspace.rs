@@ -323,10 +323,25 @@ fn run_sequential(
 ) -> Result<()> {
     let mut success = 0;
     let mut failed = 0;
+    let selected: HashSet<&str> = projects.iter().copied().collect();
+    let mut failed_projects = HashSet::new();
 
-    for name in projects {
-        if let Some(project) = workspace.projects.get(*name) {
-            println!("{} {}", style::arrow("→"), style::package(name));
+    for name in dependency_levels(workspace, projects)?
+        .into_iter()
+        .flatten()
+    {
+        if let Some(project) = workspace.projects.get(&name) {
+            if dependency_failed(project, &selected, &failed_projects) {
+                println!(
+                    "{} {} skipped because a dependency failed",
+                    style::error("✗"),
+                    style::package(&name)
+                );
+                failed_projects.insert(name);
+                failed += 1;
+                continue;
+            }
+            println!("{} {}", style::arrow("→"), style::package(&name));
 
             let result = run_project_command(&project.path, project, command, args);
 
@@ -337,6 +352,7 @@ fn run_sequential(
                 }
                 Err(e) => {
                     println!("  {} {e}", style::error("✗"));
+                    failed_projects.insert(name);
                     failed += 1;
                 }
             }
@@ -345,6 +361,17 @@ fn run_sequential(
     }
 
     print_summary(command, success, failed)
+}
+
+fn dependency_failed(
+    project: &WorkspaceProject,
+    selected: &HashSet<&str>,
+    failed: &HashSet<String>,
+) -> bool {
+    project
+        .depends_on
+        .iter()
+        .any(|dependency| selected.contains(dependency.as_str()) && failed.contains(dependency))
 }
 
 fn dependency_levels(workspace: &Workspace, projects: &[&str]) -> Result<Vec<Vec<String>>> {
@@ -394,9 +421,7 @@ async fn run_parallel(
         let mut handles = Vec::new();
         for name in level {
             let project = &workspace.projects[&name];
-            if project.depends_on.iter().any(|dependency| {
-                selected.contains(dependency.as_str()) && failed_projects.contains(dependency)
-            }) {
+            if dependency_failed(project, &selected, &failed_projects) {
                 println!(
                     "{} {} {}",
                     style::error("✗"),
@@ -801,6 +826,41 @@ mod tests {
                 vec!["web".to_string()]
             ]
         );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn both_schedulers_skip_failed_dependents_and_run_independent_projects() {
+        let _guard = YesFlagGuard(crate::core::privilege::get_yes_flag());
+        crate::core::privilege::set_yes_flag(true);
+        for parallel in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let mut workspace = Workspace::default();
+            for (name, dependencies, command) in [
+                ("bad", vec![], "exit 1"),
+                ("child", vec!["bad"], "touch child"),
+                ("grandchild", vec!["child"], "touch grandchild"),
+                ("independent", vec![], "touch independent"),
+            ] {
+                let mut entry = project(name, &dependencies);
+                entry.path = directory.path().display().to_string();
+                entry.commands.insert("probe".into(), command.into());
+                workspace.projects.insert(name.into(), entry);
+            }
+            let projects = ["bad", "child", "grandchild", "independent"];
+            let result = if parallel {
+                run_parallel(&workspace, &projects, "probe", &[]).await
+            } else {
+                run_sequential(&workspace, &projects, "probe", &[])
+            };
+            assert!(result.is_err());
+            assert!(directory.path().join("independent").exists());
+            assert!(
+                !directory.path().join("child").exists(),
+                "failed dependency ran in parallel={parallel}"
+            );
+            assert!(!directory.path().join("grandchild").exists());
+        }
     }
 
     #[test]
