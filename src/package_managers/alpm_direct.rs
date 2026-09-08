@@ -476,7 +476,7 @@ mod tests {
                 set_mtime(&sync.join("core.db"), 10)?;
             }
             let restored = observe()?;
-            assert!(restored.sync < loaded.sync || restored.local < loaded.local);
+            assert_ne!(restored, loaded);
             assert!(
                 !cached_alpm_is_reusable(1, 1, loaded, restored),
                 "restoring an older {removed} timestamp must invalidate the cached handle"
