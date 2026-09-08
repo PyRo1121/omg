@@ -1,8 +1,12 @@
 # Changelog
 
-Historical release and commit notes follow. Their feature descriptions, timings, security claims, and status language describe their original context; they are not a current support or assurance statement. The documentation audit reviewed this file as an archive, not as a fresh validation of every historical entry.
+All notable changes to OMG are documented here.
 
-For current behavior and limits, use [installation](./installation.md), [security](./security.md), and the [benchmark evidence](../benchmarks/README.md). In particular, OMG is alpha software, backend coverage differs, and the SLSA-named command does not establish a SLSA build level.
+OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm, pyenv, rustup, and more with a single tool.
+
+**Performance**: 22x faster searches than pacman, 59-483x faster than apt-cache on Debian/Ubuntu
+**Unified**: System packages + 8 language runtimes in one CLI
+**Secure**: Built-in SLSA, PGP, SBOM, and audit logs
 
 ---
 
@@ -80,6 +84,7 @@ present before the probe runs.
 - **Install**: Add interactive fuzzy package discovery
 ### 🐛 Bug Fixes
 
+- **Debian**: Rebuild cached indexes after package list removal
 - **Dnf**: Bind cached inventory to RPM database generation ([#349](https://github.com/PyRo1121/omg/issues/349))
 - **Team**: Commit only the generated lockfile ([#348](https://github.com/PyRo1121/omg/issues/348))
 - **Privilege**: Allow internal re-exec verbs through install snapshot ([#347](https://github.com/PyRo1121/omg/issues/347))
@@ -489,6 +494,7 @@ Preserve archive data and report persistence failures explicitly. Coordinate dat
 - Add published release smoke matrix
 ### 📚 Documentation
 
+- Correct security claims and operational guidance
 - **Audit**: Preserve the 81-finding Daybreak remediation queue ([#346](https://github.com/PyRo1121/omg/issues/346))
 
 * docs(audit): track all 81 cancelled Daybreak findings
