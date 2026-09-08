@@ -31,6 +31,7 @@ on:
       - "benchmark-hyperfine.sh"
       - "scripts/record-benchmark-run.py"
       - "scripts/benchmark-qemu.sh"
+      - "scripts/qemu-transactions.sh"
       - "scripts/qemu-inventory.sh"
       - "scripts/test-release-smoke.sh"
       - ".github/workflows/qemu-matrix.yml"
