@@ -68,7 +68,7 @@ pub enum Commands {
         /// Show what would be installed without making changes
         #[arg(long)]
         dry_run: bool,
-        /// Show PKGBUILD contents and confirm each AUR build
+        /// Force PKGBUILD review for each AUR build (on by default; see aur.review_pkgbuild)
         #[arg(long)]
         review: bool,
         /// Explicitly permit installation from local package archives
@@ -105,7 +105,7 @@ pub enum Commands {
         /// Show what would be updated without making changes
         #[arg(long)]
         dry_run: bool,
-        /// Show PKGBUILD contents and confirm each AUR build
+        /// Force PKGBUILD review for each AUR build (on by default; see aur.review_pkgbuild)
         #[arg(long)]
         review: bool,
         /// Skip refreshing package databases (use the cached view)

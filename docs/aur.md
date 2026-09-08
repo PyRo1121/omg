@@ -71,6 +71,12 @@ review_pkgbuild = true
 cache_builds = true
 ```
 
+Review is fail-closed: with review enabled and no interactive terminal,
+both single-package and parallel builds bail before cloning or building.
+In CI or other non-interactive sessions that accept unreviewed AUR code,
+set `review_pkgbuild = false`. The `--review` flag forces review for one
+invocation.
+
 ## Usage Examples
 
 ```bash
