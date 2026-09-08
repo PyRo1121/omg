@@ -207,8 +207,12 @@ impl PackageService {
         self.finish_transaction(TransactionType::Install, changes, result)
     }
 
-    /// Remove packages
-    pub async fn remove(&self, packages: &[String], _recursive: bool) -> Result<()> {
+    /// Remove packages using the configured backend's removal policy.
+    ///
+    /// Configure recursive removal on the backend before constructing this
+    /// service (for example, `ArchPackageManager::with_recursive_removal`).
+    /// The service records history but does not override backend removal options.
+    pub async fn remove(&self, packages: &[String]) -> Result<()> {
         // Every requested package must appear in history even when its info
         // lookup misses (e.g. installed but absent from the repo index);
         // otherwise we mutate packages that history will never mention.

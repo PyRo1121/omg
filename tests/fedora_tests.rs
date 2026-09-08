@@ -618,7 +618,7 @@ mod dnf_integration {
                 Owner::Disabled => builder.without_history().build()?,
             };
             omg_lib::core::privilege::set_parent_owns_history(matches!(owner, Owner::Parent));
-            let outcome = service.remove(&packages, false).await;
+            let outcome = service.remove(&packages).await;
             omg_lib::core::privilege::set_parent_owns_history(false);
             let remaining = std::process::Command::new("rpm")
                 .args(["-q", "tree"])
