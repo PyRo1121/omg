@@ -263,6 +263,12 @@ impl PgpVerifier {
     /// plausibly issued it. Shared by [`Self::verify_detached`] and
     /// [`Self::verify_memory`]; returns true on the first successful check.
     fn matches_any_trusted_cert(&self, sig: &openpgp::packet::Signature, hasher: &Context) -> bool {
+        if sig
+            .signature_alive(None, Some(std::time::Duration::ZERO))
+            .is_err()
+        {
+            return false;
+        }
         if self
             .policy
             .signature(sig, HashAlgoSecurity::CollisionResistance)
@@ -354,12 +360,25 @@ mod tests {
     }
 
     fn signed_fixture(hash: openpgp::types::HashAlgorithm) -> (PgpVerifier, Vec<u8>) {
+        signed_fixture_at(
+            hash,
+            std::time::SystemTime::now(),
+            std::time::Duration::from_secs(3600),
+        )
+    }
+
+    fn signed_fixture_at(
+        hash: openpgp::types::HashAlgorithm,
+        created: std::time::SystemTime,
+        validity: std::time::Duration,
+    ) -> (PgpVerifier, Vec<u8>) {
         use openpgp::cert::prelude::CertBuilder;
         use openpgp::packet::signature::SignatureBuilder;
         use openpgp::serialize::Serialize as _;
         use openpgp::types::SignatureType;
 
         let (cert, _) = CertBuilder::general_purpose(Some("omg-test@example.invalid"))
+            .set_creation_time(std::time::SystemTime::now() - std::time::Duration::from_secs(86400))
             .generate()
             .expect("generate test certificate");
         let policy = StandardPolicy::new();
@@ -376,6 +395,10 @@ mod tests {
             .expect("test keypair");
         let signature = SignatureBuilder::new(SignatureType::Binary)
             .set_hash_algo(hash)
+            .set_signature_creation_time(created)
+            .expect("signature creation time")
+            .set_signature_validity_period(validity)
+            .expect("signature validity")
             .sign_message(&mut signer, b"test data")
             .expect("sign test data");
         let mut serialized = Vec::new();
@@ -417,6 +440,33 @@ mod tests {
             verifier.verify_detached(data_file.path(), sig_file.path()),
             Err(PgpError::NoValidSignature)
         ));
+    }
+
+    #[test]
+    fn expired_and_future_signatures_are_rejected() {
+        let now = std::time::SystemTime::now();
+        for created in [
+            now - std::time::Duration::from_secs(3600),
+            now + std::time::Duration::from_secs(3600),
+        ] {
+            let (verifier, signature) = signed_fixture_at(
+                openpgp::types::HashAlgorithm::SHA256,
+                created,
+                std::time::Duration::from_secs(60),
+            );
+            assert!(matches!(
+                verifier.verify_memory(b"test data", &signature),
+                Err(PgpError::NoValidSignature)
+            ));
+            let mut data = NamedTempFile::new().unwrap();
+            data.write_all(b"test data").unwrap();
+            let mut sig = NamedTempFile::new().unwrap();
+            sig.write_all(&signature).unwrap();
+            assert!(matches!(
+                verifier.verify_detached(data.path(), sig.path()),
+                Err(PgpError::NoValidSignature)
+            ));
+        }
     }
 
     #[test]
