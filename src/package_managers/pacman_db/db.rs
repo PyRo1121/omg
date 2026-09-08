@@ -122,7 +122,7 @@ fn collect_sync_db_paths(sync_dir: &Path) -> Result<Vec<(PathBuf, String)>> {
 #[derive(Default, Serialize, Deserialize)]
 struct LocalDbCache {
     packages: HashMap<String, LocalDbPackage>,
-    last_modified: Option<SystemTime>,
+    last_modified: Option<LocalDbEpoch>,
     /// Last access time for TTL-based eviction (30-minute safety net)
     #[serde(skip)]
     last_accessed: Option<SystemTime>,
@@ -779,7 +779,7 @@ impl PackageCache for DbCache {
 
 impl PackageCache for LocalDbCache {
     type Package = LocalDbPackage;
-    type Epoch = SystemTime;
+    type Epoch = LocalDbEpoch;
 
     fn packages(&self) -> &HashMap<String, Self::Package> {
         &self.packages
@@ -787,10 +787,10 @@ impl PackageCache for LocalDbCache {
     fn packages_mut(&mut self) -> &mut HashMap<String, Self::Package> {
         &mut self.packages
     }
-    fn last_modified(&self) -> Option<SystemTime> {
+    fn last_modified(&self) -> Option<LocalDbEpoch> {
         self.last_modified
     }
-    fn set_last_modified(&mut self, time: Option<SystemTime>) {
+    fn set_last_modified(&mut self, time: Option<LocalDbEpoch>) {
         self.last_modified = time;
     }
     fn last_accessed(&self) -> Option<SystemTime> {
@@ -893,11 +893,9 @@ fn ensure_sync_cache_loaded(sync_dir: &Path) -> Result<()> {
 
 /// Ensure local cache is loaded (fast if already loaded)
 fn ensure_local_cache_loaded(local_dir: &Path) -> Result<()> {
-    let current_mtime = get_local_db_mtime(local_dir)?;
-    // "local_db_rdeps": the local cache stores `%DEPENDS%`/`%PROVIDES%` for
-    // reverse-dependency derivation now; the pre-rdeps `local_db` bitcode
-    // layout is incompatible, so caches are namespaced per format.
-    ensure_cache_loaded(&LOCAL_DB_CACHE, "local_db_rdeps", current_mtime, || {
+    let current_epoch = LocalDbEpoch::from_local_dir(local_dir)?;
+    // The previous local_db_rdeps layout stores only a directory timestamp.
+    ensure_cache_loaded(&LOCAL_DB_CACHE, "local_db_source_v1", current_epoch, || {
         parse_local_db(local_dir)
     })
 }
@@ -912,6 +910,23 @@ impl SyncDbEpoch {
     /// An existing empty directory has its own observed identity.
     pub const UNIX_EPOCH: Self = Self(None);
 
+    /// Reads the current sync directory metadata identity.
+    pub fn observe() -> Result<Self> {
+        Self::from_sync_dir(&paths::pacman_sync_dir_result()?)
+    }
+
+    /// Observe names and metadata, including symlink targets, without locking writers.
+    pub fn from_sync_dir(sync_dir: &Path) -> Result<Self> {
+        Ok(Self(DirectoryMetadata::observe(sync_dir)?.fingerprint))
+    }
+}
+
+struct DirectoryMetadata {
+    fingerprint: Option<[u8; 32]>,
+    directories: Vec<PathBuf>,
+}
+
+impl DirectoryMetadata {
     fn hash_metadata(hash: &mut Sha256, metadata: &fs::Metadata) {
         for value in [
             metadata.dev(),
@@ -931,42 +946,36 @@ impl SyncDbEpoch {
         }
     }
 
-    /// Reads the current identity of the pacman sync directory.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the sync path cannot be resolved, the directory
-    /// cannot be listed, or an entry's modification time cannot be read.
-    pub fn observe() -> Result<Self> {
-        Self::from_sync_dir(&paths::pacman_sync_dir_result()?)
-    }
-
-    /// Observe directory and entry identities, including symlink targets.
-    /// Hashing metadata is not content authentication or transaction locking.
-    ///
-    /// # Errors
-    /// Returns an error for unreadable directories/entries or dangling links.
-    pub fn from_sync_dir(sync_dir: &Path) -> Result<Self> {
-        let directory = match fs::symlink_metadata(sync_dir) {
+    fn observe(directory_path: &Path) -> Result<Self> {
+        let directory = match fs::symlink_metadata(directory_path) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(Self::UNIX_EPOCH);
+                return Ok(Self {
+                    fingerprint: None,
+                    directories: Vec::new(),
+                });
             }
             Err(error) => {
                 return Err(error)
-                    .with_context(|| format!("Failed to observe {}", sync_dir.display()));
+                    .with_context(|| format!("Failed to observe {}", directory_path.display()));
             }
         };
-        let mut entries = fs::read_dir(sync_dir)
-            .with_context(|| format!("Failed to read sync directory {}", sync_dir.display()))?
+        let mut entries = fs::read_dir(directory_path)
+            .with_context(|| {
+                format!(
+                    "Failed to read catalog directory {}",
+                    directory_path.display()
+                )
+            })?
             .collect::<std::io::Result<Vec<_>>>()
-            .context("Failed to enumerate sync directory entries")?;
-        entries.sort_unstable_by_key(fs::DirEntry::file_name);
+            .context("Failed to enumerate catalog directory entries")?;
+        entries.sort_by_cached_key(fs::DirEntry::file_name);
         let mut hash = Sha256::new();
         Self::hash_metadata(&mut hash, &directory);
         if directory.file_type().is_symlink() {
-            Self::hash_metadata(&mut hash, &fs::metadata(sync_dir)?);
+            Self::hash_metadata(&mut hash, &fs::metadata(directory_path)?);
         }
+        let mut directories = Vec::new();
         for entry in entries {
             let name = entry.file_name();
             hash.update((name.as_bytes().len() as u64).to_le_bytes());
@@ -980,25 +989,50 @@ impl SyncDbEpoch {
                     format!("Failed to observe target of {}", entry.path().display())
                 })?;
                 Self::hash_metadata(&mut hash, &target);
+                if target.is_dir() {
+                    directories.push(entry.path());
+                }
+            } else if metadata.is_dir() {
+                directories.push(entry.path());
             }
         }
-        Ok(Self(Some(hash.finalize().into())))
+        Ok(Self {
+            fingerprint: Some(hash.finalize().into()),
+            directories,
+        })
     }
 }
 
-/// Identity of the on-disk local package database.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct LocalDbEpoch(SystemTime);
+/// Metadata identity of local/ and the files in each package directory.
+/// This is neither chronological ordering nor content authentication.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LocalDbEpoch(Option<[u8; 32]>);
 
 impl LocalDbEpoch {
-    pub const UNIX_EPOCH: Self = Self(SystemTime::UNIX_EPOCH);
+    /// Sentinel for an absent local database, not a chronological value.
+    pub const UNIX_EPOCH: Self = Self(None);
 
     pub fn observe() -> Result<Self> {
         Self::from_local_dir(&paths::pacman_local_dir_result()?)
     }
 
     pub fn from_local_dir(local_dir: &Path) -> Result<Self> {
-        Ok(Self(get_local_db_mtime(local_dir)?))
+        let root = DirectoryMetadata::observe(local_dir)?;
+        let Some(fingerprint) = root.fingerprint else {
+            return Ok(Self::UNIX_EPOCH);
+        };
+        let mut hash = Sha256::new();
+        hash.update(fingerprint);
+        // ALPM stores package metadata as files directly inside each package
+        // directory. Observe those files, not only the local/ directory entry.
+        for package in root.directories {
+            let child = DirectoryMetadata::observe(&package)?;
+            let fingerprint = child
+                .fingerprint
+                .with_context(|| format!("Package directory disappeared: {}", package.display()))?;
+            hash.update(fingerprint);
+        }
+        Ok(Self(Some(hash.finalize().into())))
     }
 }
 
@@ -1042,33 +1076,6 @@ impl AlpmCatalogEpoch {
             local: LocalDbEpoch::observe()?,
         })
     }
-}
-
-/// Get modification time of local db directory.
-///
-/// A missing local database is an empty package set, matching
-/// [`parse_local_db`] instead of turning every lookup into an error.
-fn get_local_db_mtime(local_dir: &Path) -> Result<SystemTime> {
-    let meta = match std::fs::metadata(local_dir) {
-        Ok(meta) => meta,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(SystemTime::UNIX_EPOCH);
-        }
-        Err(error) => {
-            return Err(error).with_context(|| {
-                format!(
-                    "Failed to read local database metadata {}",
-                    local_dir.display()
-                )
-            });
-        }
-    };
-    meta.modified().with_context(|| {
-        format!(
-            "Failed to read local database modification time {}",
-            local_dir.display()
-        )
-    })
 }
 
 /// Force refresh of all caches (call after sync/install)
@@ -1648,14 +1655,14 @@ mod tests {
     }
 
     #[test]
-    fn test_get_local_db_mtime_missing_dir_is_epoch() {
+    fn local_identity_missing_dir_is_absent() {
         let missing = tempfile::TempDir::new()
             .unwrap()
             .path()
             .join("does-not-exist");
         assert_eq!(
-            get_local_db_mtime(&missing).unwrap(),
-            SystemTime::UNIX_EPOCH
+            LocalDbEpoch::from_local_dir(&missing).unwrap(),
+            LocalDbEpoch::UNIX_EPOCH
         );
     }
 
@@ -1704,6 +1711,78 @@ mod tests {
             .join("does-not-exist");
         let identity = SyncDbEpoch::from_sync_dir(&missing).unwrap();
         assert_eq!(identity, SyncDbEpoch::UNIX_EPOCH);
+    }
+
+    #[test]
+    #[ignore = "bounded filesystem metadata benchmark; run optimized with --ignored --nocapture"]
+    fn local_identity_scan_benchmark() -> Result<()> {
+        for packages in [100, 1_000, 3_000] {
+            let directory = tempfile::tempdir()?;
+            for number in 0..packages {
+                let package = directory.path().join(format!("fixture-{number}-1"));
+                fs::create_dir(&package)?;
+                for name in ["desc", "files", "mtree"] {
+                    fs::write(package.join(name), b"synthetic metadata")?;
+                }
+            }
+            let expected = LocalDbEpoch::from_local_dir(directory.path())?;
+            let mut micros = Vec::new();
+            for _ in 0..7 {
+                let start = std::time::Instant::now();
+                let observed = LocalDbEpoch::from_local_dir(directory.path())?;
+                micros.push(start.elapsed().as_micros());
+                assert_eq!(observed, expected);
+                std::hint::black_box(observed);
+            }
+            println!(
+                "LOCAL_SCAN {}",
+                serde_json::json!({
+                    "packages": packages, "files_per_package": 3, "microseconds": micros,
+                    "cache_state": "one warmup; OS cache not flushed"
+                })
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn local_identity_tracks_package_symlinks_and_file_removal() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let local = directory.path().join("local");
+        let target = directory.path().join("package");
+        fs::create_dir(&local)?;
+        fs::create_dir(&target)?;
+        fs::write(target.join("desc"), b"metadata")?;
+        std::os::unix::fs::symlink(&target, local.join("demo-1"))?;
+        let before = LocalDbEpoch::from_local_dir(&local)?;
+        assert_eq!(before, LocalDbEpoch::from_local_dir(&local)?);
+        fs::remove_file(target.join("desc"))?;
+        let after = LocalDbEpoch::from_local_dir(&local)?;
+        assert_ne!(before, after);
+        assert!(!is_cache_reusable(Some(before), after, true, None));
+        fs::remove_dir(&target)?;
+        assert!(LocalDbEpoch::from_local_dir(&local).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn local_identity_detects_desc_edits_without_root_changes() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let package = directory.path().join("demo-1");
+        fs::create_dir(&package)?;
+        let desc = package.join("desc");
+        fs::write(&desc, b"%REASON%\n0\n")?;
+        let root_mtime = fs::metadata(directory.path())?.modified()?;
+        let before = LocalDbEpoch::from_local_dir(directory.path())?;
+        fs::write(&desc, b"%REASON%\n1\n")?;
+        File::open(&desc)?.set_times(fs::FileTimes::new().set_modified(SystemTime::UNIX_EPOCH))?;
+        assert_eq!(fs::metadata(directory.path())?.modified()?, root_mtime);
+        assert_ne!(
+            before,
+            LocalDbEpoch::from_local_dir(directory.path())?,
+            "desc changes must invalidate the local source identity"
+        );
+        Ok(())
     }
 
     #[test]
@@ -2204,14 +2283,20 @@ mod tests {
                     ..Default::default()
                 },
             )]),
-            last_modified: Some(SystemTime::UNIX_EPOCH),
+            last_modified: Some(LocalDbEpoch::from_local_dir(temp.path()).unwrap()),
             last_accessed: None,
         };
 
-        save_cache_to_disk_in(&cache, temp.path(), "local_db").unwrap();
-        let loaded: LocalDbCache = load_cache_from_disk_in(temp.path(), "local_db").unwrap();
+        fs::write(temp.path().join("local_db_rdeps.bin"), b"legacy cache").unwrap();
+        save_cache_to_disk_in(&cache, temp.path(), "local_db_source_v1").unwrap();
+        let loaded: LocalDbCache =
+            load_cache_from_disk_in(temp.path(), "local_db_source_v1").unwrap();
         assert!(loaded.packages.contains_key("firefox"));
-        assert_eq!(loaded.last_modified, Some(SystemTime::UNIX_EPOCH));
+        assert_eq!(loaded.last_modified, cache.last_modified);
+        assert_eq!(
+            fs::read(temp.path().join("local_db_rdeps.bin")).unwrap(),
+            b"legacy cache"
+        );
     }
 
     #[test]
