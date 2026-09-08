@@ -194,10 +194,10 @@ impl DaemonState {
         Ok(packages)
     }
 
-    /// Rebuild catalog state when on-disk sync or local databases are newer
-    /// than the loaded index. Isolated daemons are a no-op.
+    /// Rebuild catalog state when the observed sync/local identity differs
+    /// from the loaded index. Isolated daemons are a no-op.
     #[cfg(feature = "arch")]
-    async fn heal_index_if_disk_newer(&self) -> anyhow::Result<()> {
+    async fn heal_index_if_catalog_changed(&self) -> anyhow::Result<()> {
         if !self.uses_production_backends() {
             return Ok(());
         }
@@ -221,7 +221,7 @@ impl DaemonState {
                     .index_epoch
                     .read()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
-                disk.disk_is_newer_than(loaded)
+                disk != loaded
             }
         }
     }
@@ -410,7 +410,7 @@ pub async fn handle_request(state: Arc<DaemonState>, request: Request) -> Respon
 
     #[cfg(feature = "arch")]
     if request.reads_arch_sync_catalog()
-        && let Err(error) = state.heal_index_if_disk_newer().await
+        && let Err(error) = state.heal_index_if_catalog_changed().await
     {
         return internal_error(
             request.id(),
