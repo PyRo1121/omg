@@ -1010,6 +1010,27 @@ pub struct AlpmCatalogEpoch {
 }
 
 impl AlpmCatalogEpoch {
+    /// Bracket construction with observations; discard the value on mismatch.
+    /// Equal metadata does not establish a transactionally consistent snapshot.
+    pub(crate) fn load_stable<T>(
+        mut observe: impl FnMut() -> Result<Self>,
+        load: impl FnOnce() -> Result<T>,
+    ) -> Result<(T, Self)> {
+        let epoch = observe()?;
+        let value = load()?;
+        epoch.ensure_unchanged(observe()?)?;
+        Ok((value, epoch))
+    }
+
+    /// Reject observed changes, without claiming to lock external writers.
+    pub(crate) fn ensure_unchanged(self, after: Self) -> Result<()> {
+        anyhow::ensure!(
+            self == after,
+            "Package databases changed while loading; retry the operation"
+        );
+        Ok(())
+    }
+
     pub const UNIX_EPOCH: Self = Self {
         sync: SyncDbEpoch::UNIX_EPOCH,
         local: LocalDbEpoch::UNIX_EPOCH,
@@ -1683,6 +1704,73 @@ mod tests {
             .join("does-not-exist");
         let identity = SyncDbEpoch::from_sync_dir(&missing).unwrap();
         assert_eq!(identity, SyncDbEpoch::UNIX_EPOCH);
+    }
+
+    #[test]
+    fn catalog_load_preserves_stable_values_and_observation_failures() -> Result<()> {
+        let epoch = AlpmCatalogEpoch::UNIX_EPOCH;
+        let (value, observed) = AlpmCatalogEpoch::load_stable(|| Ok(epoch), || Ok("snapshot"))?;
+        assert_eq!((value, observed), ("snapshot", epoch));
+        let called = std::cell::Cell::new(false);
+        let result = AlpmCatalogEpoch::load_stable(
+            || anyhow::bail!("observation unavailable"),
+            || {
+                called.set(true);
+                Ok(())
+            },
+        );
+        assert!(result.is_err());
+        assert!(
+            !called.get(),
+            "do not initialize when the initial observation fails"
+        );
+        let mut observations = 0;
+        let result = AlpmCatalogEpoch::load_stable(
+            || {
+                observations += 1;
+                if observations == 1 {
+                    Ok(epoch)
+                } else {
+                    anyhow::bail!("source disappeared")
+                }
+            },
+            || Ok("unpublishable"),
+        );
+        assert!(result.is_err());
+        assert_eq!(observations, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn catalog_load_rejects_changes_during_construction() -> Result<()> {
+        struct Probe<'a>(&'a std::cell::Cell<bool>);
+        impl Drop for Probe<'_> {
+            fn drop(&mut self) {
+                self.0.set(true);
+            }
+        }
+        let directory = tempfile::tempdir()?;
+        let database = directory.path().join("core.db");
+        fs::write(&database, b"old")?;
+        let dropped = std::cell::Cell::new(false);
+        let result = AlpmCatalogEpoch::load_stable(
+            || {
+                Ok(AlpmCatalogEpoch {
+                    sync: SyncDbEpoch::from_sync_dir(directory.path())?,
+                    local: LocalDbEpoch::UNIX_EPOCH,
+                })
+            },
+            || {
+                fs::write(&database, b"new generation")?;
+                Ok(Probe(&dropped))
+            },
+        );
+        assert!(
+            result.is_err(),
+            "a load must not be tagged with a later source identity"
+        );
+        assert!(dropped.get(), "discard the unpublished loaded resource");
+        Ok(())
     }
 
     #[test]

@@ -177,11 +177,16 @@ impl DaemonState {
     /// Rebuild the published index and reincarnate libalpm. Callers must hold
     /// `refresh_lock`.
     async fn rebuild_production_index(&self) -> anyhow::Result<usize> {
-        let index = PackageIndex::for_package_manager(Arc::clone(&self.package_manager)).await?;
         #[cfg(feature = "arch")]
         let epoch = crate::package_managers::pacman_db::AlpmCatalogEpoch::observe()
-            .context("Failed to observe ALPM catalog epoch after index rebuild")?;
+            .context("Failed to observe ALPM catalog before index rebuild")?;
+        let index = PackageIndex::for_package_manager(Arc::clone(&self.package_manager)).await?;
         self.refresh_system_backends()?;
+        #[cfg(feature = "arch")]
+        epoch.ensure_unchanged(
+            crate::package_managers::pacman_db::AlpmCatalogEpoch::observe()
+                .context("Failed to observe ALPM catalog after index and backend rebuild")?,
+        )?;
         let packages = self.replace_index(index);
         self.persistent.invalidate_status();
         #[cfg(feature = "arch")]
@@ -238,19 +243,25 @@ impl DaemonState {
         let data_dir = crate::core::paths::daemon_data_dir();
         let persistent = Self::open_persistent_cache(&data_dir)?;
         let package_manager = get_package_manager()?;
-        let index = PackageIndex::for_package_manager_blocking(Arc::clone(&package_manager))
-            .with_context(|| {
-                "Failed to build package index. Ensure package databases are synced (run 'omg sync')."
-            })?;
+        let load_catalog = || -> anyhow::Result<(PackageIndex, SystemBackendAccess)> {
+            let index = PackageIndex::for_package_manager_blocking(Arc::clone(&package_manager))
+                .context("Failed to build package index. Ensure package databases are synced (run 'omg sync').")?;
+            Ok((index, SystemBackendAccess::production()?))
+        };
         #[cfg(feature = "arch")]
-        let index_epoch = crate::package_managers::pacman_db::AlpmCatalogEpoch::observe()
-            .context("Failed to observe ALPM catalog epoch at daemon start")?;
+        let ((index, system_backends), index_epoch) =
+            crate::package_managers::pacman_db::AlpmCatalogEpoch::load_stable(
+                crate::package_managers::pacman_db::AlpmCatalogEpoch::observe,
+                load_catalog,
+            )?;
+        #[cfg(not(feature = "arch"))]
+        let (index, system_backends) = load_catalog()?;
 
         Ok(Self::from_index(
             persistent,
             index,
             package_manager,
-            SystemBackendAccess::production()?,
+            system_backends,
             #[cfg(feature = "arch")]
             index_epoch,
         ))

@@ -61,9 +61,11 @@ fn refresh_cached_handle(cached: &mut Option<CachedAlpm>, current_software: u64)
     }) {
         return Ok(());
     }
-    let handle = create_alpm_handle()?;
-    let disk_epoch = pacman_db::AlpmCatalogEpoch::observe()
-        .context("Failed to observe ALPM catalog epoch after ALPM init")?;
+    let (handle, disk_epoch) = pacman_db::AlpmCatalogEpoch::load_stable(
+        pacman_db::AlpmCatalogEpoch::observe,
+        create_alpm_handle,
+    )
+    .context("Failed to load a stable ALPM handle")?;
     *cached = Some(CachedAlpm {
         handle,
         software_epoch: current_software,
