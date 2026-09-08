@@ -1632,8 +1632,12 @@ impl AurClient {
             .collect())
     }
 
-    fn rollback_worktree_name(base: &str) -> String {
-        format!("{base}-{}", uuid::Uuid::new_v4())
+    fn begin_rollback_worktree(work: &Path, base: &str) -> Result<tempfile::TempDir> {
+        crate::core::security::validate_package_name(base)?;
+        tempfile::Builder::new()
+            .prefix(&format!("{base}-"))
+            .tempdir_in(work)
+            .context("Failed to create owned AUR rollback checkout")
     }
 
     fn historical_version_not_found_message(base: &str, version: &str) -> String {
@@ -1673,16 +1677,17 @@ impl AurClient {
 
         let _lifecycle_guard = self.acquire_build_lifecycle().await?;
 
-        // Isolated work tree; a UUID prevents concurrent rollbacks of the
-        // same package base from sharing or deleting one another's checkout.
+        // The owner removes this unique checkout on every early return or
+        // cancellation, not just after a successful install. Logs live outside it.
         let work = self.build_dir.join("_rollback");
         create_dir_as_user(&work).await?;
-        let repo_dir = work.join(Self::rollback_worktree_name(&base));
-        create_dir_as_user(&repo_dir).await?;
+        let checkout_owner = Self::begin_rollback_worktree(&work, &base)?;
+        let repo_dir = checkout_owner.path().to_path_buf();
 
         // Full-history partial clone (blobs fetched on demand at checkout).
         let url = format!("{AUR_GIT_URL}/{base}.git");
         let clone = Command::new("git")
+            .kill_on_drop(true)
             .args([
                 "clone",
                 "--filter=blob:none",
@@ -1710,6 +1715,7 @@ impl AurClient {
 
         // Walk commits newest -> oldest looking for the recorded version.
         let shas = Command::new("git")
+            .kill_on_drop(true)
             .args(["-C"])
             .arg(&repo_dir)
             .args(["log", "--format=%H"])
@@ -1728,6 +1734,7 @@ impl AurClient {
         let mut matched_sha: Option<String> = None;
         for sha in sha_list.lines().map(str::trim).filter(|s| !s.is_empty()) {
             let show = Command::new("git")
+                .kill_on_drop(true)
                 .args(["-C"])
                 .arg(&repo_dir)
                 .args(["show", &format!("{sha}:.SRCINFO")])
@@ -1754,6 +1761,7 @@ impl AurClient {
         };
 
         let checkout = Command::new("git")
+            .kill_on_drop(true)
             .args(["-C"])
             .arg(&repo_dir)
             .args(["checkout", "--detach", &sha])
@@ -1825,10 +1833,8 @@ impl AurClient {
         )?;
         Self::install_built_packages(&archives, sudoloop.as_ref()).await?;
         crate::cli::modern_ui::print_success(&format!("Installed {package} {version}"));
-        // The historical checkout is reproducible from AUR history on demand;
-        // leaving every UUID-named worktree behind would grow the build dir
-        // without bound. Removal is best-effort: a leftover checkout never
-        // affects correctness, only disk use.
+        // Use async cleanup on success and report failures. The owner also
+        // attempts cleanup on error/cancellation; logs remain outside this tree.
         if let Err(error) = tokio::fs::remove_dir_all(&repo_dir).await {
             tracing::warn!(
                 "Rollback of '{package}' succeeded but its worktree {} could not be removed: {error:#}",
@@ -5190,12 +5196,75 @@ mod tests {
     }
 
     #[test]
-    fn rollback_worktrees_are_unique_for_the_same_package_base() {
-        let first = AurClient::rollback_worktree_name("example");
-        let second = AurClient::rollback_worktree_name("example");
-        assert!(first.starts_with("example-"));
-        assert!(second.starts_with("example-"));
-        assert_ne!(first, second);
+    fn rollback_worktrees_are_unique_for_the_same_package_base() -> Result<()> {
+        let work = tempfile::tempdir()?;
+        let first = AurClient::begin_rollback_worktree(work.path(), "example")?;
+        let second = AurClient::begin_rollback_worktree(work.path(), "example")?;
+        assert!(
+            first
+                .path()
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("example-")
+        );
+        assert!(
+            second
+                .path()
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("example-")
+        );
+        assert_ne!(first.path(), second.path());
+        drop(first);
+        assert!(second.path().is_dir());
+        Ok(())
+    }
+
+    #[test]
+    fn rollback_failure_removes_its_checkout() -> Result<()> {
+        let work = tempfile::tempdir()?;
+        let attempt = || -> Result<()> {
+            let checkout = AurClient::begin_rollback_worktree(work.path(), "example")?;
+            std::fs::write(checkout.path().join("PKGBUILD"), b"partial clone")?;
+            anyhow::bail!("historical version not found");
+        };
+        assert!(attempt().is_err());
+        assert_eq!(
+            std::fs::read_dir(work.path())?.count(),
+            0,
+            "failed checkout must not leak"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn rollback_cancellation_preserves_other_checkouts_and_logs() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let work = root.path().join("_rollback");
+        let logs = root.path().join("_logs");
+        std::fs::create_dir_all(&work)?;
+        std::fs::create_dir_all(&logs)?;
+        let log = logs.join("example.log");
+        std::fs::write(&log, b"diagnostic evidence")?;
+        let surviving = AurClient::begin_rollback_worktree(&work, "example")?;
+        let cancelled = AurClient::begin_rollback_worktree(&work, "example")?;
+        let cancelled_path = cancelled.path().to_path_buf();
+        std::fs::write(cancelled.path().join("PKGBUILD"), b"partial")?;
+        let (ready, started) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            let _checkout = cancelled;
+            let _ = ready.send(());
+            std::future::pending::<()>().await;
+        });
+        started.await?;
+        task.abort();
+        assert!(task.await.expect_err("cancelled rollback").is_cancelled());
+        assert!(!cancelled_path.exists());
+        assert!(surviving.path().is_dir());
+        assert_eq!(std::fs::read(log)?, b"diagnostic evidence");
+        Ok(())
     }
 
     #[test]
