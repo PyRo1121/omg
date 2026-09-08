@@ -1120,16 +1120,9 @@ mod remove_tests {
 
     #[test]
     fn test_remove_nonexistent() {
-        let result = run_omg(&["remove", "package-never-installed-xyz"]);
-        let combined = result.combined_output();
-        assert!(
-            (result.success && combined.to_lowercase().contains("remov"))
-                || (!result.success
-                    && (combined.to_lowercase().contains("not found")
-                        || combined.to_lowercase().contains("not installed")
-                        || combined.to_lowercase().contains("error"))),
-            "Nonexistent removal should report an idempotent removal or explain the error: {combined}"
-        );
+        let result = run_omg(&["remove", "package-never-installed-xyz", "--yes"]);
+        result.assert_success();
+        result.assert_stdout_contains("Remove");
         result.assert_no_ansi();
     }
 }
