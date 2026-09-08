@@ -1870,7 +1870,7 @@ mod tests {
         fs::write(&changed, b"before")?;
         File::open(&future)?.set_times(
             fs::FileTimes::new()
-                .set_modified(SystemTime::now() + std::time::Duration::from_secs(86_400)),
+                .set_modified(SystemTime::now() + std::time::Duration::from_hours(24)),
         )?;
         File::open(&changed)?.set_times(
             fs::FileTimes::new()
