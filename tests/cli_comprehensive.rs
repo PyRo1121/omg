@@ -1369,6 +1369,47 @@ mod env_tests {
     }
 
     #[test]
+    fn git_hook_uninstall_preserves_composed_and_custom_automation() {
+        let repository = tempfile::tempdir().unwrap();
+        let hooks = repository.path().join("managed-hooks");
+        for args in [
+            vec!["init", "-q"],
+            vec!["config", "core.hooksPath", hooks.to_str().unwrap()],
+        ] {
+            assert!(
+                std::process::Command::new("git")
+                    .args(args)
+                    .current_dir(repository.path())
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        }
+        run_omg_in_dir(&["hooks", "install"], repository.path()).assert_success();
+        let pre_commit = hooks.join("pre-commit");
+        let composed = format!(
+            "{}\n# custom automation\ncustom_check\n",
+            std::fs::read_to_string(&pre_commit).unwrap()
+        );
+        let custom = "#!/bin/sh\n# OMG integration notes\ncustom_check\n";
+        std::fs::write(&pre_commit, &composed).unwrap();
+        std::fs::write(hooks.join("post-merge"), custom).unwrap();
+        run_omg_in_dir(&["hooks", "install"], repository.path()).assert_success();
+        let status = run_omg_in_dir(&["hooks", "status"], repository.path());
+        status.assert_success();
+        status.assert_stdout_contains("unrecognized or modified");
+        let result = run_omg_in_dir(&["hooks", "uninstall"], repository.path());
+        result.assert_success();
+        result.assert_stdout_contains("Removed 1 hook(s)");
+        assert_eq!(std::fs::read_to_string(pre_commit).unwrap(), composed);
+        assert_eq!(
+            std::fs::read_to_string(hooks.join("post-merge")).unwrap(),
+            custom
+        );
+        assert!(!hooks.join("post-checkout").exists());
+    }
+
+    #[test]
     fn test_snapshot_help() {
         let result = run_omg(&["snapshot", "--help"]);
         result.assert_success();

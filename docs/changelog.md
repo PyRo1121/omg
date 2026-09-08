@@ -7,8 +7,20 @@ For current behavior and limits, use [installation](./installation.md), [securit
 ---
 
 ## [Unreleased]
+### Merge
+
+- **Main**: Keep audited cheatsheet and exact-match hook note
+
+Resolve the docs/cheatsheet.md conflict from [#371](https://github.com/PyRo1121/omg/issues/371) by keeping the
+
+audited short cheatsheet and documenting that uninstall removes only
+
+byte-exact current OMG hooks.
+
 ### ♻️  Refactoring
 
+- **Debian**: Separate installed flags from repository caching
+- **Debian**: Separate installed flags from repository caching
 - **Dnf**: Validate query arguments before command resolution ([#352](https://github.com/PyRo1121/omg/issues/352))
 - **Aur**: Make authorized source evidence mandatory ([#341](https://github.com/PyRo1121/omg/issues/341))
 
@@ -80,7 +92,17 @@ present before the probe runs.
 - **Install**: Add interactive fuzzy package discovery
 ### 🐛 Bug Fixes
 
+- **Ci**: Express test durations in canonical units
+- **Aur**: Isolate archived index entries from mutable cache files
+- **Daemon**: Bound persisted status freshness without resetting its TTL
+- **Debian**: Read mutable indexes into owned validated snapshots
+- **Arch**: Invalidate cached catalogs when observed epochs change
+- **Debian**: Preserve qualified queries in mmap package lookup
+- **Privilege**: Ignore caller pacman paths in root processes
 - **Debian**: Rebuild cached indexes after package list removal
+- **Debian**: Bind FST lookup to its actual name-to-row mapping
+- **Debian**: Rebuild cached indexes after package list removal
+- **Hooks**: Preserve custom automation during uninstall
 - **Dnf**: Bind cached inventory to RPM database generation ([#349](https://github.com/PyRo1121/omg/issues/349))
 - **Team**: Commit only the generated lockfile ([#348](https://github.com/PyRo1121/omg/issues/348))
 - **Privilege**: Allow internal re-exec verbs through install snapshot ([#347](https://github.com/PyRo1121/omg/issues/347))
@@ -490,7 +512,12 @@ Preserve archive data and report persistence failures explicitly. Coordinate dat
 - Add published release smoke matrix
 ### 📚 Documentation
 
+- Retain one merged hook ownership explanation
+- **Audit**: Record AUR index snapshot remediation
+- **Audit**: Record Debian cache mutation remediation
+- **Audit**: Record root pacman environment remediation
 - Correct security claims and operational guidance
+- **Audit**: Track exact-match hook uninstall fix
 - **Audit**: Preserve the 81-finding Daybreak remediation queue ([#346](https://github.com/PyRo1121/omg/issues/346))
 
 * docs(audit): track all 81 cancelled Daybreak findings
@@ -561,6 +588,7 @@ surfaced by the stricter toolchain
 
 ### 🧪 Testing
 
+- **Debian**: Prove prefix misrouting and retain mmap exact-lookup counterevidence
 - **Privilege**: Scope archive fixture to supported backends ([#351](https://github.com/PyRo1121/omg/issues/351))
 - **Aur**: Declare fixture architecture only once ([#340](https://github.com/PyRo1121/omg/issues/340))
 - **Privilege**: Reject stderr-driven payload retries ([#333](https://github.com/PyRo1121/omg/issues/333))

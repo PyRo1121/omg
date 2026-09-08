@@ -47,9 +47,6 @@ require_pgp = true
 minimum_grade = "Verified"
 banned_packages = ["telnet", "ftp", "rsh", "rlogin"]
 allowed_licenses = ["MIT", "Apache-2.0", "BSD-3-Clause"]
-require_sbom = true
-require_slsa = true
-max_cve_age_days = 30
 "#;
 }
 

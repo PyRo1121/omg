@@ -59,6 +59,8 @@ on:
         default: false
 
 concurrency:
+  # Matrix values belong to job-level groups. Separate interactive runs
+  # from nightly evidence at both workflow and job scope.
   group: qemu-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'schedule' && 'nightly' || 'interactive' }}
   # Keep manual runs out of the nightly cancellation group.
   cancel-in-progress: ${{ github.event_name != 'schedule' }}
