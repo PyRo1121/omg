@@ -456,7 +456,7 @@ mod tests {
 
     #[test]
     fn drift_report_never_renders_terminal_control_sequences() {
-        let hostile = format!("\u{1b}]52;c;pwned\u{7}pkg\u{1b}[31mred");
+        let hostile = "\u{1b}]52;c;pwned\u{7}pkg\u{1b}[31mred".to_string();
         let report = DriftReport {
             has_drift: true,
             missing_runtimes: vec![hostile.clone()],

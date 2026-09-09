@@ -1361,7 +1361,7 @@ mod tests {
 
     #[test]
     fn dashboard_metadata_is_stripped_of_terminal_control_sequences() {
-        let hostile = format!("\u{1b}]52;c;pwned\u{7}host\u{1b}[31m");
+        let hostile = "\u{1b}]52;c;pwned\u{7}host\u{1b}[31m".to_string();
         let members = sanitize_team_members(vec![TeamMember {
             machine_id: hostile.clone(),
             hostname: Some(hostile.clone()),
