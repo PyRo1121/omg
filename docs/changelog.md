@@ -11,6 +11,8 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ---
 
 ## [Unreleased]
+
+## [0.1.219] - 2026-09-09
 ### Merge
 
 - Integrate Arch source and index publication fixes on current main
@@ -45,6 +47,7 @@ byte-exact current OMG hooks.
 ### ⚠️  Breaking Changes
 
 - **Runtimes**: Prove offline pin detection activates installed versions
+
 
 [#238](https://github.com/PyRo1121/omg/issues/238) merged into test-audit/home-isolation after [#237](https://github.com/PyRo1121/omg/issues/237) already landed on
 
