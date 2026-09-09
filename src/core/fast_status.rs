@@ -135,10 +135,18 @@ impl FastStatus {
 
     /// Read the default status file with full validation.
     pub fn read_default() -> Option<Self> {
-        let path = paths::fast_status_path();
+        Self::read_validated(&paths::fast_status_path())
+    }
+
+    /// Read a status file only when its parent directory passes the same
+    /// runtime-directory validation the daemon applies before binding
+    /// (real, current-uid-owned, owner-only). The status path is selected by
+    /// environment, so an unvalidated read would accept a foreign or
+    /// symlinked cache file (csf_fdd4999c).
+    pub fn read_validated(path: &Path) -> Option<Self> {
         #[cfg(unix)]
-        paths::validate_socket_parent(&path).ok()?;
-        Self::read_from_file(&path)
+        paths::validate_socket_parent(path).ok()?;
+        Self::read_from_file(path)
     }
 
     /// Read explicit count directly (fastest path)
@@ -205,5 +213,40 @@ mod tests {
         status.write_to_file(&path).unwrap();
 
         assert!(FastStatus::read_from_file(&path).is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn validated_reads_reject_unsafe_status_parents() {
+        use std::os::unix::fs::PermissionsExt;
+
+        if crate::core::is_root() {
+            eprintln!("skipped: elevated processes bypass caller path overrides");
+            return;
+        }
+        let dir = tempdir().unwrap();
+        let runtime = dir.path().join("runtime");
+        std::fs::create_dir(&runtime).unwrap();
+        // create_dir applies the umask (typically 0755); the fixture must
+        // start from the owner-only mode the daemon would establish.
+        std::fs::set_permissions(&runtime, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let status = FastStatus::new(100, 50, 0, 0);
+        let path = runtime.join("omg.status");
+        status.write_to_file(&path).unwrap();
+        assert!(FastStatus::read_validated(&path).is_some());
+
+        // Group-accessible runtime directory: the daemon would refuse to bind
+        // here, so the CLI must refuse to trust the cache either.
+        std::fs::set_permissions(&runtime, std::fs::Permissions::from_mode(0o750)).unwrap();
+        assert!(FastStatus::read_validated(&path).is_none());
+        std::fs::set_permissions(&runtime, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(FastStatus::read_validated(&path).is_some());
+
+        // A symlinked runtime directory is never trusted, even when its
+        // permissions look private.
+        let linked = dir.path().join("linked");
+        std::os::unix::fs::symlink(&runtime, &linked).unwrap();
+        let linked_status = linked.join("omg.status");
+        assert!(FastStatus::read_validated(&linked_status).is_none());
     }
 }

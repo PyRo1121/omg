@@ -379,10 +379,10 @@ type StatusSnapshot = (
 /// A missing daemon or binary cache falls back to a direct query, but a failed
 /// direct query is an error rather than a fake "healthy" zero report.
 fn read_status_snapshot() -> Result<StatusSnapshot> {
-    // ULTRA FAST: Try binary status file first (zero IPC, sub-ms)
-    if let Some(fast) = crate::core::fast_status::FastStatus::read_from_file(
-        &crate::core::paths::fast_status_path(),
-    ) {
+    // ULTRA FAST: Try binary status file first (zero IPC, sub-ms). The path is
+    // environment-selected, so read through the same parent-directory
+    // validation the daemon applies before binding (csf_fdd4999c).
+    if let Some(fast) = crate::core::fast_status::FastStatus::read_default() {
         return Ok((
             fast.total_packages as usize,
             fast.explicit_packages as usize,
