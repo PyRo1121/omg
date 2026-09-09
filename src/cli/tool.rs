@@ -335,6 +335,23 @@ fn unique_install_suffix() -> String {
     format!("{}-{nanos}", std::process::id())
 }
 
+/// Spawn configuration for a package-manager command.
+///
+/// cargo and npm discover configuration by walking up from the current
+/// working directory, so running an install from inside a project would let
+/// that project's `.cargo/config.toml` or `.npmrc` inject build settings,
+/// source replacements, and environment into a tool build executed with the
+/// user's trust. Commands are therefore always rooted at the isolated
+/// staging directory, never at (or below) the user's project.
+fn manager_command(
+    program: impl AsRef<std::ffi::OsStr>,
+    staging_dir: impl AsRef<Path>,
+) -> Command {
+    let mut command = Command::new(program);
+    command.current_dir(staging_dir);
+    command
+}
+
 /// Base directories
 fn get_dirs() -> (PathBuf, PathBuf) {
     let data_dir = crate::core::paths::data_dir();
@@ -458,7 +475,7 @@ async fn install_managed(
                 let install_path = staging_dir
                     .to_str()
                     .context("Install directory path contains invalid UTF-8")?;
-                let status = Command::new("npm")
+                let status = manager_command("npm", &staging_dir)
                     .args(["install", "--prefix", install_path, "--", pkg])
                     .stdout(std::process::Stdio::null())
                     .stderr(std::process::Stdio::inherit())
@@ -474,7 +491,7 @@ async fn install_managed(
                 let install_path = staging_dir
                     .to_str()
                     .context("Install directory path contains invalid UTF-8")?;
-                let status = Command::new("cargo")
+                let status = manager_command("cargo", &staging_dir)
                     .args(["install", "--root", install_path, "--", pkg])
                     .stdout(std::process::Stdio::null()) // Cargo is noisy
                     .status()?;
@@ -489,7 +506,7 @@ async fn install_managed(
                 let install_path = staging_dir
                     .to_str()
                     .context("Install directory path contains invalid UTF-8")?;
-                let status_venv = Command::new(python_binary())
+                let status_venv = manager_command(python_binary(), &staging_dir)
                     .args(["-m", "venv", "--", install_path])
                     .status()?;
 
@@ -499,7 +516,7 @@ async fn install_managed(
 
                 // 2. Install into venv
                 let pip_path = staging_dir.join("bin").join("pip");
-                let status_install = Command::new(pip_path)
+                let status_install = manager_command(&pip_path, &staging_dir)
                     .args(["install", "--", pkg])
                     .stdout(std::process::Stdio::null())
                     .status()?;
@@ -521,7 +538,7 @@ async fn install_managed(
                 let go_bin = staging_dir.join("bin");
                 fs::create_dir_all(&go_bin)?;
 
-                let status = Command::new("go")
+                let status = manager_command("go", &staging_dir)
                     .arg("install")
                     .args(["--", &target])
                     .env("GOBIN", &go_bin)
@@ -574,7 +591,6 @@ async fn install_managed(
 
     pb.finish_and_clear();
     println!("  {} Installation successful", style::success("✓"));
-
     // LINKING PHASE
     // PEP 405: a venv is identified by a pyvenv.cfg marker next to bin/.
     // Base interpreter files (python, pip, activate) in a venv are environment
@@ -582,12 +598,41 @@ async fn install_managed(
     // the shared bin dir where they would shadow system Python/pip.
     // https://peps.python.org/pep-0405/
     let is_venv = install_dir.join("pyvenv.cfg").is_file();
-    link_binaries(&install_dir, bin_dir, is_venv)?;
+    link_binaries(&install_dir, bin_dir, tools_dir, is_venv)?;
 
     Ok(())
 }
 
-fn link_binaries(install_dir: &Path, bin_dir: &Path, skip_venv_base_tools: bool) -> Result<()> {
+/// Whether an existing shared-bin entry may be replaced by a new link.
+///
+/// The shared bin directory is exposed on PATH via the omg shell hook, so a
+/// tool install must never replace commands it does not own: only symlinks
+/// that point back into OMG's managed tools directory are ours to swap.
+/// Regular files (the user's own scripts or real system-style installs) and
+/// links into other locations are left untouched.
+fn is_managed_link(dest: &Path, tools_dir: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        fs::symlink_metadata(dest).is_ok_and(|metadata| {
+            metadata.is_symlink()
+                && fs::read_link(dest).is_ok_and(|target| target.starts_with(tools_dir))
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        // Non-Unix installs copy files instead of symlinking; without a link
+        // target there is no ownership proof, so existing entries are never
+        // replaced and installs of a colliding name fail loudly below.
+        !dest.exists()
+    }
+}
+
+fn link_binaries(
+    install_dir: &Path,
+    bin_dir: &Path,
+    tools_dir: &Path,
+    skip_venv_base_tools: bool,
+) -> Result<()> {
     println!("  {} Linking binaries...", style::dim("→"));
 
     // Find binaries in standard locations within the isolated install dir
@@ -627,8 +672,16 @@ fn link_binaries(install_dir: &Path, bin_dir: &Path, skip_venv_base_tools: bool)
                 }
                 let dest = bin_dir.join(filename);
 
-                // Remove existing link
-                if dest.exists() || dest.symlink_metadata().is_ok() {
+                // Remove existing link only if it is one of ours
+                if dest.symlink_metadata().is_ok() {
+                    if !is_managed_link(&dest, tools_dir) {
+                        println!(
+                            "    {} Refusing to replace existing command {} (not managed by omg tool)",
+                            style::warning("⚠"),
+                            filename.to_string_lossy()
+                        );
+                        continue;
+                    }
                     fs::remove_file(&dest)?;
                 }
 
@@ -940,6 +993,82 @@ mod tests {
             assert!(is_venv_base_tool(std::ffi::OsStr::new(script)), "{script}");
         }
         assert!(!is_venv_base_tool(std::ffi::OsStr::new("reactivate")));
+    }
+
+    /// Package-manager commands must be rooted at the isolated staging
+    /// directory, never at the caller's project: cargo and npm walk up from
+    /// the CWD to discover `.cargo/config.toml` / `.npmrc`.
+    #[test]
+    fn package_manager_commands_run_from_the_staging_directory() {
+        let staging = tempfile::tempdir().expect("staging directory");
+        for program in ["cargo", "npm", "go", "/tmp/whatever/python3"] {
+            let command = manager_command(program, staging.path());
+            assert_eq!(command.get_current_dir(), Some(staging.path()), "{program}");
+        }
+    }
+
+    /// Tool installs may only swap links OMG itself created. Symlinks into
+    /// other locations (and plain files) in the shared bin directory belong
+    /// to the user or to other tools and must survive an install.
+    #[cfg(unix)]
+    #[test]
+    fn linking_never_replaces_commands_omg_does_not_manage() {
+        let temp = tempfile::tempdir().expect("temp directory");
+        let tools_dir = temp.path().join("tools");
+        let bin_dir = temp.path().join("bin");
+        let install_dir = tools_dir.join("cargo").join("fake-tool");
+        fs::create_dir_all(install_dir.join("bin")).expect("install fixture");
+
+        #[cfg(unix)]
+        let executable = |path: &Path, contents: &[u8]| {
+            use std::os::unix::fs::PermissionsExt;
+            fs::write(path, contents).expect("binary fixture");
+            fs::set_permissions(path, fs::Permissions::from_mode(0o755))
+                .expect("binary permissions");
+        };
+        #[cfg(not(unix))]
+        let executable = |path: &Path, contents: &[u8]| {
+            fs::write(path, contents).expect("binary fixture");
+        };
+
+        // A previous managed install's link, a foreign symlink, and a plain
+        // user file all collide with binaries shipped by the new install.
+        executable(&install_dir.join("bin").join("ours"), b"new");
+        executable(&install_dir.join("bin").join("foreign"), b"new");
+        executable(&install_dir.join("bin").join("userfile"), b"new");
+        executable(&install_dir.join("bin").join("fresh"), b"new");
+
+        let previous_install = tools_dir.join("cargo").join("previous");
+        fs::create_dir_all(previous_install.join("bin")).expect("previous fixture");
+        executable(&previous_install.join("bin").join("ours"), b"old");
+
+        fs::create_dir_all(&bin_dir).expect("bin fixture");
+        symlink(previous_install.join("bin").join("ours"), bin_dir.join("ours"))
+            .expect("managed link fixture");
+        symlink("/etc/hostname", bin_dir.join("foreign")).expect("foreign link fixture");
+        fs::write(bin_dir.join("userfile"), b"user data").expect("user file fixture");
+
+        link_binaries(&install_dir, &bin_dir, &tools_dir, false).expect("linking");
+
+        // Managed link: replaced with the new install's binary.
+        assert_eq!(
+            fs::read_link(bin_dir.join("ours")).expect("managed link replaced"),
+            install_dir.join("bin").join("ours")
+        );
+        // Foreign symlink and user file: untouched.
+        assert_eq!(
+            fs::read_link(bin_dir.join("foreign")).expect("foreign link preserved"),
+            PathBuf::from("/etc/hostname")
+        );
+        assert_eq!(
+            fs::read(bin_dir.join("userfile")).expect("user file preserved"),
+            b"user data"
+        );
+        // Unclaimed names still link.
+        assert_eq!(
+            fs::read_link(bin_dir.join("fresh")).expect("fresh link created"),
+            install_dir.join("bin").join("fresh")
+        );
     }
 
     #[test]
