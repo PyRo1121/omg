@@ -2,7 +2,7 @@ use crate::cli::components::Components;
 use crate::cli::tea::Cmd;
 use crate::cli::{CliContext, EnvCommands, LocalCommandRunner};
 use crate::core::env::fingerprint::{DriftReport, EnvironmentState};
-use crate::core::http::shared_client;
+use crate::core::http::{BoundedResponseExt, shared_client};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -193,7 +193,11 @@ pub async fn share(description: String, public: bool) -> Result<()> {
 
     if !response.status().is_success() {
         let status = response.status();
-        let body = response.text().await?;
+        // Error bodies are remote input: bound them before allocation.
+        let body = response
+            .bounded_text()
+            .await
+            .unwrap_or_else(|error| format!("<unreadable error body: {error}>"));
         let safe_body = sanitize_remote_error_body(&body);
         tracing::debug!(status = %status, body_bytes = body.len(), "GitHub Gist request failed");
         execute_cmd(Cmd::error(format!(
@@ -202,7 +206,10 @@ pub async fn share(description: String, public: bool) -> Result<()> {
         anyhow::bail!("Failed to create gist: {status} - {safe_body}");
     }
 
-    let gist_resp: GistResponse = response.json().await?;
+    let gist_resp: GistResponse = response
+        .bounded_json()
+        .await
+        .context("Failed to read gist response (is it larger than the 16 MiB limit?)")?;
 
     execute_cmd(Cmd::batch([
         Cmd::success("Environment shared successfully!"),
@@ -266,7 +273,13 @@ async fn sync_lockfile(url_or_id: &str, root: &Path) -> Result<()> {
     }
 
     let response = req.send().await?.error_for_status()?;
-    let gist_resp: GistResponse = response.json().await?;
+    // Gist metadata and raw lockfile content are remote input: cap both
+    // before allocation so a huge response cannot exhaust memory
+    // (csf_08340651, csf_4fe23b28).
+    let gist_resp: GistResponse = response
+        .bounded_json()
+        .await
+        .context("Failed to read gist response (is it larger than the 16 MiB limit?)")?;
     let file = gist_resp
         .files
         .get("omg.lock")
@@ -279,7 +292,7 @@ async fn sync_lockfile(url_or_id: &str, root: &Path) -> Result<()> {
             .send()
             .await?
             .error_for_status()?
-            .text()
+            .bounded_text()
             .await?
     };
 
@@ -296,7 +309,10 @@ async fn sync_lockfile(url_or_id: &str, root: &Path) -> Result<()> {
 /// exists and actually differs from the incoming content.
 fn backup_replaced_lock(root: &Path, incoming: &str) -> Result<bool> {
     let lock_path = root.join("omg.lock");
-    let Ok(existing) = std::fs::read_to_string(&lock_path) else {
+    // Read through the hardened lockfile reader: symlinks and oversized
+    // files are refused instead of being pulled into memory
+    // (csf_4fe23b28).
+    let Ok(existing) = crate::core::env::fingerprint::read_lockfile(&lock_path) else {
         return Ok(false);
     };
     if existing == incoming {
@@ -331,6 +347,26 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(dir.path().join("omg.lock.backup")).expect("backup"),
             "same"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_local_lock_is_refused_during_backup() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::TempDir::new().expect("isolated workspace");
+        let outside = dir.path().join("outside.lock");
+        std::fs::write(&outside, "big or foreign lock").expect("seed target");
+        symlink(&outside, dir.path().join("omg.lock")).expect("seed symlink");
+
+        // A symlinked local lock must be refused (treated as absent) rather
+        // than read through, and no backup may follow it either.
+        assert!(!backup_replaced_lock(dir.path(), "new").expect("backup"));
+        assert!(!dir.path().join("omg.lock.backup").exists());
+        assert_eq!(
+            std::fs::read_to_string(&outside).expect("target untouched"),
+            "big or foreign lock"
         );
     }
 
