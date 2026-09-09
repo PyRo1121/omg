@@ -18,10 +18,11 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use super::common::{
-    MAX_DECOMPRESSED_BYTES, activate_version, begin_staged_install, complete_staged_install,
-    copy_regular_tree, download_with_progress, extract_component_tar_gz, extract_component_tar_xz,
-    is_valid_version_dir, parse_sha256_digest, print_already_installed, print_installed,
-    print_using, replace_staged_install, validate_download_filename,
+    MAX_DECOMPRESSED_BYTES, activate_version_with_lease, begin_staged_install,
+    complete_staged_install_with_lease, copy_regular_tree, download_with_progress,
+    extract_component_tar_gz, extract_component_tar_xz, is_valid_version_dir, parse_sha256_digest,
+    print_already_installed, print_installed, print_using, replace_staged_install_with_lease,
+    validate_download_filename,
 };
 use crate::cli::style;
 use crate::core::archive::stripped_archive_path;
@@ -144,12 +145,15 @@ impl RustManager {
     /// Install Rust - PURE RUST, NO SUBPROCESS
     pub async fn install(&self, version: &str) -> Result<()> {
         let toolchain = RustToolchainSpec::parse(version)?;
-        let _mutation_lock = self.lock_mutations()?;
+        let mutation_lock = self.lock_mutations()?;
         let version_dir = self.toolchain_dir(&toolchain);
 
         Self::reject_invalid_toolchain_path(&version_dir)?;
         if is_valid_version_dir(&version_dir) {
-            match self.refresh_rolling_toolchain(&toolchain).await {
+            match self
+                .refresh_rolling_toolchain(&toolchain, &mutation_lock)
+                .await
+            {
                 Ok(true) => {}
                 Ok(false) => print_already_installed("Rust", &toolchain.name()),
                 Err(error) => {
@@ -157,16 +161,16 @@ impl RustManager {
                     print_already_installed("Rust", &toolchain.name());
                 }
             }
-            return self.activate_toolchain(&toolchain);
+            return self.activate_toolchain(&toolchain, &mutation_lock);
         }
 
         let prefix = style::runtime("OMG");
         let toolchain_name = style::caution(&toolchain.name());
         tracing::info!("{prefix} Installing Rust {toolchain_name}...\n");
 
-        self.install_with_profile(&toolchain, "default", &[], &[])
+        self.install_with_profile(&toolchain, "default", &[], &[], &mutation_lock)
             .await?;
-        self.activate_toolchain(&toolchain)?;
+        self.activate_toolchain(&toolchain, &mutation_lock)?;
 
         Ok(())
     }
@@ -174,8 +178,12 @@ impl RustManager {
     /// Remove an installed toolchain. Refuses the active toolchain.
     pub fn uninstall(&self, version: &str) -> Result<()> {
         let toolchain = RustToolchainSpec::parse(version)?;
-        let _mutation_lock = self.lock_mutations()?;
-        super::common::uninstall_version(&self.versions_dir, &toolchain.name())
+        let mutation_lock = self.lock_mutations()?;
+        super::common::uninstall_version_with_lease(
+            &self.versions_dir,
+            &toolchain.name(),
+            &mutation_lock,
+        )
     }
 
     pub fn toolchain_status(&self, request: &RustToolchainRequest) -> Result<RustToolchainStatus> {
@@ -206,9 +214,10 @@ impl RustManager {
 
     pub async fn ensure_toolchain(&self, request: &RustToolchainRequest) -> Result<()> {
         let toolchain = RustToolchainSpec::parse(&request.channel)?;
-        let _mutation_lock = self.lock_mutations()?;
+        let mutation_lock = self.lock_mutations()?;
         if is_valid_version_dir(&self.toolchain_dir(&toolchain)) {
-            self.refresh_rolling_toolchain(&toolchain).await?;
+            self.refresh_rolling_toolchain(&toolchain, &mutation_lock)
+                .await?;
         }
 
         let status = self.toolchain_status(request)?;
@@ -225,6 +234,7 @@ impl RustManager {
                 request.profile.as_deref().unwrap_or("default"),
                 &request.components,
                 &request.targets,
+                &mutation_lock,
             )
             .await
         } else {
@@ -232,6 +242,7 @@ impl RustManager {
                 &toolchain,
                 &status.missing_components,
                 &status.missing_targets,
+                &mutation_lock,
             )
             .await
         }
@@ -268,7 +279,11 @@ impl RustManager {
         self.versions_dir.join(toolchain.name())
     }
 
-    async fn refresh_rolling_toolchain(&self, toolchain: &RustToolchainSpec) -> Result<bool> {
+    async fn refresh_rolling_toolchain(
+        &self,
+        toolchain: &RustToolchainSpec,
+        mutation_lease: &fs::File,
+    ) -> Result<bool> {
         if !is_rolling_channel(toolchain) {
             return Ok(false);
         }
@@ -294,6 +309,7 @@ impl RustManager {
             &targets,
             &manifest,
             ToolchainPublication::Replace,
+            mutation_lease,
         )
         .await?;
         Ok(true)
@@ -355,9 +371,18 @@ impl RustManager {
         stripped_archive_path(path, 2)
     }
 
-    fn activate_toolchain(&self, toolchain: &RustToolchainSpec) -> Result<()> {
+    fn activate_toolchain(
+        &self,
+        toolchain: &RustToolchainSpec,
+        mutation_lease: &fs::File,
+    ) -> Result<()> {
         let toolchain_name = toolchain.name();
-        activate_version(&self.versions_dir, &toolchain_name, Path::new("bin/rustc"))?;
+        activate_version_with_lease(
+            &self.versions_dir,
+            &toolchain_name,
+            Path::new("bin/rustc"),
+            mutation_lease,
+        )?;
         let bin_dir = self.versions_dir.join("current/bin");
         print_using("Rust", &toolchain_name, &bin_dir);
         Ok(())
@@ -404,6 +429,7 @@ impl RustManager {
         profile: &str,
         components: &[String],
         targets: &[String],
+        mutation_lease: &fs::File,
     ) -> Result<()> {
         let mut required_components = profile_components(profile)?;
         required_components.extend_from_slice(components);
@@ -418,6 +444,7 @@ impl RustManager {
             targets,
             &manifest,
             ToolchainPublication::Create,
+            mutation_lease,
         )
         .await
     }
@@ -429,6 +456,7 @@ impl RustManager {
         targets: &[String],
         manifest: &toml::Value,
         publication: ToolchainPublication,
+        mutation_lease: &fs::File,
     ) -> Result<()> {
         let version_dir = self.toolchain_dir(toolchain);
         let staging = begin_staged_install(&self.versions_dir)?;
@@ -457,10 +485,20 @@ impl RustManager {
         Self::write_metadata(dest_dir, &metadata)?;
         match publication {
             ToolchainPublication::Create => {
-                complete_staged_install(&staging, &version_dir, &toolchain.name())?;
+                complete_staged_install_with_lease(
+                    &staging,
+                    &version_dir,
+                    &toolchain.name(),
+                    mutation_lease,
+                )?;
             }
             ToolchainPublication::Replace => {
-                replace_staged_install(&staging, &version_dir, &toolchain.name())?;
+                replace_staged_install_with_lease(
+                    &staging,
+                    &version_dir,
+                    &toolchain.name(),
+                    mutation_lease,
+                )?;
             }
         }
 
@@ -474,6 +512,7 @@ impl RustManager {
         toolchain: &RustToolchainSpec,
         components: &[String],
         targets: &[String],
+        mutation_lease: &fs::File,
     ) -> Result<()> {
         let version_dir = self.toolchain_dir(toolchain);
         if !is_valid_version_dir(&version_dir) {
@@ -486,8 +525,14 @@ impl RustManager {
         let manifest = self
             .fetch_manifest(&toolchain.channel, toolchain.date.as_deref())
             .await?;
-        self.apply_incremental_from_manifest(toolchain, components, targets, &manifest)
-            .await
+        self.apply_incremental_from_manifest(
+            toolchain,
+            components,
+            targets,
+            &manifest,
+            mutation_lease,
+        )
+        .await
     }
 
     async fn apply_incremental_from_manifest(
@@ -496,6 +541,7 @@ impl RustManager {
         components: &[String],
         targets: &[String],
         manifest: &toml::Value,
+        mutation_lease: &fs::File,
     ) -> Result<()> {
         let version_dir = self.toolchain_dir(toolchain);
         let mut metadata = Self::read_metadata(&version_dir)?;
@@ -525,7 +571,7 @@ impl RustManager {
         metadata.components.extend(components.iter().cloned());
         metadata.targets.extend(targets.iter().cloned());
         Self::write_metadata(staging.path(), &metadata)?;
-        replace_staged_install(&staging, &version_dir, &toolchain.name())
+        replace_staged_install_with_lease(&staging, &version_dir, &toolchain.name(), mutation_lease)
     }
 
     async fn install_component(
@@ -1214,7 +1260,7 @@ mod tests {
                 },
             )?;
             let original_metadata = fs::read(version_dir.join(RUST_METADATA_FILE))?;
-            let _mutation_lock = manager.lock_mutations()?;
+            let mutation_lock = manager.lock_mutations()?;
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
             let address = listener.local_addr()?;
             let manifest: toml::Value = toml::from_str(&format!(
@@ -1241,8 +1287,13 @@ mod tests {
                 Ok::<(), std::io::Error>(())
             };
             let components = ["clippy".to_string()];
-            let update =
-                manager.apply_incremental_from_manifest(&toolchain, &components, &[], &manifest);
+            let update = manager.apply_incremental_from_manifest(
+                &toolchain,
+                &components,
+                &[],
+                &manifest,
+                &mutation_lock,
+            );
             tokio::pin!(update);
             let result = tokio::time::timeout(std::time::Duration::from_secs(5), async {
                 tokio::select! {
@@ -1345,7 +1396,11 @@ mod tests {
         assert!(!version_dir.exists());
         assert!(crate::runtimes::common::list_installed_versions(versions.path())?.is_empty());
 
-        complete_staged_install(&staging, &version_dir, "stable-x86_64-unknown-linux-gnu")?;
+        crate::runtimes::common::complete_staged_install(
+            &staging,
+            &version_dir,
+            "stable-x86_64-unknown-linux-gnu",
+        )?;
         assert!(version_dir.join(RUST_METADATA_FILE).is_file());
         assert_eq!(
             crate::runtimes::common::list_installed_versions(versions.path())?,
@@ -1375,7 +1430,11 @@ mod tests {
         let mut metadata = RustManager::read_metadata(staging.path())?;
         metadata.components.insert("clippy".to_string());
         RustManager::write_metadata(staging.path(), &metadata)?;
-        replace_staged_install(&staging, &version_dir, "stable-x86_64-unknown-linux-gnu")?;
+        crate::runtimes::common::replace_staged_install(
+            &staging,
+            &version_dir,
+            "stable-x86_64-unknown-linux-gnu",
+        )?;
 
         assert_eq!(fs::read(version_dir.join("bin/rustc"))?, b"old");
         assert_eq!(fs::read(version_dir.join("bin/clippy"))?, b"new");

@@ -1000,12 +1000,25 @@ pub(crate) fn complete_staged_install(
     version_dir: &Path,
     version: &str,
 ) -> Result<()> {
-    let _mutation = try_lock_runtime_file(
+    let mutation_lease = try_lock_runtime_file(
         version_dir
             .parent()
             .context("Runtime version has no parent")?,
         ".mutation.lock",
     )?;
+    complete_staged_install_with_lease(staging, version_dir, version, &mutation_lease)
+}
+
+/// [`complete_staged_install`] for a caller that already holds the versions
+/// directory mutation lease. Rust toolchain operations hold one lease across
+/// the whole mutation; nested publication must reuse it because flock is not
+/// re-entrant within a process.
+pub(crate) fn complete_staged_install_with_lease(
+    staging: &tempfile::TempDir,
+    version_dir: &Path,
+    version: &str,
+    _mutation_lease: &fs::File,
+) -> Result<()> {
     write_install_marker(staging.path(), version)?;
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
@@ -1037,12 +1050,23 @@ pub(crate) fn replace_staged_install(
     version_dir: &Path,
     version: &str,
 ) -> Result<()> {
-    let _mutation = try_lock_runtime_file(
+    let mutation_lease = try_lock_runtime_file(
         version_dir
             .parent()
             .context("Runtime version has no parent")?,
         ".mutation.lock",
     )?;
+    replace_staged_install_with_lease(staging, version_dir, version, &mutation_lease)
+}
+
+/// [`replace_staged_install`] for a caller that already holds the mutation
+/// lease (see [`complete_staged_install_with_lease`]).
+pub(crate) fn replace_staged_install_with_lease(
+    staging: &tempfile::TempDir,
+    version_dir: &Path,
+    version: &str,
+    _mutation_lease: &fs::File,
+) -> Result<()> {
     write_install_marker(staging.path(), version)?;
     if !is_valid_version_dir(version_dir) {
         anyhow::bail!(
@@ -1251,8 +1275,19 @@ pub(crate) fn activate_version(
     version: &str,
     expected_binary: &Path,
 ) -> Result<()> {
+    let mutation_lease = try_lock_runtime_file(versions_dir, ".mutation.lock")?;
+    activate_version_with_lease(versions_dir, version, expected_binary, &mutation_lease)
+}
+
+/// [`activate_version`] for a caller that already holds the mutation lease.
+pub(crate) fn activate_version_with_lease(
+    versions_dir: &Path,
+    version: &str,
+    expected_binary: &Path,
+    mutation_lease: &fs::File,
+) -> Result<()> {
     require_regular_file(&versions_dir.join(version).join(expected_binary))?;
-    set_current_version(versions_dir, version)
+    set_current_version_with_lease(versions_dir, version, mutation_lease)
 }
 
 /// Activate a runtime whose vendor launcher may be an internal symlink.
@@ -1265,8 +1300,25 @@ pub(crate) fn activate_version_with_linked_binary(
     version: &str,
     expected_binary: &Path,
 ) -> Result<()> {
+    let mutation_lease = try_lock_runtime_file(versions_dir, ".mutation.lock")?;
+    activate_version_with_linked_binary_with_lease(
+        versions_dir,
+        version,
+        expected_binary,
+        &mutation_lease,
+    )
+}
+
+/// [`activate_version_with_linked_binary`] for a caller that already holds
+/// the mutation lease.
+pub(crate) fn activate_version_with_linked_binary_with_lease(
+    versions_dir: &Path,
+    version: &str,
+    expected_binary: &Path,
+    mutation_lease: &fs::File,
+) -> Result<()> {
     require_internal_runtime_binary(&versions_dir.join(version), expected_binary)?;
-    set_current_version(versions_dir, version)
+    set_current_version_with_lease(versions_dir, version, mutation_lease)
 }
 
 pub(crate) fn require_internal_runtime_binary(
@@ -1311,7 +1363,17 @@ pub(crate) fn require_internal_runtime_binary(
 /// Mirrors the validation `set_current_version` applies on the way in.
 pub(crate) fn uninstall_version(versions_dir: &Path, version: &str) -> Result<()> {
     crate::core::security::validate_runtime_version(version)?;
-    let _mutation = try_lock_runtime_file(versions_dir, ".mutation.lock")?;
+    let mutation_lease = try_lock_runtime_file(versions_dir, ".mutation.lock")?;
+    uninstall_version_with_lease(versions_dir, version, &mutation_lease)
+}
+
+/// [`uninstall_version`] for a caller that already holds the mutation lease.
+pub(crate) fn uninstall_version_with_lease(
+    versions_dir: &Path,
+    version: &str,
+    _mutation_lease: &fs::File,
+) -> Result<()> {
+    crate::core::security::validate_runtime_version(version)?;
 
     // is_valid_version_dir rejects symlinks, so the removal below cannot
     // escape the versions tree through a linked version path.
@@ -1337,7 +1399,17 @@ pub(crate) fn uninstall_version(versions_dir: &Path, version: &str) -> Result<()
 /// Create or update the "current" symlink
 pub(crate) fn set_current_version(versions_dir: &Path, version: &str) -> Result<()> {
     crate::core::security::validate_runtime_version(version)?;
-    let _mutation = try_lock_runtime_file(versions_dir, ".mutation.lock")?;
+    let mutation_lease = try_lock_runtime_file(versions_dir, ".mutation.lock")?;
+    set_current_version_with_lease(versions_dir, version, &mutation_lease)
+}
+
+/// [`set_current_version`] for a caller that already holds the mutation lease.
+pub(crate) fn set_current_version_with_lease(
+    versions_dir: &Path,
+    version: &str,
+    _mutation_lease: &fs::File,
+) -> Result<()> {
+    crate::core::security::validate_runtime_version(version)?;
 
     let current_link = versions_dir.join("current");
     let version_dir = versions_dir.join(version);

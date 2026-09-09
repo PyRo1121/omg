@@ -847,9 +847,23 @@ mod tests {
         assert!(lock_file_at(directory.path()).is_none());
     }
 
+    /// Lock fixtures need a parent directory the anchored `O_NOFOLLOW` walk
+    /// can reach. macOS system temp dirs live behind `/var` -> `private/var`,
+    /// so prefer a directory under the real home path (no symlinked
+    /// ancestors) and fall back to the platform default.
+    fn lock_fixture_tempdir() -> tempfile::TempDir {
+        let base = home::home_dir().filter(|home| home.is_dir());
+        match base {
+            Some(home) => tempfile::Builder::new()
+                .tempdir_in(home)
+                .unwrap_or_else(|_| tempfile::tempdir().unwrap()),
+            None => tempfile::tempdir().unwrap(),
+        }
+    }
+
     #[test]
     fn usage_lock_reopens_without_truncation() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = lock_fixture_tempdir();
         let path = directory.path().join("usage.lock");
         drop(lock_file_at(&path).expect("new usage lock"));
         std::fs::write(&path, b"unchanged").unwrap();
@@ -995,7 +1009,7 @@ mod tests {
         // other's counters (last-writer-wins).
         const WRITERS: usize = 8;
         const UPDATES_PER_WRITER: usize = 5;
-        let directory = tempfile::tempdir().expect("create temporary directory");
+        let directory = lock_fixture_tempdir();
         let path = directory.path().join("usage.json");
 
         let barrier = std::sync::Arc::new(std::sync::Barrier::new(WRITERS));
@@ -1007,8 +1021,10 @@ mod tests {
                 barrier.wait();
                 for _ in 0..UPDATES_PER_WRITER {
                     // Same lock + load-modify-save shape as the public track* functions.
-                    let _lock = lock_file_at(&path.with_extension("lock"))
-                        .expect("writer must acquire lock");
+                    let _lock = match acquire_usage_lock(&path.with_extension("lock")) {
+                        Ok(lock) => lock,
+                        Err(error) => panic!("writer must acquire lock: {error:#}"),
+                    };
                     let mut stats = UsageStats::load_from(&path).expect("valid usage stats");
                     stats.record_command_on(
                         "search",
@@ -1086,7 +1102,7 @@ mod tests {
         // clobbering counters recorded while the network request was in
         // flight. The timestamp-only merge must preserve them.
         const WRITERS: usize = 4;
-        let directory = tempfile::tempdir().expect("create temporary directory");
+        let directory = lock_fixture_tempdir();
         let path = directory.path().join("usage.json");
 
         let barrier = std::sync::Arc::new(std::sync::Barrier::new(WRITERS));

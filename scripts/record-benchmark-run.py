@@ -93,6 +93,31 @@ def find_result(results: list[dict], name: str) -> dict | None:
     return None
 
 
+# benchmark-hyperfine.sh labels the timed OMG driver "OMG"; benchmark.sh and
+# older records used "OMG (Daemon)". Accept both instead of hardcoding one.
+DAEMON_LABELS = ("OMG", "OMG (Daemon)")
+
+
+def daemon_result(payload: dict[str, object]) -> dict[str, object] | None:
+    """Resolve the OMG driver under its current or legacy hyperfine label."""
+    results = cast(dict[str, object], payload).get("results") or []
+    for label in DAEMON_LABELS:
+        found = find_result(cast(list[dict], results), label)
+        if found:
+            return found
+    return None
+
+
+def native_result(payload: dict[str, object]) -> dict[str, object] | None:
+    """Resolve the native comparison run (pacman, apt-cache, dnf, ...)."""
+    for result in cast(
+        list[dict], cast(dict[str, object], payload).get("results") or []
+    ):
+        if result.get("command") not in DAEMON_LABELS:
+            return result
+    return None
+
+
 def milliseconds(seconds: float) -> float:
     """Convert units without allowing a finite duration to become infinity."""
     return finite_duration(seconds * 1000.0)
@@ -307,14 +332,15 @@ def render_latest_md(meta: dict, source: Path) -> str:
             lines.append("")
         payload = load_json(json_path)
         if payload:
-            daemon = find_result(payload["results"], "OMG (Daemon)")
-            pacman = find_result(payload["results"], "pacman")
-            if daemon and pacman and ms(daemon) > 0:
-                speedup = ms(pacman) / ms(daemon)
+            daemon = daemon_result(payload)
+            native = native_result(payload)
+            if daemon and native and ms(daemon) > 0:
+                speedup = ms(native) / ms(daemon)
                 lines.append(
-                    f"Daemon mean **{ms(daemon):.1f} ms** vs pacman **{ms(pacman):.1f} ms** "
+                    f"Daemon mean **{ms(daemon):.1f} ms** vs "
+                    f"{native['command']} **{ms(native):.1f} ms** "
                     f"({speedup:.1f}×). Median {ms(daemon, 'median'):.1f} ms "
-                    f"({len(daemon.get('times') or [])} runs)."
+                    f"({len(cast(list[object], daemon.get('times') or []))} runs)."
                 )
                 lines.append("")
 
@@ -415,10 +441,10 @@ def main() -> int:
             scenarios[name] = summarize_scenario(payload)
 
     search = load_json(source / "search.json") or {}
-    daemon = find_result(search.get("results") or [], "OMG (Daemon)")
-    pacman = find_result(search.get("results") or [], "pacman")
+    daemon = daemon_result(search)
+    pacman = native_result(search)
     status = load_json(source / "status.json") or {}
-    status_daemon = find_result(status.get("results") or [], "OMG (Daemon)")
+    status_daemon = daemon_result(status)
     search_ms = round(ms(daemon), 1) if daemon else None
     status_ms = round(ms(status_daemon), 1) if status_daemon else None
     speedup = None

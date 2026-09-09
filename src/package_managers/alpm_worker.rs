@@ -131,6 +131,12 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn initialization_errors_are_returned_to_the_caller() {
+        if crate::core::is_root() {
+            // Elevated processes ignore OMG_PACMAN_* overrides, so this
+            // fixture test only applies to unprivileged runs.
+            eprintln!("skipped: elevated processes ignore caller path overrides");
+            return;
+        }
         let directory = tempfile::tempdir().expect("temporary ALPM paths");
         let database = directory.path().join("db");
         std::fs::create_dir(&database).expect("database directory");
