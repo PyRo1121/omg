@@ -37,6 +37,12 @@ Environment:
   OMG_SMOKE_REPOSITORY    GitHub repository used for published releases
   OMG_SMOKE_ENGINE        Default container engine
   OMG_SMOKE_EVIDENCE_DIR  Default evidence base directory
+  OMG_SMOKE_DIGEST_PIN_FILE
+                          sha256sum-style pin file (<sha256>  <filename> or a
+                          bare <sha256> per line). When set, a release archive
+                          is executed only if its verified sha256 matches a
+                          pin. Required for --executor native, because native
+                          execution runs release code directly on the host.
 EOF
 }
 
@@ -267,6 +273,24 @@ validate_checksum() {
   printf '%s\n' "$sidecar_digest"
 }
 
+# Check a validated artifact digest against a maintainer-pinned digest file
+# (sha256sum-style lines: "<sha256>  <filename>"; a bare "<sha256>" line also
+# matches). The .sha256 sidecar ships with the release, so replacing both
+# assets would pass validate_checksum; this closes that gap before anything
+# extracted from the archive is executed.
+verify_pinned_digest() {
+  local digest=$1 archive=$2 pin_file=$3 line line_digest line_name
+  [[ -f "$pin_file" && ! -L "$pin_file" ]] || return 1
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" =~ ^([0-9a-f]{64})([[:space:]]+\*?([^[:space:]]+))?[[:space:]]*$ ]] || continue
+    line_digest="${BASH_REMATCH[1]}"
+    line_name="${BASH_REMATCH[3]:-}"
+    [[ -z "$line_name" || "$line_name" == "$archive" ]] || continue
+    [[ "$line_digest" == "$digest" ]] && return 0
+  done < "$pin_file"
+  return 1
+}
+
 write_result() {
   local evidence_dir=$1 case_id=$2 distro=$3 result=$4 exit_code=$5 elapsed=$6 expectation=$7
   printf '{"case_id":"%s","distro":"%s","result":"%s","exit_code":%s,"elapsed_seconds":%s,"expectation":"%s","artifact_source":"%s"}\n' \
@@ -364,6 +388,9 @@ resolve_artifact() {
   fi
   [[ "$(find "$workdir" -maxdepth 1 -type f | wc -l)" -eq 2 ]] || return 1
   digest="$(validate_checksum "$workdir/$archive" "$workdir/${archive}.sha256" "$archive")" || return 1
+  if [[ -n "$digest_pin_file" ]]; then
+    verify_pinned_digest "$digest" "$archive" "$digest_pin_file" || return 1
+  fi
 }
 
 run_case() (
@@ -505,7 +532,7 @@ run_distro() (
   mkdir -p "$stage"
 
   if ! resolve_artifact "$workdir"; then
-    record_harness_error "$distro" "failed to acquire or validate the release artifact"
+    record_harness_error "$distro" "failed to acquire, validate, or pin-match the release artifact"
     return 3
   fi
   if ! tar -xzf "$workdir/$archive" -C "$stage"; then
@@ -559,6 +586,7 @@ tier="container"
 executor="container"
 timeout_seconds=300
 engine="${OMG_SMOKE_ENGINE:-docker}"
+digest_pin_file="${OMG_SMOKE_DIGEST_PIN_FILE:-}"
 evidence_base="${OMG_SMOKE_EVIDENCE_DIR:-$repo_root/target/release-smoke}"
 
 while [[ $# -gt 0 ]]; do
@@ -600,6 +628,18 @@ if [[ "$executor" == "native" && "$distro" != "macos" ]]; then
   # Native execution mutates the host package manager; only the imageless
   # macos distro may run there, and only on a disposable host.
   printf 'error: --executor native only pairs with --distro macos\n' >&2
+  exit 2
+fi
+if [[ -n "$digest_pin_file" && ! -f "$digest_pin_file" ]]; then
+  printf 'error: OMG_SMOKE_DIGEST_PIN_FILE is not a readable file: %s\n' "$digest_pin_file" >&2
+  exit 2
+fi
+if [[ "$executor" == "native" && -z "$digest_pin_file" ]]; then
+  # Native execution runs the extracted release binary directly on this
+  # host; it must never execute unattested code. The sidecar ships with the
+  # release, so an attacker who replaces both assets defeats sidecar-only
+  # checks — require an independently pinned digest before execution.
+  printf 'error: --executor native requires OMG_SMOKE_DIGEST_PIN_FILE (sha256sum-style pin file) so release assets cannot be silently replaced.\n' >&2
   exit 2
 fi
 if [[ "$distro" == "macos" && "$executor" != "native" ]]; then

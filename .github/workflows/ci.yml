@@ -642,6 +642,10 @@ jobs:
   # the entire pipeline gate. Local act runs also skip the macos leg, so a
   # skipped macos result is accepted as passing. A skipped platform job must
   # not mint a release tag.
+  # This job stays read-only: pull_request events execute the merge-ref
+  # (PR-controlled) copy of this file, so a PR must never be able to run
+  # workflow code holding a write-scoped token. All write-scoped steps live
+  # in the push-to-main-only release-tag job below.
   ci-success:
     name: "CI Success"
     needs: [quick-gate, portable, linux-matrix, sandbox-cancellation, feature-intersections, macos, ubuntu]
@@ -649,8 +653,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      contents: write
-      actions: write
+      contents: read
     steps:
       - name: Evaluate results
         env:
@@ -702,14 +705,25 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "All required checks passed!" >> $GITHUB_STEP_SUMMARY
 
+  # The only write-scoped job in this workflow. It runs exclusively on push
+  # to main; pull_request runs of PR-controlled workflow code can never
+  # obtain this token, even if the PR edits this file.
+  release-tag:
+    name: "Tag Release"
+    needs: [quick-gate, portable, linux-matrix, sandbox-cancellation, feature-intersections, macos, ubuntu, ci-success]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      actions: write
+    steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         with:
           persist-credentials: true
           fetch-depth: 0
 
       - name: Tag Cargo.toml version when all platform builds succeeded
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           LINUX_MATRIX: ${{ needs.linux-matrix.result }}
