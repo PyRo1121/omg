@@ -23,6 +23,31 @@ Do not begin with a large file-splitting exercise. Most expensive complexity her
 
 ## Integration checkpoint — 2026-09-08
 
+## Installer domain repair — 2026-09-09
+
+- User-reported install failure reproduced: the script served at
+  `omg.latham.cloud/install.sh` was the pre-`f6d1e112` GitHub-API-era installer
+  whose distro detection predates `ID_LIKE` (Omarchy classified as unknown),
+  and its asset lookup depended on the GitHub release API. README and docs
+  pointed users there. The repo's current installer already classifies
+  Omarchy (ID_LIKE=arch) correctly and resolves versions/checksums from the
+  R2 release bucket, so the script itself needed no detection change.
+- Fixes merged in #390: README, docs/installation.md, the release-notes
+  generator, and the installer header now use `https://getomg.xyz/install.sh`
+  (verified byte-identical to the repo script); release.yml publishes
+  `install.sh` plus a sha256 sidecar into the omg-releases bucket with
+  round-trip verification before the version marker (a concurrent commit
+  refined the sidecar/claim ordering as 3066811e).
+- Bucket state verified with remote wrangler reads: artifacts, checksums,
+  latest-version (0.1.219), and the installer mirror all round-trip
+  byte-identical. `getomg.xyz/latest-version` and artifact paths still 404
+  because getomg.xyz maps to the website deployment, not the release bucket;
+  remapping it requires R2 custom-domain/DNS changes outside this repo.
+- Verified locally: the getomg.xyz-served installer ran end-to-end on this
+  Omarchy machine and installed omg 0.1.219 (`omg --version`, `omg status`).
+  The legacy omg.latham.cloud installer keeps serving the old script until
+  the website redeploy; getomg.xyz is the canonical entry point.
+
 ## Release v0.1.219 — 2026-09-09
 
 - Published from main `646c35e7` (tag `v0.1.219`) after CI run 34303687421 and
