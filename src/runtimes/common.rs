@@ -360,6 +360,11 @@ pub async fn download_with_progress(
     use futures::StreamExt;
     use tokio::io::AsyncWriteExt;
 
+    // Vendor metadata supplies this URL: pin it to TLS on routable hosts so
+    // tampered metadata cannot aim downloads at plain HTTP or private
+    // network services.
+    crate::core::http::validate_download_url(url)?;
+
     let response = client
         .get(url)
         .header("User-Agent", GITHUB_USER_AGENT)
@@ -462,6 +467,9 @@ pub async fn download_with_progress_sha512(
 ) -> Result<()> {
     use futures::StreamExt;
     use tokio::io::AsyncWriteExt;
+
+    // Same metadata-supplied-URL pinning as the SHA-256 hot path.
+    crate::core::http::validate_download_url(url)?;
 
     let response = client
         .get(url)

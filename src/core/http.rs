@@ -40,7 +40,105 @@ fn validate_redirect(previous: &[Url], next: &Url) -> Result<(), &'static str> {
     {
         return Err("refusing HTTPS-to-HTTP redirect");
     }
+    if is_private_or_local_host(next.host_str()) {
+        return Err("refusing redirect to a private or local address");
+    }
     Ok(())
+}
+
+/// Whether a URL host refers to a loopback, private, or link-local target.
+///
+/// Hostnames that are not IP literals are treated as public; IP literals
+/// inside RFC 1918/RFC 4193 space, loopback, link-local, unspecified, and
+/// IPv4-mapped private ranges are all local. `None` (no host, e.g. malformed
+/// authority) counts as local so callers fail closed.
+#[must_use]
+pub fn is_private_or_local_host(host: Option<&str>) -> bool {
+    let Some(host) = host else {
+        return true;
+    };
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    if host.eq_ignore_ascii_case("localhost") || host.to_ascii_lowercase().ends_with(".localhost")
+    {
+        return true;
+    }
+    let Ok(ip) = host.parse::<std::net::IpAddr>() else {
+        return false;
+    };
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_broadcast()
+        }
+        std::net::IpAddr::V6(v6) => {
+            if let Some(mapped) = v6.to_ipv4_mapped() {
+                return mapped.is_loopback()
+                    || mapped.is_private()
+                    || mapped.is_link_local()
+                    || mapped.is_unspecified();
+            }
+            let first = u16::from_be_bytes([v6.octets()[0], v6.octets()[1]]);
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || (first & 0xfe00) == 0xfc00 // unique local fc00::/7
+                || (first & 0xffc0) == 0xfe80 // link-local fe80::/10
+        }
+    }
+}
+
+/// Pin a downloader entry-point URL: HTTPS only, on a routable host.
+///
+/// Vendor metadata (release manifests, channel manifests, package indexes)
+/// supplies these URLs, so a hostile or tampered metadata document must not
+/// be able to aim downloads at plain HTTP or at local/private-network
+/// services. Plain-HTTP loopback targets are tolerated only in hermetic
+/// test mode (debug builds with `OMG_TEST_MODE=1`), where local fixture
+/// servers stand in for vendors; release binaries always require TLS.
+///
+/// # Errors
+///
+/// Returns an error for unparseable URLs, non-HTTPS schemes (outside the
+/// loopback test-mode carve-out), and private or local hosts.
+pub fn validate_download_url(raw: &str) -> anyhow::Result<()> {
+    let url = Url::parse(raw).map_err(|_| anyhow::anyhow!("Invalid download URL"))?;
+    let local = is_private_or_local_host(url.host_str());
+    if url.scheme() != "https" {
+        // Plain HTTP is only ever tolerated for loopback targets under
+        // hermetic test mode, where local fixture servers stand in for
+        // vendors; every other local/private target is rejected outright.
+        let loopback_fixture = url.scheme() == "http"
+            && is_loopback_host(url.host_str())
+            && crate::core::paths::test_mode();
+        if !loopback_fixture {
+            anyhow::bail!("Download must use HTTPS, refusing {}", redact_url(raw));
+        }
+        return Ok(());
+    }
+    if local {
+        anyhow::bail!(
+            "Download must not target a private or local address, refusing {}",
+            redact_url(raw)
+        );
+    }
+    Ok(())
+}
+
+/// Whether a URL host is a loopback target (loopback IP literal or a
+/// localhost name).
+fn is_loopback_host(host: Option<&str>) -> bool {
+    let Some(host) = host else {
+        return false;
+    };
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    if host.eq_ignore_ascii_case("localhost") || host.to_ascii_lowercase().ends_with(".localhost")
+    {
+        return true;
+    }
+    host.parse::<std::net::IpAddr>()
+        .is_ok_and(|ip| ip.is_loopback())
 }
 
 fn redirect_policy() -> redirect::Policy {
@@ -197,6 +295,78 @@ mod tests {
         assert!(is_retryable_status(reqwest::StatusCode::REQUEST_TIMEOUT));
         assert!(is_retryable_status(reqwest::StatusCode::TOO_MANY_REQUESTS));
         assert!(!is_retryable_status(reqwest::StatusCode::NOT_FOUND));
+    }
+
+    #[test]
+    fn private_and_local_hosts_are_never_redirect_targets() {
+        for host in [
+            "https://127.0.0.1/steal",
+            "https://10.1.2.3/steal",
+            "https://192.168.0.10/steal",
+            "https://172.16.5.5/steal",
+            "https://169.254.169.254/latest/meta-data/",
+            "https://[::1]/steal",
+            "https://[fe80::1]/steal",
+            "https://[fc00::1]/steal",
+            "https://[::ffff:10.0.0.1]/steal",
+            "https://localhost/steal",
+            "https://metadata.localhost/steal",
+        ] {
+            let next = Url::parse(host).unwrap();
+            assert_eq!(
+                validate_redirect(std::slice::from_ref(&next), &next),
+                Err("refusing redirect to a private or local address"),
+                "{host}"
+            );
+        }
+    }
+
+    #[test]
+    fn private_host_detection_matches_ip_literals_and_localhost_names() {
+        for host in [
+            "127.0.0.1",
+            "10.0.0.1",
+            "172.31.255.255",
+            "192.168.1.1",
+            "169.254.169.254",
+            "0.0.0.0",
+            "::1",
+            "fe80::1",
+            "fc00::1",
+            "::ffff:192.168.1.1",
+            "localhost",
+            "foo.localhost",
+        ] {
+            assert!(is_private_or_local_host(Some(host)), "{host}");
+        }
+        for host in [
+            "example.com",
+            "static.rust-lang.org",
+            "8.8.8.8",
+            "2606:4700::1111",
+        ] {
+            assert!(!is_private_or_local_host(Some(host)), "{host}");
+        }
+        assert!(is_private_or_local_host(None), "missing host fails closed");
+    }
+
+    #[test]
+    fn download_urls_pin_https_on_routable_hosts() {
+        assert!(validate_download_url("https://static.rust-lang.org/dist/x.tar.xz").is_ok());
+        for url in [
+            "http://static.rust-lang.org/dist/x.tar.xz",
+            "http://192.168.1.5/evil.tar.xz",
+            "https://169.254.169.254/latest/meta-data/",
+            "https://127.0.0.1/evil.tar.xz",
+            "ftp://static.rust-lang.org/dist/x.tar.xz",
+        ] {
+            let error = validate_download_url(url).expect_err(url);
+            let message = error.to_string();
+            assert!(
+                message.contains("HTTPS") || message.contains("private or local"),
+                "{url}: {message}"
+            );
+        }
     }
 
     #[test]

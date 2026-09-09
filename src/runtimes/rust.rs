@@ -1221,9 +1221,32 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn incremental_updates_require_matching_release_identity() -> Result<()> {
         use sha2::{Digest as _, Sha256};
         use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+        // The fixture downloads a component from a loopback HTTP server.
+        // Hermetic test mode is the only context where plain-HTTP loopback
+        // download targets are tolerated (release binaries always pin
+        // HTTPS); serialize because the switch is process-global.
+        struct TestModeGuard;
+        impl Drop for TestModeGuard {
+            fn drop(&mut self) {
+                // SAFETY: Test-only code, serialized by serial_test.
+                #[expect(unsafe_code)]
+                unsafe {
+                    std::env::remove_var("OMG_TEST_MODE");
+                }
+            }
+        }
+        // SAFETY: Test-only code, serialized by serial_test; no other test
+        // reads OMG_TEST_MODE concurrently.
+        #[expect(unsafe_code)]
+        unsafe {
+            std::env::set_var("OMG_TEST_MODE", "1");
+        }
+        let _test_mode = TestModeGuard;
 
         let archive = gzip_tar(&component_archive(
             "clippy/clippy/bin/cargo-clippy",
@@ -1455,6 +1478,23 @@ mod tests {
         let error = RustManager::reject_invalid_toolchain_path(&file_path)
             .expect_err("regular files must be rejected");
         assert!(error.to_string().contains("non-directory"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn manifest_component_downloads_cannot_target_private_networks() -> Result<()> {
+        let temp = TempDir::new()?;
+        let dest = temp.path().join("evil.tar.xz");
+        let error = download_with_progress(
+            download_client(),
+            "http://192.168.1.5/evil.tar.xz",
+            &dest,
+            &"a".repeat(64),
+        )
+        .await
+        .expect_err("plain-HTTP private-network downloads must be refused");
+        assert!(error.to_string().contains("HTTPS"), "{error}");
+        assert!(!dest.exists(), "nothing may be written for refused URLs");
         Ok(())
     }
 
