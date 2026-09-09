@@ -11,6 +11,52 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ---
 
 ## [Unreleased]
+### Review
+
+- **Audit**: Verify cross-filesystem migration copies file contents
+### 🐛 Bug Fixes
+
+- **Audit**: Copy history across filesystems when atomic migration fails
+
+prepare_system_audit_directory refused to migrate /var/log/omg when
+
+rename(2) returned EXDEV (e.g. btrfs subvolume mounts), failing every
+
+privileged operation until an operator intervened. Fall back to a
+
+byte-verified copy: stage under a temp sibling, preserve ownership and
+
+modes, fsync, verify path/size snapshot, rename into place, then remove
+
+the source. Symlinks and special files still fail closed.
+
+- **Install**: Point bootstrap at getomg.xyz and sync installer to the release bucket
+### 👷 CI/CD
+
+- **Release**: Verify installer sidecar and stop claiming latest-version early
+
+The new bucket installer upload wrote a hash-only sidecar and printed
+
+latest-version success before that marker was published. Use a standard
+
+sha256sum sidecar, round-trip verify it, and echo installer success only
+
+after the script itself is confirmed.
+
+### 📚 Documentation
+
+- Record installer domain repair [skip ci]
+- Record v0.1.219 release verification [skip ci]
+### 🔧 Maintenance
+
+- Checkpoint generated astra report
+### 🧪 Testing
+
+- **Audit**: Restore elevated-path isolation skips
+
+OMG_DATA_DIR is still ignored when running as root, so these fixtures
+
+must not touch the real /var/lib/omg audit log in elevated CI.
 
 ## [0.1.219] - 2026-09-09
 ### Merge
@@ -48,7 +94,6 @@ byte-exact current OMG hooks.
 
 - **Runtimes**: Prove offline pin detection activates installed versions
 
-
 [#238](https://github.com/PyRo1121/omg/issues/238) merged into test-audit/home-isolation after [#237](https://github.com/PyRo1121/omg/issues/237) already landed on
 
 main, so these two tests never reached main. Port the leftover
@@ -57,6 +102,10 @@ non-breaking coverage onto current main.
 
 ### ⚡ Performance
 
+- Merge pull request [#387](https://github.com/PyRo1121/omg/issues/387) from PyRo1121/bench/baseline-0.1.219
+
+bench: refresh performance baseline to current search cost
+- Refresh performance baseline after accepted metadata-scan cost
 - **Cli**: Skip AUR dump on update and land print-CLI speed work ([#272](https://github.com/PyRo1121/omg/issues/272))
 
 Update discovery already falls through to RPC, so waiting on the search dump only delayed the package list. Completions now rank prefix matches, and TODO.md records later optional distro onboarding.
@@ -108,6 +157,16 @@ present before the probe runs.
 - **Install**: Add interactive fuzzy package discovery
 ### 🐛 Bug Fixes
 
+- **Runtimes**: Reuse held mutation lease in nested runtime publications
+- **Bench**: Accept current OMG label in badge and regression gate
+
+The badge step and perf gate still selected the legacy OMG (Daemon)
+
+label, so BENCH_SEARCH_TIME/BENCH_SPEEDUP stayed empty after the
+
+recorder headline fix. Accept OMG first, then the legacy label.
+
+- **Bench**: Resolve headline labels emitted by benchmark-hyperfine
 - **Arch**: Delete versioned source-identity caches on invalidate
 
 After [#364](https://github.com/PyRo1121/omg/issues/364)/[#372](https://github.com/PyRo1121/omg/issues/372), live derived caches are sync_db_source_v1.bin and
@@ -689,6 +748,13 @@ surfaced by the stricter toolchain
 
 ### 🧪 Testing
 
+- Skip pacman fixture tests that elevated processes cannot resolve
+- Isolate lock fixtures from macOS symlinked temp ancestors
+- Skip fixture tests whose path overrides elevated processes ignore
+- **Usage**: Skip the counter race fixture behind macOS symlinked temp paths
+- **Usage**: Skip fixture lock races behind macOS symlinked system temp paths
+- **Usage**: Surface usage-lock acquisition error in concurrent regression
+- **Telemetry**: Skip fixture purge assertions for elevated processes
 - **Debian**: Add bounded snapshot-load comparison benchmark
 - **Privilege**: Verify license storage follows the effective user
 - Checkpoint benchmark evidence admission WIP
