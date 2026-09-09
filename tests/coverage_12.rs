@@ -517,7 +517,8 @@ fn list_images_parses_runtime_tsv_into_exact_fields() {
 
 fn dockerfile_for(base_image: &str, runtimes: &[(&str, &str)]) -> String {
     ContainerManager::with_runtime(ContainerRuntime::Docker)
-        .generate_dockerfile(base_image, runtimes)
+        .generate_dockerfile(base_image, runtimes, &omg_lib::core::container::InstallerDigests::new())
+        .content
 }
 
 #[test]
@@ -533,10 +534,10 @@ fn dockerfile_node_versions_map_to_nodesource_major_channels() {
     );
     assert!(
         lts.contains(
-            "-o /tmp/nodesource-setup.sh https://deb.nodesource.com/setup_${NODE_VERSION}.x"
+            "-o /tmp/nodesource-setup.sh https://deb.nodesource.com/setup_20.x"
         ) && lts.contains("bash /tmp/nodesource-setup.sh")
-            && !lts.contains("setup_${NODE_VERSION}.x | bash"),
-        "NodeSource setup must be downloaded before execution"
+            && !lts.contains("setup_20.x | bash"),
+        "NodeSource setup must be downloaded before execution, got:\n{lts}"
     );
 
     let explicit = dockerfile_for("debian:bookworm-slim", &[("node", "21.7.0")]);
@@ -550,7 +551,12 @@ fn dockerfile_go_latest_resolves_to_pinned_go_version() {
         latest.contains("ENV GO_VERSION=1.22\n"),
         "'latest' go must resolve to GO_VERSION=1.22, got:\n{latest}"
     );
-    assert!(latest.contains("go${GO_VERSION}.linux-amd64.tar.gz | tar -C /usr/local -xzf -"));
+    assert!(
+        latest
+            .contains("-o /tmp/omg-go.tar.gz https://go.dev/dl/go1.22.linux-amd64.tar.gz")
+            && latest.contains("tar -C /usr/local -xzf /tmp/omg-go.tar.gz"),
+        "go tarball must be downloaded before extraction, got:\n{latest}"
+    );
     assert!(latest.contains("ENV PATH=$PATH:/usr/local/go/bin"));
 
     let explicit = dockerfile_for("ubuntu:24.04", &[("go", "1.23.4")]);
@@ -593,7 +599,8 @@ fn dockerfile_rust_installs_exact_toolchain_via_rustup() {
     assert!(df.contains("ENV RUSTUP_HOME=/usr/local/rustup \\"));
     assert!(df.contains("CARGO_HOME=/usr/local/cargo \\"));
     assert!(
-        df.contains("https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.75.0\n\n"),
+        df.contains("-o /tmp/omg-rustup-init.sh") && df.contains("https://sh.rustup.rs")
+            && df.contains("sh /tmp/omg-rustup-init.sh -s -- -y --default-toolchain 1.75.0"),
         "rustup invocation must pass the requested toolchain verbatim, got:\n{df}"
     );
 }
@@ -609,7 +616,11 @@ fn dockerfile_python_sets_python_version_env_and_symlink() {
 #[test]
 fn dockerfile_bun_installs_via_official_script_and_extends_path() {
     let df = dockerfile_for("ubuntu:24.04", &[("bun", "ignored")]);
-    assert!(df.contains("curl -fsSL https://bun.sh/install | bash"));
+    assert!(
+        df.contains("-o /tmp/omg-bun-install.sh https://bun.sh/install")
+            && df.contains("bash /tmp/omg-bun-install.sh"),
+        "bun install script must be downloaded before execution, got:\n{df}"
+    );
     assert!(df.contains("ENV PATH=$PATH:/root/.bun/bin"));
 }
 

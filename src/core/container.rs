@@ -8,6 +8,7 @@
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::fs;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
@@ -377,12 +378,20 @@ impl ContainerManager {
     /// pass [`validate_version`]. Invalid values never reach the generated
     /// text; they are replaced with safe fallbacks (or the runtime entry is
     /// skipped) and reported via `tracing::warn!`.
-    pub fn generate_dockerfile(&self, base_image: &str, runtimes: &[(&str, &str)]) -> String {
+    pub fn generate_dockerfile(
+        &self,
+        base_image: &str,
+        runtimes: &[(&str, &str)],
+        installer_digests: &InstallerDigests,
+    ) -> GeneratedDockerfile {
         let base_image = normalized_base_image(base_image);
+
+        use std::fmt::Write as _;
 
         let mut dockerfile = format!("FROM {base_image}\n\n");
         dockerfile.push_str("# OMG Development Environment\n");
         dockerfile.push_str("LABEL maintainer=\"OMG Team\"\n\n");
+        let mut unpinned_urls = Vec::new();
 
         // Install common dependencies based on base image
         if base_image.contains("ubuntu") || base_image.contains("debian") {
@@ -434,7 +443,20 @@ impl ContainerManager {
                         .unwrap_or("20");
                     dockerfile.push_str(node_major);
                     dockerfile.push('\n');
-                    dockerfile.push_str("RUN curl -fsSL -o /tmp/nodesource-setup.sh https://deb.nodesource.com/setup_${NODE_VERSION}.x \\\n");
+                    let setup_url = format!("https://deb.nodesource.com/setup_{node_major}.x");
+                    let digest_check = digest_check_line(
+                        &setup_url,
+                        installer_digests,
+                        &mut unpinned_urls,
+                        "/tmp/nodesource-setup.sh",
+                    );
+                    if digest_check.is_none() {
+                        push_unpinned_warning(&mut dockerfile, &setup_url);
+                    }
+                    let _ = writeln!(dockerfile, "RUN curl -fsSL -o /tmp/nodesource-setup.sh {setup_url} \\");
+                    if let Some(line) = digest_check {
+                        let _ = writeln!(dockerfile, "{line}");
+                    }
                     dockerfile.push_str("    && bash /tmp/nodesource-setup.sh \\\n");
                     dockerfile.push_str("    && rm -f /tmp/nodesource-setup.sh \\\n");
                     dockerfile.push_str("    && apt-get install -y nodejs \\\n");
@@ -462,9 +484,29 @@ impl ContainerManager {
                         "" | "latest" => "stable",
                         other => other,
                     };
-                    dockerfile.push_str("RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain ");
-                    dockerfile.push_str(toolchain);
-                    dockerfile.push_str("\n\n");
+                    const RUSTUP_INIT_URL: &str = "https://sh.rustup.rs";
+                    let digest_check = digest_check_line(
+                        RUSTUP_INIT_URL,
+                        installer_digests,
+                        &mut unpinned_urls,
+                        "/tmp/omg-rustup-init.sh",
+                    );
+                    if digest_check.is_none() {
+                        push_unpinned_warning(&mut dockerfile, RUSTUP_INIT_URL);
+                    }
+                    let _ = writeln!(
+                        dockerfile,
+                        "RUN curl --proto '=https' --tlsv1.2 -sSf -o /tmp/omg-rustup-init.sh \\"
+                    );
+                    let _ = writeln!(dockerfile, "    {RUSTUP_INIT_URL} \\");
+                    if let Some(line) = digest_check {
+                        let _ = writeln!(dockerfile, "{line}");
+                    }
+                    let _ = writeln!(
+                        dockerfile,
+                        "    && sh /tmp/omg-rustup-init.sh -s -- -y --default-toolchain {toolchain} \\"
+                    );
+                    dockerfile.push_str("    && rm -f /tmp/omg-rustup-init.sh\n\n");
                 }
                 "go" => {
                     dockerfile.push_str("# Install Go\n");
@@ -479,13 +521,43 @@ impl ContainerManager {
                     dockerfile.push_str("ENV GO_VERSION=");
                     dockerfile.push_str(go_ver);
                     dockerfile.push('\n');
-                    dockerfile.push_str("RUN curl -fsSL https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz | tar -C /usr/local -xzf - \\\n");
+                    let go_url = format!("https://go.dev/dl/go{go_ver}.linux-amd64.tar.gz");
+                    let digest_check = digest_check_line(
+                        &go_url,
+                        installer_digests,
+                        &mut unpinned_urls,
+                        "/tmp/omg-go.tar.gz",
+                    );
+                    if digest_check.is_none() {
+                        push_unpinned_warning(&mut dockerfile, &go_url);
+                    }
+                    let _ = writeln!(dockerfile, "RUN curl -fsSL -o /tmp/omg-go.tar.gz {go_url} \\");
+                    if let Some(line) = digest_check {
+                        let _ = writeln!(dockerfile, "{line}");
+                    }
+                    dockerfile.push_str("    && tar -C /usr/local -xzf /tmp/omg-go.tar.gz \\\n");
+                    dockerfile.push_str("    && rm -f /tmp/omg-go.tar.gz \\\n");
                     dockerfile.push_str("    && ln -sf /usr/local/go/bin/go /usr/local/bin/go\n");
                     dockerfile.push_str("ENV PATH=$PATH:/usr/local/go/bin\n\n");
                 }
                 "bun" => {
                     dockerfile.push_str("# Install Bun\n");
-                    dockerfile.push_str("RUN curl -fsSL https://bun.sh/install | bash\n");
+                    const BUN_INSTALL_URL: &str = "https://bun.sh/install";
+                    let digest_check = digest_check_line(
+                        BUN_INSTALL_URL,
+                        installer_digests,
+                        &mut unpinned_urls,
+                        "/tmp/omg-bun-install.sh",
+                    );
+                    if digest_check.is_none() {
+                        push_unpinned_warning(&mut dockerfile, BUN_INSTALL_URL);
+                    }
+                    let _ = writeln!(dockerfile, "RUN curl -fsSL -o /tmp/omg-bun-install.sh {BUN_INSTALL_URL} \\");
+                    if let Some(line) = digest_check {
+                        let _ = writeln!(dockerfile, "{line}");
+                    }
+                    dockerfile.push_str("    && bash /tmp/omg-bun-install.sh \\\n");
+                    dockerfile.push_str("    && rm -f /tmp/omg-bun-install.sh\n");
                     dockerfile.push_str("ENV PATH=$PATH:/root/.bun/bin\n\n");
                 }
                 "java" => {
@@ -541,8 +613,126 @@ impl ContainerManager {
         dockerfile.push_str("COPY . .\n\n");
         dockerfile.push_str("CMD [\"/bin/bash\"]\n");
 
-        dockerfile
+        GeneratedDockerfile {
+            content: dockerfile,
+            unpinned_urls,
+        }
     }
+}
+
+/// A generated Dockerfile plus the remote content it would execute without
+/// a pinned digest.
+#[derive(Debug, Clone)]
+pub struct GeneratedDockerfile {
+    /// The Dockerfile text.
+    pub content: String,
+    /// Installer URLs executed WITHOUT digest verification because no
+    /// digest was supplied. `omg container init` resolves these and
+    /// regenerates; a non-empty list after regeneration is refused.
+    pub unpinned_urls: Vec<String>,
+}
+
+/// SHA-256 digests for remote installer content a generated Dockerfile
+/// executes, keyed by URL. Captured over TLS at generation time so the
+/// root build step can prove it re-downloads the exact same bytes.
+pub type InstallerDigests = std::collections::BTreeMap<String, String>;
+
+/// Entries that keep untracked credentials and repository internals out of
+/// the build context of a generated dev-container image.
+pub(crate) const DOCKERIGNORE_ENTRIES: &[&str] = &[
+    ".git",
+    ".env",
+    ".env.*",
+    "!.env.example",
+    "*.pem",
+    "*.key",
+    "id_rsa*",
+    ".omg/",
+];
+
+const DOCKERIGNORE_MARKER: &str = "# added by omg container init";
+
+/// Ensure `.dockerignore` excludes credentials and repository internals.
+///
+/// `COPY . .` in a generated Dockerfile ships the whole directory into the
+/// image; without ignore rules, untracked secrets (`.env`, key files) and
+/// the repository history (`.git/`) are embedded in every build. An
+/// existing file is preserved and only missing entries are appended under
+/// a marker comment.
+///
+/// # Errors
+///
+/// Returns errors from reading or writing `.dockerignore`.
+pub(crate) fn ensure_dockerignore(root: &Path) -> Result<()> {
+    use std::fmt::Write as _;
+
+    let ignore_path = root.join(".dockerignore");
+    let existing = match fs::read_to_string(&ignore_path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!("Failed to read {}", ignore_path.display())
+            });
+        }
+    };
+    let existing_lines: std::collections::HashSet<&str> =
+        existing.lines().map(str::trim).collect();
+    let missing: Vec<&str> = DOCKERIGNORE_ENTRIES
+        .iter()
+        .copied()
+        .filter(|entry| !existing_lines.contains(entry))
+        .collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+
+    let mut output = existing.clone();
+    if !output.is_empty() && !output.ends_with('\n') {
+        output.push('\n');
+    }
+    let _ = writeln!(output, "{DOCKERIGNORE_MARKER}");
+    for entry in missing {
+        writeln!(&mut output, "{entry}").context("Failed to format .dockerignore entry")?;
+    }
+    fs::write(&ignore_path, output)
+        .with_context(|| format!("Failed to write {}", ignore_path.display()))
+}
+
+/// Whether a digest string is a well-formed lowercase/uppercase hex SHA-256.
+fn is_sha256_hex(digest: &str) -> bool {
+    digest.len() == 64 && digest.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// Build the shell command that verifies a downloaded file against the
+/// pinned digest for `url`, or record the URL as unpinned and return `None`.
+fn digest_check_line(
+    url: &str,
+    digests: &InstallerDigests,
+    unpinned: &mut Vec<String>,
+    downloaded_path: &str,
+) -> Option<String> {
+    if let Some(digest) = digests.get(url).filter(|digest| is_sha256_hex(digest)) {
+        Some(format!(
+            "    && echo \"{digest}  {downloaded_path}\" | sha256sum -c - \\"
+        ))
+    } else {
+        unpinned.push(url.to_string());
+        None
+    }
+}
+
+/// Warn about an unpinned installer.
+///
+/// The warning must never sit inside a backslash continuation chain: a `#`
+/// line joined into a RUN command comments out everything after it.
+fn push_unpinned_warning(dockerfile: &mut String, url: &str) {
+    use std::fmt::Write as _;
+
+    let _ = writeln!(
+        dockerfile,
+        "# WARNING: no pinned digest for {url}; this download executes unverified"
+    );
 }
 
 /// Whether an image reference consists only of safe Docker-reference
@@ -767,7 +957,8 @@ mod tests {
     #[test]
     fn test_generate_dockerfile() {
         let manager = ContainerManager::with_runtime(ContainerRuntime::Docker);
-        let dockerfile = manager.generate_dockerfile("ubuntu:24.04", &[("node", "20.10.0")]);
+        let dockerfile = manager.generate_dockerfile("ubuntu:24.04", &[("node", "20.10.0")], &InstallerDigests::new())
+            .content;
         assert!(dockerfile.contains("FROM ubuntu:24.04"));
         // Check for Node.js installation (new format installs runtimes)
         assert!(dockerfile.contains("Install Node.js") || dockerfile.contains("NODE_VERSION"));
@@ -799,7 +990,9 @@ mod tests {
                 ("java", "21"),
                 ("ruby", "3.3"),
             ],
-        );
+            &InstallerDigests::new(),
+        )
+        .content;
 
         assert!(!dockerfile.contains("apt-get"), "{dockerfile}");
         for package in ["nodejs", "python", "jdk-openjdk", "ruby"] {
@@ -814,10 +1007,12 @@ mod tests {
     fn test_generate_dockerfile_generic() {
         let manager = ContainerManager::with_runtime(ContainerRuntime::Docker);
         // Test generic package installation (e.g. gcc)
-        let dockerfile = manager.generate_dockerfile("ubuntu:24.04", &[("gcc", "latest")]);
+        let dockerfile = manager.generate_dockerfile("ubuntu:24.04", &[("gcc", "latest")], &InstallerDigests::new())
+            .content;
         assert!(dockerfile.contains("apt-get install -y gcc"));
 
-        let dockerfile_arch = manager.generate_dockerfile("archlinux:latest", &[("vim", "latest")]);
+        let dockerfile_arch = manager.generate_dockerfile("archlinux:latest", &[("vim", "latest")], &InstallerDigests::new())
+            .content;
         assert!(dockerfile_arch.contains("pacman -S --noconfirm vim"));
     }
 
@@ -841,7 +1036,7 @@ mod tests {
             "../../etc",
             "",
         ] {
-            let dockerfile = manager.generate_dockerfile(evil, &[]);
+            let dockerfile = manager.generate_dockerfile(evil, &[], &InstallerDigests::new()).content;
             assert!(
                 dockerfile.starts_with("FROM ubuntu:24.04\n"),
                 "base image {evil:?}"
@@ -855,7 +1050,7 @@ mod tests {
     fn generate_dockerfile_never_emits_injected_versions_or_runtime_names() {
         let manager = ContainerManager::with_runtime(ContainerRuntime::Docker);
 
-        let dockerfile = manager.generate_dockerfile("ubuntu:24.04", &[("node", "20; rm -rf /")]);
+        let dockerfile = manager.generate_dockerfile("ubuntu:24.04", &[("node", "20; rm -rf /")], &InstallerDigests::new()).content;
         // Note: the legitimate cleanup line `rm -rf /var/lib/apt/lists/*`
         // exists in every Debian/Ubuntu Dockerfile, so assert on the
         // injected payload fragments instead.
@@ -868,7 +1063,7 @@ mod tests {
             "injected version must never survive"
         );
 
-        let dockerfile = manager.generate_dockerfile("ubuntu:24.04", &[("pkg; curl evil", "1.0")]);
+        let dockerfile = manager.generate_dockerfile("ubuntu:24.04", &[("pkg; curl evil", "1.0")], &InstallerDigests::new()).content;
         assert!(
             !dockerfile.contains("curl evil") && !dockerfile.contains("install -y pkg;"),
             "runtime-name injection must be skipped entirely"
@@ -881,7 +1076,9 @@ mod tests {
         let dockerfile = manager.generate_dockerfile(
             "debian:bookworm-slim",
             &[("node", "20.10.0"), ("go", "1.22.5")],
-        );
+            &InstallerDigests::new(),
+        )
+        .content;
         assert!(dockerfile.contains("FROM debian:bookworm-slim\n"));
         assert!(dockerfile.contains("NODE_VERSION=20"));
         assert!(dockerfile.contains("GO_VERSION=1.22.5"));
@@ -892,11 +1089,89 @@ mod tests {
     fn debian_runtime_packages_normalize_dotted_versions() {
         let manager = ContainerManager::with_runtime(ContainerRuntime::Docker);
         let dockerfile =
-            manager.generate_dockerfile("ubuntu:24.04", &[("java", "17.0.12"), ("ruby", "3.1.2")]);
+            manager.generate_dockerfile(
+            "ubuntu:24.04",
+            &[("java", "17.0.12"), ("ruby", "3.1.2")],
+            &InstallerDigests::new(),
+        )
+        .content;
 
         assert!(dockerfile.contains("apt-get install -y openjdk-17-jdk"));
         assert!(dockerfile.contains("apt-get install -y ruby3.1"));
         assert!(!dockerfile.contains("openjdk-17.0.12"));
         assert!(!dockerfile.contains("ruby3.1.2"));
+    }
+
+    /// Remote installer content executed as root during the build must be
+    /// verified against a pinned digest instead of piped into a shell.
+    #[test]
+    fn pinned_installers_are_checksum_verified_before_execution() {
+        let manager = ContainerManager::with_runtime(ContainerRuntime::Docker);
+        let digest = "a".repeat(64);
+        let mut digests = InstallerDigests::new();
+        for url in [
+            "https://sh.rustup.rs",
+            "https://bun.sh/install",
+            "https://deb.nodesource.com/setup_20.x",
+            "https://go.dev/dl/go1.22.5.linux-amd64.tar.gz",
+        ] {
+            digests.insert(url.to_string(), digest.clone());
+        }
+        let generated = manager.generate_dockerfile(
+            "ubuntu:24.04",
+            &[("rust", "stable"), ("bun", "latest"), ("node", "20.10.0"), ("go", "1.22.5")],
+            &digests,
+        );
+
+        assert!(generated.unpinned_urls.is_empty(), "{:?}", generated.unpinned_urls);
+        // No remote content is piped into an interpreter any more.
+        assert!(!generated.content.contains("| sh -s"), "{:?}", generated.content);
+        assert!(!generated.content.contains("| bash"), "{:?}", generated.content);
+        assert!(!generated.content.contains("| tar"), "{:?}", generated.content);
+        // Every installer verifies before executing.
+        assert_eq!(generated.content.matches("sha256sum -c -").count(), 4);
+    }
+
+    #[test]
+    fn unpinned_installers_are_flagged_for_fail_closed_regeneration() {
+        let manager = ContainerManager::with_runtime(ContainerRuntime::Docker);
+        let generated = manager.generate_dockerfile(
+            "ubuntu:24.04",
+            &[("rust", "stable")],
+            &InstallerDigests::new(),
+        );
+        assert_eq!(generated.unpinned_urls, vec!["https://sh.rustup.rs".to_string()]);
+        assert!(generated.content.contains("WARNING"), "{generated:?}");
+    }
+
+    /// Generated dev containers must not embed untracked credentials or the
+    /// repository history via `COPY . .`.
+    #[test]
+    fn dockerignore_excludes_credentials_and_repository_data() {
+        let dir = tempfile::tempdir().expect("temp project");
+        ensure_dockerignore(dir.path()).expect("dockerignore created");
+        let content = fs::read_to_string(dir.path().join(".dockerignore")).expect("read");
+        for entry in [".git", ".env", ".env.*", "*.key", ".omg/"] {
+            assert!(content.lines().any(|line| line.trim() == entry), "{content}");
+        }
+
+        // Idempotent: a second pass must not duplicate entries.
+        ensure_dockerignore(dir.path()).expect("second pass");
+        let second = fs::read_to_string(dir.path().join(".dockerignore")).expect("read");
+        assert_eq!(
+            second.lines().filter(|line| line.trim() == ".git").count(),
+            1,
+            "{second}"
+        );
+    }
+
+    #[test]
+    fn existing_dockerignore_is_preserved_and_extended() {
+        let dir = tempfile::tempdir().expect("temp project");
+        fs::write(dir.path().join(".dockerignore"), "target/\n").expect("user file");
+        ensure_dockerignore(dir.path()).expect("merge");
+        let content = fs::read_to_string(dir.path().join(".dockerignore")).expect("read");
+        assert!(content.starts_with("target/\n"), "{content}");
+        assert!(content.contains(".git"), "{content}");
     }
 }
