@@ -371,64 +371,81 @@ impl DriftReport {
     }
 
     /// Print the drift report
-    pub fn print(&self) {
+    /// Render the drift report as terminal-safe lines.
+    ///
+    /// Lockfile fields (and package-manager metadata) are remote/user input;
+    /// every dynamic string is stripped of terminal control sequences before
+    /// display so a hostile lockfile cannot inject OSC/CSI output
+    /// (csf_dd687683).
+    #[must_use]
+    pub fn render_lines(&self) -> Vec<String> {
+        let clean = |text: &str| crate::cli::style::sanitize_terminal_text(text);
+        let mut lines = Vec::new();
         if !self.has_drift {
-            println!(
+            lines.push(format!(
                 "{} No drift detected. Environment matches lockfile.",
                 crate::cli::style::positive("✓")
-            );
-            return;
+            ));
+            return lines;
         }
 
-        println!(
+        lines.push(format!(
             "{} Environment drift detected!\n",
             crate::cli::style::caution("⚠")
-        );
+        ));
 
         if !self.missing_runtimes.is_empty() {
-            println!("{}", crate::cli::style::negative("Missing Runtimes:"));
+            lines.push(crate::cli::style::negative("Missing Runtimes:"));
             for r in &self.missing_runtimes {
-                println!("  - {r}");
+                lines.push(format!("  - {}", clean(r)));
             }
         }
 
         if !self.different_runtimes.is_empty() {
-            println!("{}", crate::cli::style::caution("Version Mismatches:"));
+            lines.push(crate::cli::style::caution("Version Mismatches:"));
             for (name, expected, actual) in &self.different_runtimes {
-                println!(
+                lines.push(format!(
                     "  ~ {} (expected: {}, actual: {})",
-                    name,
-                    crate::cli::style::positive(expected),
-                    crate::cli::style::negative(actual)
-                );
+                    clean(name),
+                    crate::cli::style::positive(&clean(expected)),
+                    crate::cli::style::negative(&clean(actual))
+                ));
             }
         }
 
         if !self.extra_runtimes.is_empty() {
-            println!(
-                "{}",
-                crate::cli::style::informative("Extra Runtimes (not in lockfile):")
-            );
+            lines.push(crate::cli::style::informative(
+                "Extra Runtimes (not in lockfile):",
+            ));
             for r in &self.extra_runtimes {
-                println!("  + {r}");
+                lines.push(format!("  + {}", clean(r)));
             }
         }
 
         if !self.missing_packages.is_empty() {
-            println!("\n{}", crate::cli::style::negative("Missing Packages:"));
+            lines.push(String::new());
+            lines.push(crate::cli::style::negative("Missing Packages:"));
             for p in &self.missing_packages {
-                println!("  - {p}");
+                lines.push(format!("  - {}", clean(p)));
             }
         }
 
         if !self.extra_packages.is_empty() {
-            println!(
-                "\n{}",
-                crate::cli::style::informative("Extra Packages (not in lockfile):")
-            );
+            lines.push(String::new());
+            lines.push(crate::cli::style::informative(
+                "Extra Packages (not in lockfile):",
+            ));
             for p in &self.extra_packages {
-                println!("  + {p}");
+                lines.push(format!("  + {}", clean(p)));
             }
+        }
+        lines
+    }
+
+    /// Print the drift report.
+    pub fn print(&self) {
+        for line in self.render_lines() {
+            println!("{line}");
         }
     }
 }
@@ -436,6 +453,33 @@ impl DriftReport {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn drift_report_never_renders_terminal_control_sequences() {
+        let hostile = format!("\u{1b}]52;c;pwned\u{7}pkg\u{1b}[31mred");
+        let report = DriftReport {
+            has_drift: true,
+            missing_runtimes: vec![hostile.clone()],
+            different_runtimes: vec![(hostile.clone(), hostile.clone(), hostile.clone())],
+            extra_runtimes: vec![hostile.clone()],
+            missing_packages: vec![hostile.clone()],
+            extra_packages: vec![hostile],
+        };
+
+        let rendered = report.render_lines().join("\n");
+        assert!(!rendered.contains('\u{1b}'), "ESC must be stripped");
+        assert!(!rendered.contains('\u{7}'), "BEL must be stripped");
+        assert!(rendered.contains("pkg"), "legible text must survive");
+        assert_eq!(
+            DriftReport {
+                has_drift: false,
+                ..report
+            }
+            .render_lines()
+            .join("\n"),
+            crate::cli::style::positive("✓") + " No drift detected. Environment matches lockfile."
+        );
+    }
 
     #[test]
     fn lockfile_runtime_keys_are_serialized_in_order() {
