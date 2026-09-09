@@ -518,8 +518,35 @@ async fn download_verified(
 /// Returns an error when `gh` is installed and the attestation does not
 /// verify (tampered or non-CI-built archive), or when `gh` itself fails to
 /// execute the verification.
+/// Absolute system locations where the GitHub CLI is conventionally
+/// installed.
+///
+/// The attestation gate trusts whatever binary `gh` resolves to, so it must
+/// never be resolved through PATH: a project-controlled directory earlier in
+/// PATH could ship an impostor `gh` whose only job is to approve a tampered
+/// archive. Only well-known absolute install locations are consulted.
+#[cfg(unix)]
+const GH_CANDIDATES: &[&str] = &["/usr/bin/gh", "/usr/local/bin/gh", "/opt/homebrew/bin/gh"];
+
+#[cfg(not(unix))]
+const GH_CANDIDATES: &[&str] = &[];
+
+/// Resolve the attestation helper by absolute path only.
+///
+/// Returns `None` when no attestation-capable tool is installed, which maps
+/// to the existing fail-closed "no `gh`" provenance outcome.
+fn locate_gh() -> Option<std::path::PathBuf> {
+    GH_CANDIDATES
+        .iter()
+        .map(std::path::PathBuf::from)
+        .find(|path| path.is_file())
+}
+
 fn verify_attestation(archive_path: &std::path::Path, tag: &str) -> Result<bool> {
-    let output = std::process::Command::new("gh")
+    let Some(gh) = locate_gh() else {
+        return Ok(false);
+    };
+    let output = std::process::Command::new(gh)
         .args(["attestation", "verify"])
         .arg(archive_path)
         .args([
@@ -954,6 +981,70 @@ mod tests {
         let tmp = tempfile::tempdir().expect("temp dir");
         extract_update_binary(&bytes, tmp.path(), "omg-v1.2.3-x86_64-linux-arch.tar.gz")
             .expect_err("symlink binary must fail closed");
+    }
+
+    /// A PATH-hijacked `gh` must never be the tool that approves an
+    /// update: resolution is restricted to absolute system paths, so a
+    /// project-controlled impostor is ignored (and the gate fails closed
+    /// to the "no gh" outcome).
+    #[test]
+    #[serial_test::serial]
+    fn attestation_ignores_path_hijacked_gh() {
+        if locate_gh().is_some() {
+            // A real GitHub CLI is installed at a trusted absolute path in
+            // this environment; running the impostor scenario would invoke
+            // it against a synthetic archive. The impostor-ignoring behavior
+            // is still covered on environments without a system `gh`.
+            return;
+        }
+        let impostor_dir = tempfile::tempdir().expect("impostor directory");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let impostor = impostor_dir.path().join("gh");
+            std::fs::write(&impostor, "#!/bin/sh\ntouch gh-impostor-marker\nexit 0\n")
+                .expect("impostor script");
+            std::fs::set_permissions(&impostor, std::fs::Permissions::from_mode(0o755))
+                .expect("impostor permissions");
+        }
+
+        let archive = tempfile::tempdir().expect("archive directory");
+        let archive_path = archive.path().join("archive.tar.gz");
+        std::fs::write(&archive_path, b"unverified archive").expect("archive fixture");
+
+        let previous_path = env::var("PATH").ok();
+        #[cfg(unix)]
+        {
+            // SAFETY: Test-only code, serialized by serial_test; no other
+            // thread reads PATH concurrently.
+            #[expect(unsafe_code)]
+            unsafe {
+                env::set_var(
+                    "PATH",
+                    format!(
+                        "{}:{}",
+                        impostor_dir.path().display(),
+                        previous_path.as_deref().unwrap_or("/usr/bin")
+                    ),
+                );
+            }
+        }
+        let verified = verify_attestation(&archive_path, "v0.0.0-test");
+        if let Some(path) = previous_path {
+            // SAFETY: see above.
+            #[expect(unsafe_code)]
+            unsafe {
+                env::set_var("PATH", path);
+            }
+        }
+
+        // A PATH impostor is not an attestation tool: fail closed to the
+        // same "no gh" outcome instead of executing it.
+        assert!(!verified.expect("impostor must not error"));
+        assert!(
+            !archive.path().join("gh-impostor-marker").exists(),
+            "a PATH-hijacked gh must never run"
+        );
     }
 
     #[test]
