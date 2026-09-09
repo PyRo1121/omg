@@ -104,6 +104,10 @@ pub const POLICY_MARKER: &str = "__omg_policy=";
 
 /// The privileged child receives the parent's policy as bounded argv data,
 /// since sudo resets XDG configuration environment variables.
+///
+/// The payload is authenticated by [`validate_inherited_policy`]: argv is
+/// caller-controlled, so the child only accepts handoffs that match the
+/// policy it re-derives from a root-trusted location.
 pub fn inherit_policy(argument: &str) -> anyhow::Result<()> {
     anyhow::ensure!(
         crate::core::privilege::is_root(),
@@ -114,9 +118,30 @@ pub fn inherit_policy(argument: &str) -> anyhow::Result<()> {
         .ok_or_else(|| anyhow::anyhow!("Missing policy marker"))?;
     anyhow::ensure!(encoded.len() <= 65536, "Inherited policy exceeds limit");
     let policy = serde_json::from_slice(&hex::decode(encoded)?)?;
+    validate_inherited_policy(&policy)?;
     INHERITED_POLICY
         .set(policy)
         .map_err(|_| anyhow::anyhow!("Duplicate inherited policy"))
+}
+
+/// Authenticate the elevation handoff. The argv payload is forgeable: anyone
+/// permitted to run `sudo omg` can append their own `__omg_policy=` argument
+/// and replace the enforced package policy (weaken `require_pgp`, empty the
+/// license allowlist, re-enable AUR) without ever editing a policy file. The
+/// child therefore re-derives the policy from a root-trusted location — the
+/// invoking user's config directory, resolved through sudo's own `SUDO_USER`
+/// identity, which the caller cannot influence — and only accepts a handoff
+/// that matches it exactly. A parent policy loaded from a custom
+/// `OMG_CONFIG_DIR` cannot be authenticated across sudo and fails closed.
+fn validate_inherited_policy(policy: &SecurityPolicy) -> anyhow::Result<()> {
+    let trusted =
+        SecurityPolicy::load_optional(crate::core::paths::config_dir().join("policy.toml"))?;
+    anyhow::ensure!(
+        policy == &trusted,
+        "Inherited elevation policy does not match the invoking user's trusted policy file; \
+         refusing the forgeable policy handoff (custom OMG_CONFIG_DIR cannot cross sudo elevation)"
+    );
+    Ok(())
 }
 
 pub fn explicit_policy_exists() -> bool {
@@ -669,5 +694,37 @@ mod tests {
                 )
                 .is_ok()
         );
+    }
+    #[test]
+    #[serial_test::serial]
+    fn forged_elevation_policy_handoff_is_rejected() {
+        let temp = tempfile::TempDir::new().expect("temp dir");
+        temp_env::with_var("OMG_CONFIG_DIR", Some(temp.path()), || {
+            let strict = SecurityPolicy {
+                require_pgp: true,
+                allow_aur: false,
+                minimum_grade: SecurityGrade::Verified,
+                ..SecurityPolicy::default()
+            };
+
+            // No trusted policy file: only the built-in default may cross sudo.
+            assert!(validate_inherited_policy(&SecurityPolicy::default()).is_ok());
+            assert!(
+                validate_inherited_policy(&strict)
+                    .err()
+                    .is_some_and(|error| error.to_string().contains("forgeable policy handoff")),
+                "a forged permissive handoff must not replace the trusted policy"
+            );
+
+            // With a trusted policy file, only its exact content is accepted.
+            fs::write(temp.path().join("policy.toml"), toml::to_string(&strict).expect("serialize policy"))
+                .expect("write policy");
+            assert!(validate_inherited_policy(&strict).is_ok());
+            assert!(validate_inherited_policy(&SecurityPolicy::default()).is_err());
+
+            // A weakened variant of the same policy is rejected byte-for-byte.
+            let weakened = SecurityPolicy { allow_aur: true, ..strict };
+            assert!(validate_inherited_policy(&weakened).is_err());
+        });
     }
 }
