@@ -12,8 +12,26 @@
 # - sudo access
 # - bc command for calculations
 # - Clean system (packages will be uninstalled between runs)
+# - Explicit opt-in: OMG_AUR_BENCH_CONFIRM_HOST_MUTATION=yes
+#
+# SAFETY: AUR packages are mutable third-party sources (VCS builds cannot be
+# digest-pinned), so this benchmark executes unattested code and mutates the
+# host package database with sudo. Run it only in a disposable VM/container
+# snapshot, never against a valuable host.
 
 set -e
+
+# Explicit, non-interactive confirmation gate: the packages below are
+# mutable third-party AUR builds, so no digest pin can attest what this
+# script executes. Require a deliberate opt-in before touching the host.
+if [[ "${OMG_AUR_BENCH_CONFIRM_HOST_MUTATION:-}" != "yes" ]]; then
+    echo "error: this benchmark installs/uninstalls mutable third-party AUR" >&2
+    echo "       packages (yay-bin, paru-bin, ttf-meslo) on this host using" >&2
+    echo "       sudo. AUR builds cannot be digest-pinned; run it only in a" >&2
+    echo "       disposable VM and re-run with:" >&2
+    echo "         OMG_AUR_BENCH_CONFIRM_HOST_MUTATION=yes $0" >&2
+    exit 2
+fi
 
 # Colors for output
 RED='\033[0;31m'
