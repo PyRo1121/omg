@@ -20,7 +20,7 @@ These backends do not have identical policy, audit, or runtime coverage. The rec
 Downloaded releases require `curl`, archive tools, and GitHub CLI (`gh`) for build-provenance verification. Install those prerequisites through your trusted platform tools first.
 
 ```bash
-curl --proto '=https' --tlsv1.2 -fsSL https://omg.latham.cloud/install.sh -o omg-install.sh
+curl --proto '=https' --tlsv1.2 -fsSL https://getomg.xyz/install.sh -o omg-install.sh
 less omg-install.sh
 OMG_NO_TELEMETRY=1 OMG_SKIP_SHELL=1 bash omg-install.sh
 export PATH="$HOME/.local/bin:$PATH"
