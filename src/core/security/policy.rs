@@ -319,20 +319,192 @@ pub(crate) fn spdx_license_tokens(license: &str) -> Vec<String> {
         .collect()
 }
 
-/// True when `license` contains an allowed SPDX identifier as a whole token.
+/// True when `license` satisfies the allowlist under SPDX expression
+/// semantics: `AND` requires every operand to be allowed, `OR` requires any
+/// one operand to be allowed, and parentheses group sub-expressions. A
+/// conjunction must not be satisfied by a single allowed token (e.g.
+/// `GPL-3.0 AND MIT` is not covered by an allowlist containing only `MIT`).
+/// Malformed expressions fail closed.
 pub(crate) fn license_matches_allowlist(license: &str, allowed: &[String]) -> bool {
-    let tokens = spdx_license_tokens(license);
+    let Some(expr) = SpdxParser::parse_expression(license) else {
+        return false;
+    };
+    spdx_expr_allowed(&expr, allowed)
+}
+
+/// A parsed SPDX license expression: an identifier (optionally carrying a
+/// `WITH` exception, evaluated by its base identifier), a conjunction, a
+/// disjunction, or a parenthesized grouping.
+#[derive(Debug, Clone, PartialEq)]
+enum SpdxExpr {
+    Id(String),
+    With { id: String },
+    And(Box<SpdxExpr>, Box<SpdxExpr>),
+    Or(Box<SpdxExpr>, Box<SpdxExpr>),
+}
+
+fn spdx_expr_allowed(expr: &SpdxExpr, allowed: &[String]) -> bool {
+    match expr {
+        SpdxExpr::Id(id) | SpdxExpr::With { id } => spdx_id_allowed(id, allowed),
+        SpdxExpr::And(left, right) => {
+            spdx_expr_allowed(left, allowed) && spdx_expr_allowed(right, allowed)
+        }
+        SpdxExpr::Or(left, right) => {
+            spdx_expr_allowed(left, allowed) || spdx_expr_allowed(right, allowed)
+        }
+    }
+}
+
+/// Whole-token identifier match preserving the historical `+` suffix rules:
+/// `MIT+` satisfies an `MIT` entry and `MIT` satisfies an `MIT+` entry.
+fn spdx_id_allowed(id: &str, allowed: &[String]) -> bool {
     allowed.iter().any(|allowed| {
-        tokens.iter().any(|token| {
-            token.eq_ignore_ascii_case(allowed)
-                || token
-                    .strip_suffix('+')
-                    .is_some_and(|token| token.eq_ignore_ascii_case(allowed))
-                || allowed
-                    .strip_suffix('+')
-                    .is_some_and(|allowed| token.eq_ignore_ascii_case(allowed))
-        })
+        id.eq_ignore_ascii_case(allowed)
+            || id
+                .strip_suffix('+')
+                .is_some_and(|base| base.eq_ignore_ascii_case(allowed))
+            || allowed
+                .strip_suffix('+')
+                .is_some_and(|base| id.eq_ignore_ascii_case(base))
     })
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum SpdxToken {
+    Id(String),
+    And,
+    Or,
+    With,
+    Open,
+    Close,
+}
+
+fn spdx_tokenize(license: &str) -> Vec<SpdxToken> {
+    fn push_word(tokens: &mut Vec<SpdxToken>, word: &mut String) {
+        if word.is_empty() {
+            return;
+        }
+        if word.eq_ignore_ascii_case("AND") {
+            tokens.push(SpdxToken::And);
+        } else if word.eq_ignore_ascii_case("OR") {
+            tokens.push(SpdxToken::Or);
+        } else if word.eq_ignore_ascii_case("WITH") {
+            tokens.push(SpdxToken::With);
+        } else {
+            tokens.push(SpdxToken::Id(word.to_ascii_lowercase()));
+        }
+        word.clear();
+    }
+
+    let mut tokens = Vec::new();
+    let mut word = String::new();
+    for character in license.chars() {
+        match character {
+            '(' => {
+                push_word(&mut tokens, &mut word);
+                tokens.push(SpdxToken::Open);
+            }
+            ')' => {
+                push_word(&mut tokens, &mut word);
+                tokens.push(SpdxToken::Close);
+            }
+            c if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+') => word.push(c),
+            _ => push_word(&mut tokens, &mut word),
+        }
+    }
+    push_word(&mut tokens, &mut word);
+    tokens
+}
+
+/// Recursive-descent parser for SPDX expressions with `AND` binding tighter
+/// than `OR`. Juxtaposed identifiers without an operator keep the historical
+/// any-token (OR) semantics instead of failing previously-accepted inputs.
+struct SpdxParser {
+    tokens: Vec<SpdxToken>,
+    pos: usize,
+}
+
+impl SpdxParser {
+    fn parse_expression(license: &str) -> Option<SpdxExpr> {
+        let mut parser = Self {
+            tokens: spdx_tokenize(license),
+            pos: 0,
+        };
+        let expr = parser.parse_or()?;
+        if parser.pos == parser.tokens.len() {
+            Some(expr)
+        } else {
+            None
+        }
+    }
+
+    fn peek(&self) -> Option<&SpdxToken> {
+        self.tokens.get(self.pos)
+    }
+
+    fn eat(&mut self, expected: &SpdxToken) -> bool {
+        if self.peek() == Some(expected) {
+            self.pos += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn parse_or(&mut self) -> Option<SpdxExpr> {
+        let mut expr = self.parse_and()?;
+        while self.eat(&SpdxToken::Or) {
+            let right = self.parse_and()?;
+            expr = SpdxExpr::Or(Box::new(expr), Box::new(right));
+        }
+        Some(expr)
+    }
+
+    fn parse_and(&mut self) -> Option<SpdxExpr> {
+        let mut expr = self.parse_atom()?;
+        loop {
+            if self.eat(&SpdxToken::And) {
+                let right = self.parse_atom()?;
+                expr = SpdxExpr::And(Box::new(expr), Box::new(right));
+            } else if matches!(
+                self.peek(),
+                Some(SpdxToken::Id(_) | SpdxToken::Open)
+            ) {
+                // Juxtaposition: legacy operator-less input stays OR-any.
+                let right = self.parse_atom()?;
+                expr = SpdxExpr::Or(Box::new(expr), Box::new(right));
+            } else {
+                break;
+            }
+        }
+        Some(expr)
+    }
+
+    fn parse_atom(&mut self) -> Option<SpdxExpr> {
+        match self.peek()? {
+            SpdxToken::Open => {
+                self.pos += 1;
+                let expr = self.parse_or()?;
+                self.eat(&SpdxToken::Close).then_some(expr)
+            }
+            SpdxToken::Id(id) => {
+                let id = id.clone();
+                self.pos += 1;
+                if self.eat(&SpdxToken::With) {
+                    match self.peek() {
+                        Some(SpdxToken::Id(_)) => {
+                            self.pos += 1;
+                            Some(SpdxExpr::With { id })
+                        }
+                        _ => None,
+                    }
+                } else {
+                    Some(SpdxExpr::Id(id))
+                }
+            }
+            _ => None,
+        }
+    }
 }
 
 pub fn require_native_plan_support(backend: &str) -> anyhow::Result<()> {
@@ -695,6 +867,68 @@ mod tests {
                 .is_ok()
         );
     }
+
+    #[test]
+    fn compound_spdx_and_requires_all_operands_allowed() {
+        let mit_only = SecurityPolicy {
+            allowed_licenses: vec!["MIT".to_string()],
+            ..SecurityPolicy::default()
+        };
+        // One allowed token must not satisfy an AND expression.
+        let err = mit_only
+            .check_package("foo", false, Some("MIT AND GPL-3.0"), SecurityGrade::Verified)
+            .expect_err("AND requires every operand to be allowed");
+        assert!(
+            matches!(err, PolicyError::LicenseNotAllowed { .. }),
+            "AND violations must be typed, got: {err}"
+        );
+
+        let both = SecurityPolicy {
+            allowed_licenses: vec!["MIT".to_string(), "GPL-3.0".to_string()],
+            ..SecurityPolicy::default()
+        };
+        assert!(
+            both.check_package("foo", false, Some("MIT AND GPL-3.0"), SecurityGrade::Verified)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn spdx_expression_precedence_is_enforced() {
+        let mit = &["MIT".to_string()];
+        let mit_apache = &["MIT".to_string(), "Apache-2.0".to_string()];
+
+        // OR-any semantics are preserved.
+        assert!(license_matches_allowlist("GPL-3.0 OR MIT", mit));
+        assert!(license_matches_allowlist("GPL-3.0 OR MIT", mit_apache));
+        assert!(license_matches_allowlist("MIT+ OR GPL-3.0", mit));
+
+        // AND requires every operand, even inside groupings.
+        assert!(!license_matches_allowlist("MIT AND GPL-3.0", mit));
+        assert!(!license_matches_allowlist(
+            "(GPL-3.0 OR MIT) AND Apache-2.0",
+            mit
+        ));
+        assert!(license_matches_allowlist(
+            "(GPL-3.0 OR MIT) AND Apache-2.0",
+            mit_apache
+        ));
+
+        // WITH exceptions evaluate by their base identifier.
+        let gpl = &["GPL-2.0".to_string()];
+        assert!(license_matches_allowlist(
+            "GPL-2.0 WITH Classpath-exception-2.0",
+            gpl
+        ));
+
+        // Malformed expressions fail closed instead of matching loosely.
+        assert!(!license_matches_allowlist("MIT AND", mit));
+        assert!(!license_matches_allowlist("(MIT", mit));
+        assert!(!license_matches_allowlist("MIT)", mit));
+        assert!(!license_matches_allowlist("MIT OR OR Apache-2.0", mit));
+        assert!(!license_matches_allowlist("MIT WITH", mit));
+    }
+
     #[test]
     #[serial_test::serial]
     fn forged_elevation_policy_handoff_is_rejected() {
