@@ -847,9 +847,23 @@ mod tests {
         assert!(lock_file_at(directory.path()).is_none());
     }
 
+    /// Lock fixtures need a parent directory the anchored `O_NOFOLLOW` walk
+    /// can reach. macOS system temp dirs live behind `/var` -> `private/var`,
+    /// so prefer a directory under the real home path (no symlinked
+    /// ancestors) and fall back to the platform default.
+    fn lock_fixture_tempdir() -> tempfile::TempDir {
+        let base = home::home_dir().filter(|home| home.is_dir());
+        match base {
+            Some(home) => tempfile::Builder::new()
+                .tempdir_in(home)
+                .unwrap_or_else(|_| tempfile::tempdir().unwrap()),
+            None => tempfile::tempdir().unwrap(),
+        }
+    }
+
     #[test]
     fn usage_lock_reopens_without_truncation() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = lock_fixture_tempdir();
         let path = directory.path().join("usage.lock");
         drop(lock_file_at(&path).expect("new usage lock"));
         std::fs::write(&path, b"unchanged").unwrap();
@@ -990,23 +1004,12 @@ mod tests {
 
     #[test]
     fn concurrent_locked_updates_do_not_lose_counters() {
-        if cfg!(target_os = "macos") {
-            // The anchored usage-lock walk refuses symlinked ancestors, and
-            // macOS system temp dirs live behind /var -> private/var. Real
-            // user data dirs (~/Library/Application Support) have no symlinked
-            // ancestors, so locking works in production; these fixture tests
-            // cannot create a tempdir outside that symlink on macOS.
-            eprintln!(
-                "skipped: macOS system temp paths contain symlinked ancestors the anchored lock walk refuses"
-            );
-            return;
-        }
         // Regression: usage.json load-modify-save cycles used to run without
         // a cross-process lock, so concurrent omg invocations clobbered each
         // other's counters (last-writer-wins).
         const WRITERS: usize = 8;
         const UPDATES_PER_WRITER: usize = 5;
-        let directory = tempfile::tempdir().expect("create temporary directory");
+        let directory = lock_fixture_tempdir();
         let path = directory.path().join("usage.json");
 
         let barrier = std::sync::Arc::new(std::sync::Barrier::new(WRITERS));
@@ -1094,20 +1097,12 @@ mod tests {
 
     #[test]
     fn locked_sync_timestamp_merge_does_not_lose_concurrent_counters() {
-        if cfg!(target_os = "macos") {
-            // Same anchored-walk/symlinked-ancestor limitation as
-            // concurrent_locked_updates_do_not_lose_counters.
-            eprintln!(
-                "skipped: macOS system temp paths contain symlinked ancestors the anchored lock walk refuses"
-            );
-            return;
-        }
         // Regression for the background-sync race: UsageStats::sync used to
         // write its stale snapshot back without the cross-process lock,
         // clobbering counters recorded while the network request was in
         // flight. The timestamp-only merge must preserve them.
         const WRITERS: usize = 4;
-        let directory = tempfile::tempdir().expect("create temporary directory");
+        let directory = lock_fixture_tempdir();
         let path = directory.path().join("usage.json");
 
         let barrier = std::sync::Arc::new(std::sync::Barrier::new(WRITERS));

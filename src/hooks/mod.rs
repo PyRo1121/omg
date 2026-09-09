@@ -1376,6 +1376,13 @@ mod tests {
 
     #[test]
     fn valid_python_pin_resolves_to_existing_bin_dir() {
+        if crate::core::is_root() {
+            // Elevated processes resolve data paths to real system directories
+            // regardless of OMG_DATA_DIR, so this fixture test only applies
+            // to unprivileged runs.
+            eprintln!("skipped: elevated processes ignore caller path overrides");
+            return;
+        }
         let data = tempdir().unwrap();
         fs::create_dir_all(data.path().join("versions/python/3.12.0/bin")).unwrap();
         temp_env::with_var("OMG_DATA_DIR", Some(data.path()), || {
@@ -1429,6 +1436,13 @@ mod tests {
 
     #[test]
     fn pyproject_requires_python_resolves_to_newest_installed_match() {
+        if crate::core::is_root() {
+            // Elevated processes resolve data paths to real system directories
+            // regardless of OMG_DATA_DIR, so this fixture test only applies
+            // to unprivileged runs.
+            eprintln!("skipped: elevated processes ignore caller path overrides");
+            return;
+        }
         let dir = tempdir().unwrap();
         fs::write(
             dir.path().join("pyproject.toml"),
@@ -1575,6 +1589,13 @@ mod tests {
 
     #[test]
     fn java_two_component_request_maps_to_feature_directory() {
+        if crate::core::is_root() {
+            // Elevated processes resolve data paths to real system directories
+            // regardless of OMG_DATA_DIR, so this fixture test only applies
+            // to unprivileged runs.
+            eprintln!("skipped: elevated processes ignore caller path overrides");
+            return;
+        }
         let data = tempdir().unwrap();
         fs::create_dir_all(data.path().join("versions/java/21/bin")).unwrap();
         temp_env::with_var("OMG_DATA_DIR", Some(data.path()), || {
@@ -1612,6 +1633,13 @@ mod tests {
 
     #[test]
     fn vendor_companion_commands_share_the_selected_path() {
+        if crate::core::is_root() {
+            // Elevated processes resolve data paths to real system directories
+            // regardless of OMG_DATA_DIR, so this fixture test only applies
+            // to unprivileged runs.
+            eprintln!("skipped: elevated processes ignore caller path overrides");
+            return;
+        }
         let data = tempdir().unwrap();
         for (runtime, version, relative_bin, primary, companion) in [
             ("node", "20.10.0", "bin", "node", "npm"),
