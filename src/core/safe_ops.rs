@@ -111,6 +111,36 @@ pub fn create_private_marker(path: &Path, contents: &[u8]) -> Result<bool> {
     }
 }
 
+/// Change ownership of a file or directory without following a final symlink.
+///
+/// A path-based `chown` can be raced into following a symlink swapped into
+/// place between a privileged metadata read and the ownership change, which
+/// transfers ownership of an unrelated inode (csf_5eef98bc). Opening with
+/// `O_NOFOLLOW` and applying `fchown` to the descriptor pins the operation to
+/// the exact node at `path`: a swapped-in symlink fails the open instead of
+/// redirecting the ownership change.
+///
+/// # Errors
+/// Returns an error when the path is a symlink, cannot be opened, or the
+/// ownership change fails.
+#[cfg(unix)]
+pub fn fchown_path_no_follow(path: &Path, uid: Option<u32>, gid: Option<u32>) -> Result<()> {
+    use std::os::unix::fs::OpenOptionsExt as _;
+
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true).custom_flags(nix::libc::O_NOFOLLOW);
+    let file = options
+        .open(path)
+        .with_context(|| format!("Failed to open {} without following symlinks", path.display()))?;
+    nix::unistd::fchown(
+        &file,
+        uid.map(nix::unistd::Uid::from_raw),
+        gid.map(nix::unistd::Gid::from_raw),
+    )
+    .with_context(|| format!("Failed to change ownership of {}", path.display()))?;
+    Ok(())
+}
+
 /// Make a persisted file replacement durable by syncing its parent directory.
 pub(crate) fn sync_parent_directory_sync(path: &Path) -> Result<()> {
     let parent = path
@@ -303,6 +333,43 @@ mod tests {
         assert!(write_executable(&link, b"new", true).unwrap());
         assert_eq!(std::fs::read(&target).unwrap(), b"keep");
         assert_eq!(std::fs::read(&link).unwrap(), b"new");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fchown_applies_to_regular_files() {
+        use std::os::unix::fs::MetadataExt as _;
+
+        let directory = TempDir::new().unwrap();
+        let file = directory.path().join("owned");
+        std::fs::write(&file, b"data").unwrap();
+        let uid = rustix::process::getuid().as_raw();
+
+        fchown_path_no_follow(&file, Some(uid), Some(uid)).expect("fchown regular file");
+        assert_eq!(
+            std::fs::metadata(&file).unwrap().uid(),
+            uid,
+            "ownership must be preserved on the exact node"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fchown_refuses_to_follow_final_symlinks() {
+        use std::os::unix::fs::MetadataExt as _;
+        use std::os::unix::fs::symlink;
+
+        let directory = TempDir::new().unwrap();
+        let target = directory.path().join("target");
+        std::fs::write(&target, b"keep").unwrap();
+        let link = directory.path().join("link");
+        symlink(&target, &link).unwrap();
+        let uid = std::fs::metadata(&target).unwrap().uid();
+
+        // O_NOFOLLOW fails the open with ELOOP before any ownership change,
+        // regardless of privilege, so the symlink target keeps its owner.
+        assert!(fchown_path_no_follow(&link, Some(0), Some(0)).is_err());
+        assert_eq!(std::fs::metadata(&target).unwrap().uid(), uid);
     }
 
     #[cfg(unix)]

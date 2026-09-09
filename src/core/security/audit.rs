@@ -1722,7 +1722,9 @@ fn copy_audit_history(legacy: &Path, directory: &Path) -> anyhow::Result<()> {
     let expected = snapshot_audit_tree(legacy)?;
     std::fs::create_dir(&staging)?;
     let root_metadata = std::fs::symlink_metadata(legacy)?;
-    std::os::unix::fs::chown(
+    // fchown the exact node we created; a path-based chown here could be
+    // raced into following a symlink (csf_5eef98bc).
+    crate::core::safe_ops::fchown_path_no_follow(
         &staging,
         Some(root_metadata.uid()),
         Some(root_metadata.gid()),
@@ -1742,12 +1744,20 @@ fn copy_audit_history(legacy: &Path, directory: &Path) -> anyhow::Result<()> {
             let target = dest.join(entry.file_name());
             if metadata.is_dir() {
                 std::fs::create_dir(&target)?;
-                std::os::unix::fs::chown(&target, Some(metadata.uid()), Some(metadata.gid()))?;
+                crate::core::safe_ops::fchown_path_no_follow(
+                    &target,
+                    Some(metadata.uid()),
+                    Some(metadata.gid()),
+                )?;
                 std::fs::set_permissions(&target, metadata.permissions())?;
                 stack.push((entry.path(), target));
             } else {
                 std::fs::copy(entry.path(), &target)?;
-                std::os::unix::fs::chown(&target, Some(metadata.uid()), Some(metadata.gid()))?;
+                crate::core::safe_ops::fchown_path_no_follow(
+                    &target,
+                    Some(metadata.uid()),
+                    Some(metadata.gid()),
+                )?;
                 std::fs::set_permissions(&target, metadata.permissions())?;
                 File::open(&target)?.sync_all()?;
             }
