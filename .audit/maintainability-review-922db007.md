@@ -23,6 +23,30 @@ Do not begin with a large file-splitting exercise. Most expensive complexity her
 
 ## Integration checkpoint — 2026-09-08
 
+## Release v0.1.219 — 2026-09-09
+
+- Published from main `646c35e7` (tag `v0.1.219`) after CI run 34303687421 and
+  Benchmark run 34302495800 both succeeded on that exact commit; the Release
+  workflow gate passed and all five platform artifacts plus the SBOM were
+  published and synced to R2. Release notes carry the merged-PR index.
+- En-route release blockers fixed under #385: benchmark headline labels
+  ("OMG" vs legacy "OMG (Daemon)") that emptied the badge, and a production
+  runtime mutation re-entrancy bug where Rust toolchain operations holding the
+  root mutation flock failed inside nested publication/uninstall/activation
+  helpers; `*_with_lease` variants now reuse the caller-held lease.
+- Root-container and macOS fixture isolation: tests relying on
+  `OMG_DATA_DIR`/`OMG_PACMAN_*` skip for elevated processes (deliberate #363
+  isolation), and usage-lock fixtures use home-directory tempdirs because the
+  anchored `O_NOFOLLOW` walk refuses macOS's `/var -> private/var`.
+- The Performance Regression Gate failure was the accepted #372 metadata-scan
+  cost against a stale Sep 3 daemon-era baseline; `benchmarks/summary.json`
+  was refreshed from the measured main run (18.8ms search, 12.3x vs pacman,
+  record `20260909_015944-6e80a5c`). Follow-up unchanged: move catalog
+  observation off the async request path with an explicit latency budget.
+- Known open items: Docker E2E `test_docker_update_check` flake, QEMU arm64
+  `/dev/kvm` runner availability, coverage-container root-path interference,
+  and the Dependabot high vulnerability alert on main (unresolved here).
+
 - Main subsequently reached `50d11c1b` with all then-open PRs merged externally, including #372 and #380. Comparison with the tested integration found the 24-hour fixture lint fix and its verification note missing; this follow-up restores them. The combined local-scan integration passes 59 focused Arch tests (one benchmark ignored) and Arch all-target Clippy with warnings denied (`local-main-integration-{tests,clippy}.log`). Merge status does not establish full CI success.
 - Local scan cost review: a warm catalog-reading daemon request observes the full catalog before dispatch (`handle_request` → `heal_index_if_catalog_changed` → `catalog_needs_heal`); a stale path performs at least four observations across checks and rebuild bracketing, before any additional backend observations. The recorded 8.4/27.1 ms warm-cache medians at 1,000/3,000 synthetic packages therefore matter on the hot path. Observation currently runs synchronously inside these async handler paths. Follow-up: move those observations to blocking workers and establish an end-to-end latency budget without reverting to timestamp-only freshness. No throughput or request-latency claim is made from per-scan samples.
 
