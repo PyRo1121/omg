@@ -1079,25 +1079,76 @@ mod tests {
         }
 
         #[test]
-        fn cross_filesystem_migration_preserves_legacy_data_on_refusal() -> anyhow::Result<()> {
+        fn cross_filesystem_migration_copies_history_byte_for_byte() -> anyhow::Result<()> {
             let parent = tempfile::tempdir()?;
             let legacy = tempfile::tempdir_in("/dev/shm")?;
             assert_ne!(
                 std::fs::metadata(parent.path())?.dev(),
                 std::fs::metadata(legacy.path())?.dev()
             );
-            std::fs::create_dir(legacy.path().join("omg"))?;
-            let history = legacy.path().join("omg/audit.jsonl");
-            std::fs::write(&history, b"retained history")?;
-            let error = prepare_system_audit_directory(parent.path(), legacy.path())
-                .expect_err("cross-filesystem rename must not become a copy or fresh log");
+            let original = legacy.path().join("omg");
+            std::fs::create_dir(&original)?;
+            AuditLogger::new_in(original.join("audit.jsonl"))?.log(
+                AuditEventType::PackageInstall,
+                AuditSeverity::Info,
+                "tree",
+                "existing history",
+            )?;
+            let original_bytes = std::fs::read(original.join("audit.jsonl"))?;
+            std::fs::write(original.join("audit.jsonl.1"), &original_bytes)?;
+            std::fs::set_permissions(
+                original.join("audit.jsonl.1"),
+                std::fs::Permissions::from_mode(0o640),
+            )?;
+            let nested = original.join("archives");
+            std::fs::create_dir(&nested)?;
+            std::fs::write(nested.join("segment"), b"archived segment")?;
+            let directory = prepare_system_audit_directory(parent.path(), legacy.path())?;
+            assert!(!original.exists());
             assert_eq!(
-                error
-                    .downcast_ref::<io::Error>()
-                    .and_then(io::Error::raw_os_error),
-                Some(libc::EXDEV)
+                std::fs::read(directory.join("audit.jsonl.1"))?,
+                original_bytes
             );
-            assert_eq!(std::fs::read(history)?, b"retained history");
+            assert_eq!(
+                std::fs::metadata(directory.join("audit.jsonl.1"))?.mode() & 0o777,
+                0o640
+            );
+            assert_eq!(
+                std::fs::read(directory.join("archives/segment"))?,
+                b"archived segment"
+            );
+            AuditLogger::new_in(directory.join("audit.jsonl"))?.log(
+                AuditEventType::PackageRemove,
+                AuditSeverity::Info,
+                "tree",
+                "after migration",
+            )?;
+            let report = AuditLogger::new_in(directory.join("audit.jsonl"))?.verify_integrity()?;
+            assert!(report.is_valid());
+            assert_eq!(report.total_entries, 2);
+            assert_eq!(
+                prepare_system_audit_directory(parent.path(), legacy.path())?,
+                directory
+            );
+            Ok(())
+        }
+
+        #[test]
+        fn cross_filesystem_migration_refuses_symlinks_without_touching_legacy()
+        -> anyhow::Result<()> {
+            let parent = tempfile::tempdir()?;
+            let legacy = tempfile::tempdir_in("/dev/shm")?;
+            assert_ne!(
+                std::fs::metadata(parent.path())?.dev(),
+                std::fs::metadata(legacy.path())?.dev()
+            );
+            let original = legacy.path().join("omg");
+            std::fs::create_dir(&original)?;
+            let history = original.join("audit.jsonl");
+            std::fs::write(&history, b"retained history")?;
+            symlink(&history, original.join("alias"))?;
+            assert!(prepare_system_audit_directory(parent.path(), legacy.path()).is_err());
+            assert_eq!(std::fs::read(&history)?, b"retained history");
             assert!(!parent.path().join("audit").exists());
             Ok(())
         }
@@ -1609,6 +1660,128 @@ fn create_audit_directory(path: &Path) -> io::Result<()> {
     check_audit_directory(path)
 }
 
+/// Snapshot an audit history tree as sorted `(relative path, file bytes)` pairs.
+///
+/// Used to verify a cross-filesystem migration copied every entry unchanged
+/// before the source is removed. Anything that is not a regular file or
+/// directory fails the migration instead of being silently skipped.
+#[cfg(target_os = "linux")]
+fn snapshot_audit_tree(root: &Path) -> io::Result<Vec<(PathBuf, u64)>> {
+    let mut entries = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(path) = stack.pop() {
+        for entry in std::fs::read_dir(&path)? {
+            let entry_path = entry?.path();
+            let metadata = std::fs::symlink_metadata(&entry_path)?;
+            if metadata.file_type().is_symlink() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("Refusing to migrate symlink at {}", entry_path.display()),
+                ));
+            }
+            let relative = entry_path.strip_prefix(root).map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("Path escapes audit tree: {}", entry_path.display()),
+                )
+            })?;
+            if metadata.is_dir() {
+                stack.push(entry_path.clone());
+                entries.push((relative.to_path_buf(), 0));
+            } else if metadata.is_file() {
+                entries.push((relative.to_path_buf(), metadata.len()));
+            } else {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!(
+                        "Refusing to migrate special file at {}",
+                        entry_path.display()
+                    ),
+                ));
+            }
+        }
+    }
+    entries.sort();
+    Ok(entries)
+}
+
+/// Copy an audit history tree byte-for-byte across filesystems.
+///
+/// Fallback when `rename` fails with EXDEV because the legacy (`/var/log/omg`)
+/// and current (`/var/lib/omg/audit`) locations live on different mounts (for
+/// example btrfs subvolumes). The caller must hold both the migration lock and
+/// the legacy lock, so no writer can change the source mid-copy. Content is
+/// staged under a temporary sibling and renamed into place, so a crash cannot
+/// leave a half-written history at the destination; a stale staging directory
+/// from a previous crash is removed on entry. Ownership and permission bits
+/// are preserved from the source, and every copied file is fsynced before the
+/// copy is verified and the staging directory is renamed into place.
+#[cfg(target_os = "linux")]
+fn copy_audit_history(legacy: &Path, directory: &Path) -> anyhow::Result<()> {
+    use std::os::unix::fs::MetadataExt;
+
+    let parent = directory
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("audit directory has no parent"))?;
+    let staging = parent.join(".audit-migrating");
+    match std::fs::symlink_metadata(&staging) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
+            std::fs::remove_dir_all(&staging)?;
+        }
+        Ok(_) => anyhow::bail!(
+            "Refusing cross-filesystem audit migration over non-directory at {}",
+            staging.display()
+        ),
+        Err(error) => return Err(error.into()),
+    }
+    let expected = snapshot_audit_tree(legacy)?;
+    std::fs::create_dir(&staging)?;
+    let root_metadata = std::fs::symlink_metadata(legacy)?;
+    std::os::unix::fs::chown(
+        &staging,
+        Some(root_metadata.uid()),
+        Some(root_metadata.gid()),
+    )?;
+    std::fs::set_permissions(&staging, root_metadata.permissions())?;
+    let mut stack = vec![(legacy.to_path_buf(), staging.clone())];
+    while let Some((source, dest)) = stack.pop() {
+        for entry in std::fs::read_dir(&source)? {
+            let entry = entry?;
+            let metadata = std::fs::symlink_metadata(entry.path())?;
+            if metadata.file_type().is_symlink() || !(metadata.is_dir() || metadata.is_file()) {
+                anyhow::bail!(
+                    "Refusing cross-filesystem audit migration at {}; move the history while OMG is stopped",
+                    entry.path().display()
+                );
+            }
+            let target = dest.join(entry.file_name());
+            if metadata.is_dir() {
+                std::fs::create_dir(&target)?;
+                std::os::unix::fs::chown(&target, Some(metadata.uid()), Some(metadata.gid()))?;
+                std::fs::set_permissions(&target, metadata.permissions())?;
+                stack.push((entry.path(), target));
+            } else {
+                std::fs::copy(entry.path(), &target)?;
+                std::os::unix::fs::chown(&target, Some(metadata.uid()), Some(metadata.gid()))?;
+                std::fs::set_permissions(&target, metadata.permissions())?;
+                File::open(&target)?.sync_all()?;
+            }
+        }
+        File::open(&dest)?.sync_all()?;
+    }
+    if snapshot_audit_tree(&staging)? != expected {
+        let _ = std::fs::remove_dir_all(&staging);
+        anyhow::bail!(
+            "Cross-filesystem audit copy of {} does not match the source; move the history while OMG is stopped",
+            legacy.display()
+        );
+    }
+    File::open(parent)?.sync_all()?;
+    std::fs::rename(&staging, directory)?;
+    Ok(())
+}
+
 #[cfg(target_os = "linux")]
 fn prepare_system_audit_directory(parent: &Path, legacy_parent: &Path) -> anyhow::Result<PathBuf> {
     use anyhow::Context;
@@ -1632,16 +1805,35 @@ fn prepare_system_audit_directory(parent: &Path, legacy_parent: &Path) -> anyhow
                 Err(error) => return Err(error.into()),
             }
             // Serialize with old writers and move the entire history unchanged.
-            // A cross-filesystem move requires an explicit operator migration.
             let legacy_lock = open_lock_file(&legacy.join("audit.lock"))?;
             legacy_lock.lock()?;
-            std::fs::rename(&legacy, &directory).with_context(|| {
-                format!(
-                    "Cannot atomically migrate {} to {}; move the history while OMG is stopped",
-                    legacy.display(),
-                    directory.display()
-                )
-            })?;
+            match std::fs::rename(&legacy, &directory) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::CrossesDevices => {
+                    // The legacy and current locations can live on different
+                    // mounts (for example btrfs subvolumes), where rename(2)
+                    // fails with EXDEV. Copy the tree byte-for-byte instead of
+                    // failing every privileged operation until an operator
+                    // intervenes.
+                    copy_audit_history(&legacy, &directory).with_context(|| {
+                        format!(
+                            "Cannot copy audit history {} to {}; move the history while OMG is stopped",
+                            legacy.display(),
+                            directory.display()
+                        )
+                    })?;
+                    std::fs::remove_dir_all(&legacy)?;
+                }
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!(
+                            "Cannot atomically migrate {} to {}; move the history while OMG is stopped",
+                            legacy.display(),
+                            directory.display()
+                        )
+                    });
+                }
+            }
             File::open(parent)?.sync_all()?;
             File::open(legacy_parent)?.sync_all()?;
             check_audit_directory(&directory)?;
