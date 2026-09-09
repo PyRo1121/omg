@@ -750,6 +750,7 @@ fn pkgbuild_review_panel(
     review: &str,
     pkgbuild_path: &Path,
     extra_files: &[AurReviewFiles<'_>],
+    install_hooks: &[(String, String)],
     verbose: bool,
 ) -> String {
     use crate::cli::chrome;
@@ -855,12 +856,65 @@ fn pkgbuild_review_panel(
         ));
     }
 
+    // Pacman executes declared install hooks as root after the unprivileged
+    // build, so their contents belong in the approval decision, not just
+    // their digests. The archived .INSTALL is later byte-checked against
+    // these reviewed bytes before any root installation.
+    for (name, contents) in install_hooks {
+        lines.push(chrome::rail_line(""));
+        lines.push(chrome::kv(
+            "hook",
+            &crate::cli::style::sanitize_terminal_text(name),
+        ));
+        for (number, line) in contents.lines().enumerate() {
+            lines.push(chrome::snippet_line(
+                number + 1,
+                &chrome::truncate_chars(line, PREVIEW_LINE_CHARS),
+            ));
+        }
+    }
+
     lines.join("\n")
 }
 
 fn pkgbuild_review_prompt(package: &str) -> String {
     let package = crate::cli::style::sanitize_terminal_text(package);
     format!("Build {package} from this PKGBUILD?")
+}
+
+/// Every `.SRCINFO`-declared install script with its reviewed contents,
+/// rendered for the approval panel. These hooks run as root during the
+/// privileged install, so approval must cover their bytes (csf_b6e85633),
+/// and the archived `.INSTALL` is byte-checked against the same reviewed
+/// bytes before installation.
+fn declared_install_hook_previews(source: &ReviewedSource) -> Vec<(String, String)> {
+    let mut names: Vec<String> = Vec::new();
+    if let Ok(srcinfo) = source.text(Path::new(".SRCINFO")) {
+        for line in srcinfo.lines() {
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            let value = value.trim();
+            if key.trim() == "install"
+                && !value.is_empty()
+                && !names.iter().any(|name| name == value)
+            {
+                names.push(value.to_owned());
+            }
+        }
+    }
+    names
+        .into_iter()
+        .map(|name| {
+            let contents = match source.files.get(Path::new(&name)) {
+                Some(bytes) => pkgbuild_review_text(bytes).unwrap_or_else(|error| {
+                    format!("(install hook could not be rendered for review: {error})")
+                }),
+                None => "(declared in .SRCINFO but absent from the reviewed checkout)".to_owned(),
+            };
+            (name, contents)
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -3626,6 +3680,7 @@ impl AurClient {
             })
             .collect();
         let verbose = crate::cli::modern_ui::is_verbose();
+        let install_hooks = declared_install_hook_previews(&source);
         println!(
             "{}",
             pkgbuild_review_panel(
@@ -3634,6 +3689,7 @@ impl AurClient {
                 &review,
                 pkgbuild_path,
                 &extra_files,
+                &install_hooks,
                 verbose,
             )
         );
@@ -4960,6 +5016,7 @@ mod tests {
             review,
             std::path::Path::new("/tmp/PKGBUILD"),
             &[],
+            &[],
             false,
         );
 
@@ -4996,7 +5053,8 @@ mod tests {
             .join("\n");
         let digest = pkgbuild_digest(review.as_bytes());
         let path = std::path::Path::new("/cache/aur/chatgpt-desktop/PKGBUILD");
-        let panel = pkgbuild_review_panel("chatgpt-desktop", &digest, &review, path, &[], false);
+        let panel =
+            pkgbuild_review_panel("chatgpt-desktop", &digest, &review, path, &[], &[], false);
 
         assert!(panel.contains("line0=value"));
         assert!(panel.contains("line7=value"));
@@ -5025,6 +5083,7 @@ mod tests {
             &review,
             Path::new("/tmp/PKGBUILD"),
             &[srcinfo],
+            &[],
             true,
         );
 
@@ -5049,6 +5108,7 @@ mod tests {
             review,
             Path::new("/tmp/PKGBUILD"),
             &[srcinfo],
+            &[],
             false,
         );
 
@@ -5078,6 +5138,7 @@ mod tests {
                 review,
                 Path::new("/tmp/cache/ai-usagebar-bin/PKGBUILD"),
                 &[],
+                &[],
                 false,
             );
             assert!(panel.contains("  |  AUR  ai-usagebar-bin"));
@@ -5089,6 +5150,58 @@ mod tests {
             assert!(panel.contains(&digest));
             assert!(!panel.contains(&"─".repeat(72)));
         });
+    }
+
+    #[test]
+    fn pkgbuild_review_panel_shows_declared_install_hooks() {
+        let review = "pkgname=demo\npkgver=1.0\n";
+        let digest = pkgbuild_digest(review.as_bytes());
+        let hook = "post_install() {\n  systemctl daemon-reload\n}\n";
+        let hooks = vec![("demo.install".to_owned(), hook.to_owned())];
+        let panel = pkgbuild_review_panel(
+            "demo",
+            &digest,
+            review,
+            Path::new("/tmp/PKGBUILD"),
+            &[],
+            &hooks,
+            false,
+        );
+        assert!(panel.contains("demo.install"));
+        assert!(panel.contains("systemctl daemon-reload"));
+
+        let plain = pkgbuild_review_panel(
+            "demo",
+            &digest,
+            review,
+            Path::new("/tmp/PKGBUILD"),
+            &[],
+            &[],
+            false,
+        );
+        assert!(!plain.contains("hook"));
+    }
+
+    #[test]
+    fn declared_install_hook_previews_render_every_declared_script() {
+        let mut files = std::collections::BTreeMap::new();
+        files.insert(
+            Path::new(".SRCINFO").to_owned(),
+            b"pkgbase = demo\npkgname = demo\ninstall = demo.install\n".to_vec(),
+        );
+        files.insert(
+            Path::new("demo.install").to_owned(),
+            b"post_install() {\n  echo ok\n}\n\x1b]52;c;secret\x07\n".to_vec(),
+        );
+        let source = ReviewedSource {
+            files,
+            digest: String::new(),
+        };
+        let hooks = declared_install_hook_previews(&source);
+        assert_eq!(hooks.len(), 1);
+        assert_eq!(hooks[0].0, "demo.install");
+        assert!(hooks[0].1.contains("echo ok"));
+        assert!(!hooks[0].1.contains('\u{1b}'));
     }
 
     #[tokio::test]
