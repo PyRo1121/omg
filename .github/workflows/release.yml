@@ -606,7 +606,7 @@ jobs:
           # never serves a stale bootstrap script (getomg.xyz/install.sh is
           # deployed with the website; this mirror must not drift).
           cp install.sh release/install.sh
-          sha256sum release/install.sh | awk '{ print $1 }' > release/install.sh.sha256
+          (cd release && sha256sum install.sh > install.sh.sha256)
           "$WRANGLER" r2 object put "omg-releases/install.sh" --remote \
             --file=release/install.sh \
             --content-type="application/x-sh" \
@@ -622,7 +622,13 @@ jobs:
             echo "::error::install.sh round-trip verification failed"
             exit 1
           fi
-          echo "✓ Updated installer and latest-version → $VERSION"
+          "$WRANGLER" r2 object get "omg-releases/install.sh.sha256" --remote \
+            --file="$verify_dir/install.sh.sha256" >/dev/null
+          if ! cmp -s "$verify_dir/install.sh.sha256" release/install.sh.sha256; then
+            echo "::error::install.sh.sha256 round-trip verification failed"
+            exit 1
+          fi
+          echo "✓ Updated installer"
           echo -n "$VERSION" > release/latest-version
           "$WRANGLER" r2 object put "omg-releases/latest-version" --remote \
             --file=release/latest-version \
