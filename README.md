@@ -15,7 +15,7 @@ Search your distro's packages, switch Node.js or Python versions, and run projec
 Release installation requires GitHub CLI (`gh`) for archive attestation verification, plus `curl` and the platform dependencies listed in the [installation guide](docs/installation.md). Download the installer for review instead of piping it directly into a shell:
 
 ```bash
-curl --proto '=https' --tlsv1.2 -fsSL https://omg.latham.cloud/install.sh -o omg-install.sh
+curl --proto '=https' --tlsv1.2 -fsSL https://getomg.xyz/install.sh -o omg-install.sh
 less omg-install.sh
 OMG_NO_TELEMETRY=1 OMG_SKIP_SHELL=1 bash omg-install.sh
 export PATH="$HOME/.local/bin:$PATH"

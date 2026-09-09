@@ -5,7 +5,7 @@
 # Canonical source: this file. The omg-web production copy must remain byte-identical.
 #
 # Usage:
-#   curl -fsSL https://omg.latham.cloud/install.sh | bash
+#   curl -fsSL https://getomg.xyz/install.sh | bash
 #
 # Options (set before piping to bash):
 #   OMG_NO_TELEMETRY=1  - Disable anonymous telemetry (no prompt)

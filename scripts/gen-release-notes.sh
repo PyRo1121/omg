@@ -54,7 +54,7 @@ Team, Enterprise, and Fleet commands no longer require a paid JWT. Scripts that 
 
 **Quick Install (Linux/macOS):**
 \`\`\`bash
-curl -fsSL https://omg.latham.cloud/install.sh | bash
+curl -fsSL https://getomg.xyz/install.sh | bash
 \`\`\`
 
 **Windows Subsystem for Linux:** Use the Linux installer inside your WSL distribution.
