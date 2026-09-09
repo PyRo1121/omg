@@ -1261,14 +1261,6 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn init_quarantines_corrupt_log_before_fresh_append() {
-        if crate::core::is_root() {
-            // Elevated processes resolve data paths to real system
-            // directories regardless of OMG_DATA_DIR, so concurrent fixture
-            // processes would collide on the real audit log. Unprivileged
-            // CI (portable job) covers this test.
-            eprintln!("skipped: elevated processes ignore caller path overrides");
-            return;
-        }
         let temp = tempfile::TempDir::new().unwrap();
         let audit_dir = temp.path().join("audit");
         let log_path = audit_dir.join("audit.jsonl");
@@ -1565,12 +1557,6 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn global_writer_lazy_initializes_and_persists_events() {
-        if crate::core::is_root() {
-            // Same elevated-path isolation as
-            // init_quarantines_corrupt_log_before_fresh_append.
-            eprintln!("skipped: elevated processes ignore caller path overrides");
-            return;
-        }
         // The writer must initialize lazily so daemon events do not degrade to
         // tracing warnings when startup has not opened the log yet.
         let temp = tempfile::TempDir::new().unwrap();
@@ -1609,25 +1595,6 @@ mod tests {
     }
 }
 
-#[cfg(all(unix, not(target_os = "linux")))]
-fn ensure_system_audit_dir_trusted(directory: &Path) -> anyhow::Result<()> {
-    use std::os::unix::fs::MetadataExt;
-    for path in directory.ancestors() {
-        let metadata = std::fs::symlink_metadata(path)?;
-        anyhow::ensure!(
-            metadata.is_dir() && metadata.uid() == 0,
-            "Untrusted system audit directory"
-        );
-        if path == directory {
-            anyhow::ensure!(
-                metadata.mode() & 0o022 == 0,
-                "Untrusted system audit directory"
-            );
-        }
-    }
-    Ok(())
-}
-
 #[cfg(target_os = "linux")]
 fn check_audit_directory(path: &Path) -> io::Result<()> {
     use std::os::unix::fs::MetadataExt;
@@ -1660,13 +1627,15 @@ fn create_audit_directory(path: &Path) -> io::Result<()> {
     check_audit_directory(path)
 }
 
-/// Snapshot an audit history tree as sorted `(relative path, file bytes)` pairs.
+/// Snapshot an audit history tree as sorted `(relative path, content digest)`
+/// pairs.
 ///
 /// Used to verify a cross-filesystem migration copied every entry unchanged
-/// before the source is removed. Anything that is not a regular file or
-/// directory fails the migration instead of being silently skipped.
+/// (paths and file contents) before the source is removed. Directories digest
+/// as empty content. Anything that is not a regular file or directory fails
+/// the migration instead of being silently skipped.
 #[cfg(target_os = "linux")]
-fn snapshot_audit_tree(root: &Path) -> io::Result<Vec<(PathBuf, u64)>> {
+fn snapshot_audit_tree(root: &Path) -> io::Result<Vec<(PathBuf, [u8; 32])>> {
     let mut entries = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(path) = stack.pop() {
@@ -1687,9 +1656,10 @@ fn snapshot_audit_tree(root: &Path) -> io::Result<Vec<(PathBuf, u64)>> {
             })?;
             if metadata.is_dir() {
                 stack.push(entry_path.clone());
-                entries.push((relative.to_path_buf(), 0));
+                entries.push((relative.to_path_buf(), [0_u8; 32]));
             } else if metadata.is_file() {
-                entries.push((relative.to_path_buf(), metadata.len()));
+                let digest = Sha256::digest(std::fs::read(&entry_path)?);
+                entries.push((relative.to_path_buf(), digest.into()));
             } else {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
@@ -1866,9 +1836,16 @@ pub fn record_operation(operation: &str, targets: &[String], outcome: &str) -> a
     };
     #[cfg(not(target_os = "linux"))]
     let mut logger = if crate::core::privilege::is_root() {
+        use std::os::unix::fs::MetadataExt;
         let directory = Path::new("/var/log/omg");
         std::fs::create_dir_all(directory)?;
-        ensure_system_audit_dir_trusted(directory)?;
+        for path in directory.ancestors() {
+            let metadata = std::fs::symlink_metadata(path)?;
+            anyhow::ensure!(
+                metadata.is_dir() && metadata.uid() == 0 && metadata.mode() & 0o022 == 0,
+                "Untrusted system audit directory"
+            );
+        }
         AuditLogger::new_in(directory.join("audit.jsonl"))?
     } else {
         AuditLogger::new()?
