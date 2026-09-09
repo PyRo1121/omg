@@ -1553,6 +1553,12 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn sync_database_order_follows_pacman_configuration() {
+        if crate::core::is_root() {
+            // Elevated processes ignore OMG_PACMAN_* overrides, so this
+            // fixture test only applies to unprivileged runs.
+            eprintln!("skipped: elevated processes ignore caller path overrides");
+            return;
+        }
         let temp_dir = tempfile::tempdir().unwrap();
         std::fs::write(temp_dir.path().join("core.db"), b"core").unwrap();
         std::fs::write(temp_dir.path().join("custom.db"), b"custom").unwrap();
@@ -1576,6 +1582,12 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn test_collect_sync_db_paths_excludes_sig_files() {
+        if crate::core::is_root() {
+            // Elevated processes ignore OMG_PACMAN_* overrides, so this
+            // fixture test only applies to unprivileged runs.
+            eprintln!("skipped: elevated processes ignore caller path overrides");
+            return;
+        }
         let temp_dir = tempfile::TempDir::new().unwrap();
         let config = temp_dir.path().join("pacman.conf");
         std::fs::write(
