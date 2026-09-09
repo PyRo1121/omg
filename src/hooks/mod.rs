@@ -257,10 +257,12 @@ pub fn hook_env(shell: &str) -> Result<()> {
     // generated hooks, which reset PATH to the user's base PATH first.
     let path_additions = build_path_additions(&versions)?;
 
-    // mise `[env]` parity: project variables, `_.path` additions, and
-    // `_.source` scripts ride along with the tool PATHs. Lenient by design:
-    // hook-env runs on every prompt, so a deleted `.env` or an unset
-    // required variable warns and is skipped instead of failing the prompt.
+    // mise `[env]` parity: project variables ride along with the tool PATHs.
+    // Lenient by design: hook-env runs on every prompt, so a deleted `.env`
+    // or an unset required variable warns and is skipped instead of failing
+    // the prompt. `_.source` scripts are refused outright (below) and
+    // project `_.path` entries are never prepended (see
+    // `automatic_hook_additions`): both are untrusted repo input.
     let base: HashMap<String, String> = std::env::vars().collect();
     let overlaid = crate::config::mise_env::with_path_overlay(&base, &path_additions);
     let env = crate::config::mise_env::load_mise_env_chain(
@@ -275,9 +277,18 @@ pub fn hook_env(shell: &str) -> Result<()> {
 
     let restore = environment_restore(shell, &env, &base)?;
 
-    // mise `_.path` dirs slot after tool bin dirs, before the base PATH.
-    let mut all_additions = path_additions;
-    all_additions.extend(env.path_additions.iter().cloned());
+    let (all_additions, ignored_project_paths) =
+        automatic_hook_additions(path_additions, &env.path_additions);
+    if ignored_project_paths > 0 {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        static WARNED_PROJECT_PATH: AtomicBool = AtomicBool::new(false);
+        if !WARNED_PROJECT_PATH.swap(true, Ordering::Relaxed) {
+            tracing::warn!(
+                "Ignoring {ignored_project_paths} mise `_.path` entr{} in automatic hooks: project directories are never prepended to the interactive shell PATH",
+                if ignored_project_paths == 1 { "y" } else { "ies" }
+            );
+        }
+    }
 
     if all_additions.is_empty()
         && env.set.is_empty()
@@ -330,6 +341,23 @@ pub fn hook_env(shell: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Decide which PATH additions an automatic hook may apply.
+///
+/// SECURITY (daybreak csf_62033e8 / csf_e757fdf / csf_f6e23cc): project
+/// `_.path` entries from `mise.toml` are untrusted repo input. Automatic
+/// hooks run on every prompt, so prepending them would let merely entering
+/// a repository silently hijack command resolution with
+/// attacker-controlled executables. Hooks prepend only tool-managed bin
+/// dirs (each validated against OMG's versions tree); explicit `omg run`
+/// and task execution still honor project `_.path`. Returns the additions
+/// to apply plus how many project entries were refused (for warn-once).
+fn automatic_hook_additions(
+    tool_paths: Vec<String>,
+    project_paths: &[String],
+) -> (Vec<String>, usize) {
+    (tool_paths, project_paths.len())
 }
 
 fn environment_restore(
@@ -1265,6 +1293,25 @@ mod tests {
             ..Default::default()
         };
         assert!(environment_restore("bash", &env, &HashMap::new()).is_err());
+    }
+
+    /// Automatic hooks must never prepend project `_.path` directories:
+    /// they are untrusted repo input and would let entering a repository
+    /// silently hijack command resolution with attacker executables.
+    #[test]
+    fn automatic_hooks_refuse_project_path_additions() {
+        let tool = vec!["/data/omg/versions/node/22.0.0/bin".to_string()];
+        let hostile = vec![
+            "/tmp/evil/repo/node_modules/.bin".to_string(),
+            "/tmp/evil/repo/bin".to_string(),
+        ];
+        let (additions, ignored) = automatic_hook_additions(tool.clone(), &hostile);
+        assert_eq!(additions, tool, "tool-managed bin dirs still apply");
+        assert_eq!(ignored, 2, "every project entry is refused");
+
+        let (additions, ignored) = automatic_hook_additions(Vec::new(), &[]);
+        assert!(additions.is_empty());
+        assert_eq!(ignored, 0);
     }
 
     /// Shell integration removal deletes exactly the lines OMG owns,
