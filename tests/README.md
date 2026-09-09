@@ -79,9 +79,21 @@ Tests use environment variables to control behavior:
 # Enable tests that require real system access (pacman, ALPM)
 export OMG_RUN_SYSTEM_TESTS=1
 
+# Enable tests that need live network access (keyservers, AUR downloads)
+export OMG_RUN_NETWORK_TESTS=1
+
 # Enable tests that actually install/update packages (use with caution!)
 export OMG_RUN_DESTRUCTIVE_TESTS=1
 ```
+
+**`OMG_RUN_SYSTEM_TESTS=1` is not read-only.** On the Fedora and AUR lanes,
+some system tests perform real package installs and removals on the host
+once `OMG_RUN_NETWORK_TESTS=1` is also set (for example, the real-world AUR
+dependency scenarios in `tests/aur_dependency_resolution.rs`).
+`OMG_RUN_DESTRUCTIVE_TESTS=1` gates additional destructive tests, but its
+absence does not guarantee that system tests leave the host unchanged.
+Treat both opt-in tiers as host-mutating and run them only in a disposable
+VM or container, never against a valuable host.
 
 ### Example: Run System Tests
 
@@ -289,6 +301,9 @@ Tests that require real package managers:
 - Real package database access
 - File system operations
 - Network access (optional)
+- **Real installs and removals on the Fedora and AUR lanes** when
+  `OMG_RUN_NETWORK_TESTS=1` is also set — see the warning in
+  [Environment Variables](#environment-variables)
 
 ### Destructive Tests (`OMG_RUN_DESTRUCTIVE_TESTS=1`)
 
@@ -298,7 +313,9 @@ Tests that modify the system:
 - System updates
 - Package removal
 
-**⚠️ Use with caution** - These tests make real changes to the system!
+**⚠️ Use with caution** - These tests make real changes to the system! Note
+that this flag gates additional destructive coverage; it is not the only
+opt-in that can mutate the host (see the system-test warning above).
 
 ## Debugging Failed Tests
 
