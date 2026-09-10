@@ -112,10 +112,41 @@ jobs:
       - name: Install GNU timeout
         run: brew install coreutils
 
+      - name: Pin server-computed release digests
+        # Native execution runs the extracted release binary directly on this
+        # host, so `release-smoke.sh` requires an independently pinned digest.
+        # The `.sha256` sidecar ships with the release and an attacker who
+        # replaces both assets would defeat it, so pin against the digest
+        # GitHub computes server-side from the uploaded bytes instead.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ inputs.release_tag || 'latest' }}
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          if [[ "$RELEASE_TAG" == "latest" ]]; then
+            # Resolve exactly as release-smoke.sh does so the pins match the
+            # assets it will download.
+            tag="$(gh release view --repo "$repo" --json tagName --jq .tagName)"
+          else
+            tag="$RELEASE_TAG"
+          fi
+          release_json="$(gh api "repos/${repo}/releases/tags/${tag}")"
+          total="$(jq '[.assets[] | select(.name | endswith(".tar.gz"))] | length' <<<"$release_json")"
+          pins="$(jq -r '.assets[] | select(.name | endswith(".tar.gz")) | select(.digest != null) | "\(.digest | sub("^sha256:"; ""))  \(.name)"' <<<"$release_json")"
+          pinned="$(grep -c . <<<"$pins" || true)"
+          if [[ "$total" -eq 0 || "$pinned" -ne "$total" ]]; then
+            echo "::error::not every release archive has a server-computed digest (${pinned}/${total}); refusing native execution"
+            exit 1
+          fi
+          printf '%s\n' "$pins" > smoke-digest-pins.txt
+          echo "Pinned ${pinned} release archive digest(s) for ${tag}"
+
       - name: Run release artifact smoke test (native)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ inputs.release_tag || 'latest' }}
+          OMG_SMOKE_DIGEST_PIN_FILE: ${{ github.workspace }}/smoke-digest-pins.txt
         run: |
           ./scripts/release-smoke.sh \
             --release "$RELEASE_TAG" \
