@@ -571,10 +571,27 @@ make_macos_stage() {
   printf '%s  %s\n' "$(sha256sum "$destination/$archive" | awk '{print $1}')" "$archive" > "$destination/${archive}.sha256"
 }
 
+# Native execution runs the extracted release binary on this host, so the runner
+# requires an independently pinned digest (`OMG_SMOKE_DIGEST_PIN_FILE`). The
+# `.sha256` sidecar ships with the release and cannot serve as that pin. Each
+# stage builds its own archive, so pin exactly the bytes it produced.
+make_macos_pins() {
+  local stage=$1 pins=$2 archive
+  : > "$pins"
+  for archive in "$stage"/*.tar.gz; do
+    [[ -f "$archive" ]] || continue
+    printf '%s  %s\n' \
+      "$(sha256sum "$archive" | awk '{print $1}')" \
+      "$(basename "$archive")" >> "$pins"
+  done
+}
+
 export FAKE_BREW_STATE="$scratch/brew-state"
 export FAKE_BREW_LOG="$scratch/brew-log"
 make_macos_stage "$scratch/macos" "$scratch/fake-omg-good"
 native_args=(--release v9.9.9 --distro macos --executor native --staged-dir "$scratch/macos")
+make_macos_pins "$scratch/macos" "$scratch/native-pins"
+export OMG_SMOKE_DIGEST_PIN_FILE="$scratch/native-pins"
 : > "$FAKE_BREW_STATE"
 : > "$FAKE_BREW_LOG"
 assert_rc 0 "$runner" "${native_args[@]}" --evidence-dir "$scratch/native-evidence"
@@ -596,14 +613,22 @@ fi
 assert_rc 2 "$runner" --release v9.9.9 --distro macos --staged-dir "$scratch/macos" --evidence-dir "$scratch/native-rejected"
 assert_rc 2 "$runner" --release v9.9.9 --distro arch --executor native --staged-dir "$scratch/valid" --evidence-dir "$scratch/native-linux-rejected"
 assert_rc 2 "$runner" "${native_args[@]}" --executor bogus --evidence-dir "$scratch/native-bogus"
+# Native execution must fail closed when no independent digest pin is given,
+# even though the staged archive ships a matching .sha256 sidecar.
+(
+  unset OMG_SMOKE_DIGEST_PIN_FILE
+  assert_rc 2 "$runner" "${native_args[@]}" --evidence-dir "$scratch/native-unpinned"
+)
 
 : > "$FAKE_BREW_STATE"
 make_macos_stage "$scratch/macos-bad-search" "$scratch/fake-omg-bad-search"
+make_macos_pins "$scratch/macos-bad-search" "$scratch/native-pins"
 assert_rc 1 "$runner" --release v9.9.9 --distro macos --executor native --case release-package-search-tree --staged-dir "$scratch/macos-bad-search" --evidence-dir "$scratch/native-product-fail"
 grep -q '"result":"PRODUCT_FAIL"' "$(results_file "$scratch/native-product-fail")" || fail "native product failure was not blamed on the product"
 
 : > "$FAKE_BREW_STATE"
 make_macos_stage "$scratch/macos-bad-version" "$scratch/fake-omg-bad-version"
+make_macos_pins "$scratch/macos-bad-version" "$scratch/native-pins"
 assert_rc 1 "$runner" --release v9.9.9 --distro macos --executor native --case release-package-search-tree --staged-dir "$scratch/macos-bad-version" --evidence-dir "$scratch/native-version-fail"
 grep -q '"result":"PRODUCT_FAIL"' "$(results_file "$scratch/native-version-fail")" || fail "native version mismatch was not blamed on the product"
 
@@ -621,6 +646,7 @@ chmod 700 "$scratch/macbin/gtimeout"
 cp "$scratch/bin/brew" "$scratch/macbin/brew"
 : > "$FAKE_BREW_STATE"
 : > "$scratch/gtimeout-log"
+make_macos_pins "$scratch/macos" "$scratch/native-pins"
 PATH="$scratch/macbin" assert_rc 0 "$runner" "${native_args[@]}" --evidence-dir "$scratch/native-mac-tools"
 mac_result=$(results_file "$scratch/native-mac-tools")
 [[ "$(grep -c '"result":"PASS"' "$mac_result")" -eq 3 ]] || fail "macOS toolset run did not pass every contract"
