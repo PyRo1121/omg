@@ -11,6 +11,335 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ---
 
 ## [Unreleased]
+### 🐛 Bug Fixes
+
+- **Security**: Land the pending security branch and remediate 2026-09-10 audit findings ([#394](https://github.com/PyRo1121/omg/issues/394))
+
+* fix(security): hooks refuse project _.path in automatic PATH output (csf_62033e8, csf_e757fdf, csf_f6e23cc, csf_c17f3813)
+
+Entering a repository that declares mise `_.path` entries let the
+
+automatic shell hook prepend repo-controlled directories to the
+
+interactive PATH on every prompt, silently hijacking command resolution
+
+with attacker-controlled executables. hook-env now applies only
+
+tool-managed bin dirs (each validated against OMG's versions tree) and
+
+warns once about refused project entries, mirroring the existing
+
+`_.source` refusal. Explicit `omg run` / task execution still honors
+
+project `_.path`.
+
+* fix(security): installer stages installs in private mktemp dirs (csf_00c97e45)
+
+install_binary staged the copy at a PID-predictable `${dst}.tmp.$$`
+
+path inside the (potentially shared) install dir. A local attacker
+
+watching the directory could pre-create that path as a symlink and
+
+redirect the copy onto an unrelated file outside the install location.
+
+Staging now happens inside an unpredictably named, mode-0700
+
+`mktemp -d` directory that no other user can traverse, renamed over the
+
+destination and removed on every exit path. Also documents that the
+
+appended shell hook evaluates only the installed omg binary's validated
+
+output, never repo-controlled files.
+
+* fix(security): pin audit migration ownership changes to the copied inode (csf_5eef98bc)
+
+Path-based chown during cross-filesystem audit migration could be raced
+
+into following a symlink swapped in between the metadata read and the
+
+ownership change, transferring ownership of an unrelated inode. Add
+
+fchown_path_no_follow (O_NOFOLLOW open + fchown on the descriptor) and
+
+use it for the staging directory and every copied file and directory.
+
+* fix(security): validate the env-selected status cache before reading it (csf_fdd4999c)
+
+The status snapshot fast path read fast_status_path() (selected via
+
+OMG_SOCKET_PATH) directly, skipping the runtime-directory validation the
+
+daemon and daemon clients apply. Route it through read_default/read_validated
+
+so a foreign-owned, group-accessible, or symlinked cache parent is
+
+rejected instead of trusted, and cover the rejection with a regression
+
+test.
+
+* fix(security): neutralize control sequences in drift-report output (csf_dd687683)
+
+Lockfile fields (package names, runtime names/versions) are remote or
+
+user input and were printed verbatim by DriftReport::print, letting a
+
+hostile gist lockfile inject OSC/CSI terminal output. Render the report
+
+through render_lines(), which strips terminal control and bidi/zero-width
+
+sequences from every dynamic field, with a regression test.
+
+* fix(security): bound dashboard/gist responses and sanitize remote metadata (csf_08340651, csf_4fe23b28, csf_861ca461)
+
+  - Cap gist metadata, raw lockfile fetches, and licensed dashboard
+
+endpoints with BoundedResponseExt so oversized bodies are rejected
+
+before allocation instead of read unbounded into memory.
+
+  - Read the local omg.lock through the hardened lockfile reader (regular
+
+file, O_NOFOLLOW, 16 MiB cap) before backing it up, so a symlinked or
+
+oversized lock cannot exhaust memory during a team pull.
+
+  - Strip terminal control sequences from dashboard roster, policy, and
+
+audit-log fields at the fetch boundary and from license error/tier
+
+text before it reaches the terminal.
+
+csf_08340651 (response size caps), csf_4fe23b28 (symlink/oversized
+
+lockfile pull), csf_861ca461 (dashboard metadata neutralization).
+
+* fix(security): show declared install-hook contents in AUR review approval (csf_b6e85633)
+
+* fix(security): harden workspace consent display and omg resolution (csf_87e3f9f7dec33c3738538da3, csf_faa86205bd9c24d28b4e0c29)
+
+Repo-defined workspace commands echo and prompt with project-controlled
+
+strings; control sequences could redraw the terminal and spoof the yes/no
+
+consent preview. Repo text now passes through sanitize_terminal_text.
+
+'omg workspace check' resolved its helper through PATH, where a
+
+project-controlled directory could shadow the real binary; it now
+
+requires the sibling omg binary and refuses PATH fallback.
+
+* fix(security): isolate tool installs and guard shared-bin links (csf_4c5b8cb8ea49c0da05e0d928, csf_75e85ca8a86f51929ae0bed6)
+
+cargo and npm discover configuration by walking up from the working
+
+directory, so installing a tool from inside a project let that project's
+
+.cargo/config.toml or .npmrc inject build settings into the install.
+
+Package-manager commands now always run from the isolated staging dir.
+
+link_binaries replaced any existing entry in the shared bin directory;
+
+it now only swaps symlinks that point back into OMG's managed tools dir
+
+and refuses to clobber foreign links or plain user files.
+
+* fix(security): resolve the self-update gh helper by absolute path (csf_cb969d754aa5a955660966ce)
+
+The Sigstore attestation gate trusted whatever binary 'gh' resolved to;
+
+a project-controlled directory earlier in PATH could ship an impostor gh
+
+that approves a tampered archive. Attestation now consults only
+
+well-known absolute install locations and otherwise fails closed to the
+
+existing no-gh provenance outcome.
+
+* fix(security): bound and type-check project env-file reads (csf_af47b232dc7d26d308b3eda0)
+
+_.file directives resolved during completion and automatic shell hooks
+
+could point at special files: FIFOs block on open/read and device files
+
+such as /dev/zero stream forever, hanging or exhausting memory in every
+
+prompt hook. read_env_file now rejects non-regular files before opening,
+
+re-checks the opened handle, and reads through a hard take() bound so a
+
+file that lies about its size cannot exhaust memory.
+
+* fix(security): pin runtime downloads to https and reject private redirects (csf_984f3dd41c6f45d103740b57)
+
+Runtime metadata supplies download URLs, so a tampered manifest could
+
+aim the downloader at plain HTTP or at local/private-network services.
+
+Vendor downloads now validate their entry URL (https, routable host;
+
+plain-http loopback only under hermetic test mode for fixtures), and the
+
+shared redirect policy refuses hops to private, loopback, or link-local
+
+addresses in addition to the existing downgrade and hop-count checks.
+
+* fix(security): verify generated-container downloads and exclude credentials (csf_2cb1c9545ac0aca87aa1ae41, csf_ac3dc9bbbb878904d96e02c6)
+
+Generated Dockerfiles piped remote installers straight into root shells
+
+(rustup, bun, NodeSource) and untarred the Go toolchain with no integrity
+
+check beyond TLS. 'omg container init' now pins the SHA-256 of each
+
+remote artifact at generation time (go via go.dev's published release
+
+metadata) and the emitted RUN steps verify with sha256sum before
+
+executing; init fails closed when a digest cannot be pinned.
+
+COPY . . also embedded untracked credentials and repository history into
+
+every image; init now ensures .dockerignore excludes .git, .env files,
+
+key material, and OMG state.
+
+* fix(security): keep write-scoped CI token out of PR-controlled workflow runs (csf_d960496333cbe84e21371e07)
+
+pull_request events execute the merge-ref copy of ci.yml, so the
+
+ci-success job's job-level contents:write/actions:write permissions
+
+applied to PR-controlled workflow code. Move the privileged checkout
+
+and release-tagging steps into a push-to-main-only release-tag job;
+
+ci-success stays read-only.
+
+* fix(security): pin release-artifact digests before native smoke execution (csf_164322fe35bc00f3b4be880e)
+
+The .sha256 sidecar ships with the release, so replacing both assets
+
+defeats sidecar-only validation. Add OMG_SMOKE_DIGEST_PIN_FILE
+
+(sha256sum-style pin file) checked after validate_checksum, and require
+
+it for --executor native so the macOS host lane can no longer execute
+
+unattested release code.
+
+* fix(security): gate AUR benchmark behind explicit host-mutation opt-in (csf_9d140ef71d51e291229ab753)
+
+AUR VCS builds are mutable third-party code and cannot be digest-pinned,
+
+so require OMG_AUR_BENCH_CONFIRM_HOST_MUTATION=yes before the benchmark
+
+installs/uninstalls packages with sudo, and document the disposable-VM
+
+requirement.
+
+* fix(security): scope docs: system-test opt-in mutates Fedora/AUR hosts (csf_6b6c47725ad3935c90e566d4)
+
+tests/aur_dependency_resolution.rs performs real AUR installs gated only
+
+by OMG_RUN_SYSTEM_TESTS and OMG_RUN_NETWORK_TESTS, never the destructive
+
+flag. Document OMG_RUN_NETWORK_TESTS and warn that the system-test opt-in
+
+is host-mutating on the Fedora and AUR lanes, so the destructive flag is
+
+not the only mutation gate.
+
+* fix(security): authenticate the sudo policy handoff against root-trusted config (csf_640a559599992bb4a020f8d2)
+
+The elevated child inherited the enforced package policy as raw argv bytes
+
+(__omg_policy=<hex>), so anyone permitted to run 'sudo omg' could append a
+
+forged marker and replace the policy presented to the root process (weaken
+
+require_pgp/minimum-grade, empty the license allowlist, re-enable AUR).
+
+The root child now re-derives the policy from a root-trusted location   - the
+
+invoking user's config directory, resolved through sudo's own SUDO_USER
+
+identity   - and only accepts a handoff that matches it exactly. Forged or
+
+unverifiable handoffs (e.g. a custom OMG_CONFIG_DIR that cannot cross sudo
+
+env_reset) fail closed.
+
+* fix(security): enforce SPDX AND/OR precedence in the license allowlist
+
+license_matches_allowlist used any-token matching, so an SPDX conjunction
+
+such as 'GPL-3.0 AND MIT' was treated as satisfied by the single allowed
+
+'MIT' token   - a compound license bypass of the allowed_licenses policy
+
+(root cause at the former policy.rs license tokenization).
+
+The allowlist now parses the SPDX expression with AND binding tighter than
+
+OR: AND requires every operand allowed, OR requires any one (OR-any
+
+semantics preserved per allowed_license_matches_spdx_tokens_not_substrings),
+
+parentheses group sub-expressions, WITH exceptions evaluate by their base
+
+identifier, and malformed expressions fail closed.
+
+* test(security): replace format! with to_string in sanitizer fixtures (clippy -D warnings)
+
+* fix(aur): support offline VCS sources and discard tainted checkouts
+
+Two AUR build-integrity fixes.
+
+VCS sources (git+, svn+, ...) are fetched by makepkg with a VCS client, but the
+
+default offline sandbox runs makepkg under `bwrap --unshare-net`, so `git clone`
+
+inside the namespace failed with a bare "Could not resolve host". Only plain
+
+https tarballs were prefetched. Mirror git sources into SRCDEST before the
+
+build: makepkg's `extract_git` then creates the working copy with a local
+
+`git clone -s`, and its `download_git` only warns when a mirror fetch fails
+
+("allow offline builds"). Sources omg cannot mirror are reported so the build
+
+fails with an actionable message instead of a DNS error.
+
+`refresh_git_checkout` ran `git fetch/clean/reset` inside a checkout that a
+
+sandboxed PKGBUILD can write. `.git/config` and `.git/info/attributes` survive
+
+`git clean`, so a planted `filter.*.smudge` (or `core.worktree`,
+
+`core.fsmonitor`, `core.hooksPath`) executed on the host during the next
+
+refresh: a regression of csf_63f859d75634568213c96858. Delete the checkout and
+
+clone it again instead, and cover the config-selected vectors in the test.
+
+### 📚 Documentation
+
+- Elevate README to world class and align documentation with code stack ([#393](https://github.com/PyRo1121/omg/issues/393))
+
+  - Overhaul README.md with high-contrast badges, Franken-stack comparison, ASCII architecture, and grounded disclosures
+
+  - Align docs with 14 native runtimes across runtimes.md, cheatsheet.md, and shell-integration.md
+
+  - Fix CLI aliases and flag discrepancies in cli.md (including install alias 'i' and hook options)
+
+  - Update canonical domain references to getomg.xyz in telemetry, fleet, and tests
+
+  - Document accurate cache tiers and AUR rollback mechanisms in cache.md and packages.md
 
 ## [0.1.220] - 2026-09-09
 ### Review
