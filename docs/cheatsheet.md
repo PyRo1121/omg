@@ -48,7 +48,7 @@ omg run build
 omg run test -- --verbose
 ```
 
-`use` can download and install software; `run` executes project code. Review untrusted repositories first. Supported runtime names are `node`, `python`, `go`, `rust`, `ruby`, `java`, `bun`, and `pi`.
+`use` can download and install software; `run` executes project code. Review untrusted repositories first. Supported native runtime names are `node`, `python`, `go`, `rust`, `ruby`, `java`, `bun`, `deno`, `pi`, `zig`, `dotnet`, `erlang`, `php`, and `swift`.
 
 For Rust, `rust-toolchain.toml` must contain TOML, not a bare channel name:
 

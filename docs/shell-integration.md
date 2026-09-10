@@ -109,7 +109,8 @@ When you enter a directory, OMG checks for version files in this order:
 
 1. **Current directory**
 2. **Parent directories** (walking up to filesystem root)
-3. **Global default** (`~/.local/share/omg/versions/<runtime>/current`)
+
+If no version file matches, the shell hook restores the base PATH.
 
 ### Supported Version Files
 
@@ -119,14 +120,22 @@ When you enter a directory, OMG checks for version files in this order:
 | `.nvmrc` | Node.js | 2 |
 | `.bun-version` | Bun | 1 |
 | `.python-version` | Python | 1 |
+| `pyproject.toml` | Python | 2 (`[project.requires-python]`) |
 | `.ruby-version` | Ruby | 1 |
 | `.go-version` | Go | 1 |
 | `go.mod` | Go | 2 |
 | `.java-version` | Java | 1 |
-| `rust-toolchain.toml` | Rust | 1 |
-| `rust-toolchain` | Rust | 2 |
-| `.tool-versions` | Multiple | 3 |
-| `package.json` | Node/Bun | 4 (engines/volta) |
+| `rust-toolchain` | Rust | 1 |
+| `rust-toolchain.toml` | Rust | 2 |
+| `.deno-version` | Deno | 1 |
+| `.dvmrc` | Deno | 2 |
+| `.zig-version` | Zig | 1 |
+| `global.json` | .NET SDK | 1 |
+| `.php-version` | PHP | 1 |
+| `.swift-version` | Swift | 1 |
+| `.tool-versions` | Multiple | Universal multi-tool pin |
+| `package.json` | Node/Bun | Engines / Volta |
+| `mise.toml`, `.mise.toml` | Multiple | Universal `[tools]` pin |
 
 ### Version File Formats
 

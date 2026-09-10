@@ -1,7 +1,7 @@
 ---
 title: Runtime Management
 sidebar_position: 11
-description: Managing Node.js, Python, Go, Rust, Ruby, Java, Bun, Deno, and Pi
+description: Managing Node.js, Python, Go, Rust, Ruby, Java, Bun, Deno, Pi, Zig, .NET, Erlang, PHP, and Swift
 ---
 
 # Runtime Management
@@ -12,19 +12,24 @@ OMG provides one interface for selecting supported language runtimes. Setup requ
 
 ### Native Runtimes
 
-OMG implements provider-specific runtime managers. Runtime installation, archive extraction, and project builds have platform-specific prerequisites; do not assume every workflow is dependency-free. Consult each provider's documented requirements.
+OMG implements provider-specific native runtime managers directly in Rust without external shell shims. Runtime installation, archive extraction, and project builds have platform-specific prerequisites; do not assume every workflow is dependency-free. Consult each provider's documented requirements. All runtimes also detect version pins from `mise.toml` and `.mise.toml`.
 
 | Runtime | Auto-detect File | Install Command | Switch Command | Binaries |
 | --------- | ------------------ | ----------------- | ---------------- | ---------- |
 | **Node.js** | `.node-version`, `.nvmrc`, `package.json`, `.tool-versions` | `omg use node 20` | `omg use node 18` | `node`, `npm`, `npx` |
 | **Python** | `.python-version`, `pyproject.toml`, `.tool-versions` | `omg use python 3.12` | `omg use python 3.11` | `python3`, `pip` |
 | **Go** | `.go-version`, `go.mod`, `.tool-versions` | `omg use go 1.21` | `omg use go 1.20` | `go`, `gofmt` |
-| **Rust** | `rust-toolchain.toml`, `rust-toolchain`, `.tool-versions` | `omg use rust stable` | `omg use rust nightly` | `rustc`, `cargo` |
+| **Rust** | `rust-toolchain`, `rust-toolchain.toml`, `.tool-versions` | `omg use rust stable` | `omg use rust nightly` | `rustc`, `cargo` |
 | **Ruby** | `.ruby-version`, `.tool-versions` | `omg use ruby 3.2` | `omg use ruby 3.1` | `ruby`, `gem` |
 | **Java** | `.java-version`, `.tool-versions` | `omg use java 21` | `omg use java 17` | `java`, `javac` |
 | **Bun** | `.bun-version`, `package.json`, `.tool-versions` | `omg use bun latest` | `omg use bun 1.0` | `bun` |
 | **Deno** | `.deno-version`, `.dvmrc`, `.tool-versions` | `omg use deno latest` | `omg use deno 2.9` | `deno` |
 | **Pi** | `.tool-versions` | `omg use pi 0.83.0` | `omg use pi 0.84.3` | `pi` |
+| **Zig** | `.zig-version`, `.tool-versions` | `omg use zig 0.13.0` | `omg use zig 0.12.0` | `zig` |
+| **.NET** | `global.json`, `.tool-versions` | `omg use dotnet 8.0` | `omg use dotnet 9.0` | `dotnet` |
+| **Erlang** | `.tool-versions` | `omg use erlang 26.2` | `omg use erlang 27.0` | `erl`, `erlc` |
+| **PHP** | `.php-version`, `.tool-versions` | `omg use php 8.3` | `omg use php 8.2` | `php` |
+| **Swift** | `.swift-version`, `.tool-versions` | `omg use swift 5.10` | `omg use swift 6.0` | `swift`, `swiftc` |
 
 Unknown runtime names fail explicitly. OMG does not download or invoke a fallback runtime manager.
 
@@ -257,7 +262,7 @@ When multiple version files exist in the same directory:
 omg use node 18
 
 # Show which version file is active
-omg which node --verbose
+omg which node
 ```
 
 ---
@@ -368,7 +373,7 @@ OMG extracts each runtime into a temporary directory on the same filesystem. It 
 **Check shell hook:**
 
 ```bash
-type omg  # Should show it's a function, not a binary
+type _omg_hook  # Should show it's a shell function
 ```
 
 **Fix: Re-source shell config:**
@@ -433,7 +438,7 @@ df -h ~/.local/share/omg
 **Check PATH:**
 
 ```bash
-echo $PATH | grep omg  # Should contain omg shims directory
+echo $PATH | grep omg  # Should contain active omg runtime bin path
 ```
 
 **Verify installation:**
