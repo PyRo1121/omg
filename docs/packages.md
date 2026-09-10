@@ -314,11 +314,11 @@ omg rollback
 omg rollback <transaction-id>
 ```
 
-**Rollback Limitations:**
+**Rollback Constraints:**
 
-- Official packages only (AUR rollback planned)
-- Requires old packages in cache
-- May have dependency conflicts
+- Official packages restore from package cache; AUR packages rebuild from recorded git commits
+- Requires cached archives or accessible remote sources
+- May have dependency conflicts if system libraries have changed
 
 ---
 
