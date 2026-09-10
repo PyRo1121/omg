@@ -16,8 +16,8 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::OnceLock;
 
-use crate::core::http::BoundedResponseExt;
 use crate::cli::style::sanitize_terminal_text;
+use crate::core::http::BoundedResponseExt;
 
 const LICENSE_TOKEN_ISSUER: &str = super::service_api::ORIGIN;
 const LICENSE_TOKEN_AUDIENCE: &str = "omg-cli";
@@ -788,7 +788,10 @@ pub async fn validate_license_with_user(
     // Remote error text is echoed to the terminal by the caller via
     // anyhow; strip terminal control sequences at the trust boundary
     // (csf_861ca461).
-    resp.error = resp.error.take().map(|error| sanitize_terminal_text(&error));
+    resp.error = resp
+        .error
+        .take()
+        .map(|error| sanitize_terminal_text(&error));
     resp.tier = resp.tier.take().map(|tier| sanitize_terminal_text(&tier));
 
     Ok(resp)

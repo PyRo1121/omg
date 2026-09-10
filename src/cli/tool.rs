@@ -343,10 +343,7 @@ fn unique_install_suffix() -> String {
 /// source replacements, and environment into a tool build executed with the
 /// user's trust. Commands are therefore always rooted at the isolated
 /// staging directory, never at (or below) the user's project.
-fn manager_command(
-    program: impl AsRef<std::ffi::OsStr>,
-    staging_dir: impl AsRef<Path>,
-) -> Command {
+fn manager_command(program: impl AsRef<std::ffi::OsStr>, staging_dir: impl AsRef<Path>) -> Command {
     let mut command = Command::new(program);
     command.current_dir(staging_dir);
     command
@@ -1043,8 +1040,11 @@ mod tests {
         executable(&previous_install.join("bin").join("ours"), b"old");
 
         fs::create_dir_all(&bin_dir).expect("bin fixture");
-        symlink(previous_install.join("bin").join("ours"), bin_dir.join("ours"))
-            .expect("managed link fixture");
+        symlink(
+            previous_install.join("bin").join("ours"),
+            bin_dir.join("ours"),
+        )
+        .expect("managed link fixture");
         symlink("/etc/hostname", bin_dir.join("foreign")).expect("foreign link fixture");
         fs::write(bin_dir.join("userfile"), b"user data").expect("user file fixture");
 

@@ -517,7 +517,11 @@ fn list_images_parses_runtime_tsv_into_exact_fields() {
 
 fn dockerfile_for(base_image: &str, runtimes: &[(&str, &str)]) -> String {
     ContainerManager::with_runtime(ContainerRuntime::Docker)
-        .generate_dockerfile(base_image, runtimes, &omg_lib::core::container::InstallerDigests::new())
+        .generate_dockerfile(
+            base_image,
+            runtimes,
+            &omg_lib::core::container::InstallerDigests::new(),
+        )
         .content
 }
 
@@ -533,9 +537,8 @@ fn dockerfile_node_versions_map_to_nodesource_major_channels() {
         "'lts' must pin NODE_VERSION=20, got:\n{lts}"
     );
     assert!(
-        lts.contains(
-            "-o /tmp/nodesource-setup.sh https://deb.nodesource.com/setup_20.x"
-        ) && lts.contains("bash /tmp/nodesource-setup.sh")
+        lts.contains("-o /tmp/nodesource-setup.sh https://deb.nodesource.com/setup_20.x")
+            && lts.contains("bash /tmp/nodesource-setup.sh")
             && !lts.contains("setup_20.x | bash"),
         "NodeSource setup must be downloaded before execution, got:\n{lts}"
     );
@@ -552,8 +555,7 @@ fn dockerfile_go_latest_resolves_to_pinned_go_version() {
         "'latest' go must resolve to GO_VERSION=1.22, got:\n{latest}"
     );
     assert!(
-        latest
-            .contains("-o /tmp/omg-go.tar.gz https://go.dev/dl/go1.22.linux-amd64.tar.gz")
+        latest.contains("-o /tmp/omg-go.tar.gz https://go.dev/dl/go1.22.linux-amd64.tar.gz")
             && latest.contains("tar -C /usr/local -xzf /tmp/omg-go.tar.gz"),
         "go tarball must be downloaded before extraction, got:\n{latest}"
     );
@@ -599,7 +601,8 @@ fn dockerfile_rust_installs_exact_toolchain_via_rustup() {
     assert!(df.contains("ENV RUSTUP_HOME=/usr/local/rustup \\"));
     assert!(df.contains("CARGO_HOME=/usr/local/cargo \\"));
     assert!(
-        df.contains("-o /tmp/omg-rustup-init.sh") && df.contains("https://sh.rustup.rs")
+        df.contains("-o /tmp/omg-rustup-init.sh")
+            && df.contains("https://sh.rustup.rs")
             && df.contains("sh /tmp/omg-rustup-init.sh -s -- -y --default-toolchain 1.75.0"),
         "rustup invocation must pass the requested toolchain verbatim, got:\n{df}"
     );

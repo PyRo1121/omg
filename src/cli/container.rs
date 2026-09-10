@@ -144,17 +144,16 @@ fn pinned_dockerfile(
     }
 
     let urls = draft.unpinned_urls;
-    let digests =
-        crate::cli::tea::run_blocking_future(async move {
-            let mut digests = InstallerDigests::new();
-            for url in &urls {
-                let digest = resolve_installer_digest(url)
-                    .await
-                    .with_context(|| format!("Failed to pin {url} for verification"))?;
-                digests.insert(url.clone(), digest);
-            }
-            Ok::<InstallerDigests, anyhow::Error>(digests)
-        })??;
+    let digests = crate::cli::tea::run_blocking_future(async move {
+        let mut digests = InstallerDigests::new();
+        for url in &urls {
+            let digest = resolve_installer_digest(url)
+                .await
+                .with_context(|| format!("Failed to pin {url} for verification"))?;
+            digests.insert(url.clone(), digest);
+        }
+        Ok::<InstallerDigests, anyhow::Error>(digests)
+    })??;
 
     let verified = manager.generate_dockerfile(base, runtime_refs, &digests);
     anyhow::ensure!(
@@ -684,13 +683,15 @@ mod tests {
         )
         .expect("fixture json");
 
-        let digest =
-            go_tarball_digest(&metadata, "https://go.dev/dl/go1.22.5.linux-amd64.tar.gz")
-                .expect("digest found");
+        let digest = go_tarball_digest(&metadata, "https://go.dev/dl/go1.22.5.linux-amd64.tar.gz")
+            .expect("digest found");
         assert!(digest.starts_with("ca"), "{digest}");
 
         let error = go_tarball_digest(&metadata, "https://go.dev/dl/go9.9.9.linux-amd64.tar.gz")
             .expect_err("unknown version must fail");
-        assert!(error.to_string().contains("no matching release file"), "{error}");
+        assert!(
+            error.to_string().contains("no matching release file"),
+            "{error}"
+        );
     }
 }

@@ -1059,7 +1059,10 @@ mod tests {
         }
 
         let error = error.expect_err("PATH fallback must be refused without a sibling binary");
-        assert!(error.to_string().contains("refusing PATH fallback"), "{error}");
+        assert!(
+            error.to_string().contains("refusing PATH fallback"),
+            "{error}"
+        );
         assert!(
             !project_dir.path().join("impostor-marker").exists(),
             "a PATH impostor must never run"

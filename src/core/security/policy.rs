@@ -466,10 +466,7 @@ impl SpdxParser {
             if self.eat(&SpdxToken::And) {
                 let right = self.parse_atom()?;
                 expr = SpdxExpr::And(Box::new(expr), Box::new(right));
-            } else if matches!(
-                self.peek(),
-                Some(SpdxToken::Id(_) | SpdxToken::Open)
-            ) {
+            } else if matches!(self.peek(), Some(SpdxToken::Id(_) | SpdxToken::Open)) {
                 // Juxtaposition: legacy operator-less input stays OR-any.
                 let right = self.parse_atom()?;
                 expr = SpdxExpr::Or(Box::new(expr), Box::new(right));
@@ -876,7 +873,12 @@ mod tests {
         };
         // One allowed token must not satisfy an AND expression.
         let err = mit_only
-            .check_package("foo", false, Some("MIT AND GPL-3.0"), SecurityGrade::Verified)
+            .check_package(
+                "foo",
+                false,
+                Some("MIT AND GPL-3.0"),
+                SecurityGrade::Verified,
+            )
             .expect_err("AND requires every operand to be allowed");
         assert!(
             matches!(err, PolicyError::LicenseNotAllowed { .. }),
@@ -888,8 +890,13 @@ mod tests {
             ..SecurityPolicy::default()
         };
         assert!(
-            both.check_package("foo", false, Some("MIT AND GPL-3.0"), SecurityGrade::Verified)
-                .is_ok()
+            both.check_package(
+                "foo",
+                false,
+                Some("MIT AND GPL-3.0"),
+                SecurityGrade::Verified
+            )
+            .is_ok()
         );
     }
 
@@ -951,13 +958,19 @@ mod tests {
             );
 
             // With a trusted policy file, only its exact content is accepted.
-            fs::write(temp.path().join("policy.toml"), toml::to_string(&strict).expect("serialize policy"))
-                .expect("write policy");
+            fs::write(
+                temp.path().join("policy.toml"),
+                toml::to_string(&strict).expect("serialize policy"),
+            )
+            .expect("write policy");
             assert!(validate_inherited_policy(&strict).is_ok());
             assert!(validate_inherited_policy(&SecurityPolicy::default()).is_err());
 
             // A weakened variant of the same policy is rejected byte-for-byte.
-            let weakened = SecurityPolicy { allow_aur: true, ..strict };
+            let weakened = SecurityPolicy {
+                allow_aur: true,
+                ..strict
+            };
             assert!(validate_inherited_policy(&weakened).is_err());
         });
     }

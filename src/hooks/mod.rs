@@ -285,7 +285,11 @@ pub fn hook_env(shell: &str) -> Result<()> {
         if !WARNED_PROJECT_PATH.swap(true, Ordering::Relaxed) {
             tracing::warn!(
                 "Ignoring {ignored_project_paths} mise `_.path` entr{} in automatic hooks: project directories are never prepended to the interactive shell PATH",
-                if ignored_project_paths == 1 { "y" } else { "ies" }
+                if ignored_project_paths == 1 {
+                    "y"
+                } else {
+                    "ies"
+                }
             );
         }
     }

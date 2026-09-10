@@ -453,7 +453,10 @@ impl ContainerManager {
                     if digest_check.is_none() {
                         push_unpinned_warning(&mut dockerfile, &setup_url);
                     }
-                    let _ = writeln!(dockerfile, "RUN curl -fsSL -o /tmp/nodesource-setup.sh {setup_url} \\");
+                    let _ = writeln!(
+                        dockerfile,
+                        "RUN curl -fsSL -o /tmp/nodesource-setup.sh {setup_url} \\"
+                    );
                     if let Some(line) = digest_check {
                         let _ = writeln!(dockerfile, "{line}");
                     }
@@ -531,7 +534,10 @@ impl ContainerManager {
                     if digest_check.is_none() {
                         push_unpinned_warning(&mut dockerfile, &go_url);
                     }
-                    let _ = writeln!(dockerfile, "RUN curl -fsSL -o /tmp/omg-go.tar.gz {go_url} \\");
+                    let _ = writeln!(
+                        dockerfile,
+                        "RUN curl -fsSL -o /tmp/omg-go.tar.gz {go_url} \\"
+                    );
                     if let Some(line) = digest_check {
                         let _ = writeln!(dockerfile, "{line}");
                     }
@@ -552,7 +558,10 @@ impl ContainerManager {
                     if digest_check.is_none() {
                         push_unpinned_warning(&mut dockerfile, BUN_INSTALL_URL);
                     }
-                    let _ = writeln!(dockerfile, "RUN curl -fsSL -o /tmp/omg-bun-install.sh {BUN_INSTALL_URL} \\");
+                    let _ = writeln!(
+                        dockerfile,
+                        "RUN curl -fsSL -o /tmp/omg-bun-install.sh {BUN_INSTALL_URL} \\"
+                    );
                     if let Some(line) = digest_check {
                         let _ = writeln!(dockerfile, "{line}");
                     }
@@ -671,13 +680,10 @@ pub(crate) fn ensure_dockerignore(root: &Path) -> Result<()> {
         Ok(content) => content,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(error) => {
-            return Err(error).with_context(|| {
-                format!("Failed to read {}", ignore_path.display())
-            });
+            return Err(error).with_context(|| format!("Failed to read {}", ignore_path.display()));
         }
     };
-    let existing_lines: std::collections::HashSet<&str> =
-        existing.lines().map(str::trim).collect();
+    let existing_lines: std::collections::HashSet<&str> = existing.lines().map(str::trim).collect();
     let missing: Vec<&str> = DOCKERIGNORE_ENTRIES
         .iter()
         .copied()
@@ -957,7 +963,12 @@ mod tests {
     #[test]
     fn test_generate_dockerfile() {
         let manager = ContainerManager::with_runtime(ContainerRuntime::Docker);
-        let dockerfile = manager.generate_dockerfile("ubuntu:24.04", &[("node", "20.10.0")], &InstallerDigests::new())
+        let dockerfile = manager
+            .generate_dockerfile(
+                "ubuntu:24.04",
+                &[("node", "20.10.0")],
+                &InstallerDigests::new(),
+            )
             .content;
         assert!(dockerfile.contains("FROM ubuntu:24.04"));
         // Check for Node.js installation (new format installs runtimes)
@@ -982,17 +993,18 @@ mod tests {
     #[test]
     fn non_debian_runtime_installs_use_the_base_image_package_manager() {
         let manager = ContainerManager::with_runtime(ContainerRuntime::Docker);
-        let dockerfile = manager.generate_dockerfile(
-            "archlinux:latest",
-            &[
-                ("node", "lts"),
-                ("python", "3.12"),
-                ("java", "21"),
-                ("ruby", "3.3"),
-            ],
-            &InstallerDigests::new(),
-        )
-        .content;
+        let dockerfile = manager
+            .generate_dockerfile(
+                "archlinux:latest",
+                &[
+                    ("node", "lts"),
+                    ("python", "3.12"),
+                    ("java", "21"),
+                    ("ruby", "3.3"),
+                ],
+                &InstallerDigests::new(),
+            )
+            .content;
 
         assert!(!dockerfile.contains("apt-get"), "{dockerfile}");
         for package in ["nodejs", "python", "jdk-openjdk", "ruby"] {
@@ -1007,11 +1019,21 @@ mod tests {
     fn test_generate_dockerfile_generic() {
         let manager = ContainerManager::with_runtime(ContainerRuntime::Docker);
         // Test generic package installation (e.g. gcc)
-        let dockerfile = manager.generate_dockerfile("ubuntu:24.04", &[("gcc", "latest")], &InstallerDigests::new())
+        let dockerfile = manager
+            .generate_dockerfile(
+                "ubuntu:24.04",
+                &[("gcc", "latest")],
+                &InstallerDigests::new(),
+            )
             .content;
         assert!(dockerfile.contains("apt-get install -y gcc"));
 
-        let dockerfile_arch = manager.generate_dockerfile("archlinux:latest", &[("vim", "latest")], &InstallerDigests::new())
+        let dockerfile_arch = manager
+            .generate_dockerfile(
+                "archlinux:latest",
+                &[("vim", "latest")],
+                &InstallerDigests::new(),
+            )
             .content;
         assert!(dockerfile_arch.contains("pacman -S --noconfirm vim"));
     }
@@ -1036,7 +1058,9 @@ mod tests {
             "../../etc",
             "",
         ] {
-            let dockerfile = manager.generate_dockerfile(evil, &[], &InstallerDigests::new()).content;
+            let dockerfile = manager
+                .generate_dockerfile(evil, &[], &InstallerDigests::new())
+                .content;
             assert!(
                 dockerfile.starts_with("FROM ubuntu:24.04\n"),
                 "base image {evil:?}"
@@ -1050,7 +1074,13 @@ mod tests {
     fn generate_dockerfile_never_emits_injected_versions_or_runtime_names() {
         let manager = ContainerManager::with_runtime(ContainerRuntime::Docker);
 
-        let dockerfile = manager.generate_dockerfile("ubuntu:24.04", &[("node", "20; rm -rf /")], &InstallerDigests::new()).content;
+        let dockerfile = manager
+            .generate_dockerfile(
+                "ubuntu:24.04",
+                &[("node", "20; rm -rf /")],
+                &InstallerDigests::new(),
+            )
+            .content;
         // Note: the legitimate cleanup line `rm -rf /var/lib/apt/lists/*`
         // exists in every Debian/Ubuntu Dockerfile, so assert on the
         // injected payload fragments instead.
@@ -1063,7 +1093,13 @@ mod tests {
             "injected version must never survive"
         );
 
-        let dockerfile = manager.generate_dockerfile("ubuntu:24.04", &[("pkg; curl evil", "1.0")], &InstallerDigests::new()).content;
+        let dockerfile = manager
+            .generate_dockerfile(
+                "ubuntu:24.04",
+                &[("pkg; curl evil", "1.0")],
+                &InstallerDigests::new(),
+            )
+            .content;
         assert!(
             !dockerfile.contains("curl evil") && !dockerfile.contains("install -y pkg;"),
             "runtime-name injection must be skipped entirely"
@@ -1073,12 +1109,13 @@ mod tests {
     #[test]
     fn generate_dockerfile_accepts_valid_inputs_unchanged() {
         let manager = ContainerManager::with_runtime(ContainerRuntime::Docker);
-        let dockerfile = manager.generate_dockerfile(
-            "debian:bookworm-slim",
-            &[("node", "20.10.0"), ("go", "1.22.5")],
-            &InstallerDigests::new(),
-        )
-        .content;
+        let dockerfile = manager
+            .generate_dockerfile(
+                "debian:bookworm-slim",
+                &[("node", "20.10.0"), ("go", "1.22.5")],
+                &InstallerDigests::new(),
+            )
+            .content;
         assert!(dockerfile.contains("FROM debian:bookworm-slim\n"));
         assert!(dockerfile.contains("NODE_VERSION=20"));
         assert!(dockerfile.contains("GO_VERSION=1.22.5"));
@@ -1088,13 +1125,13 @@ mod tests {
     #[test]
     fn debian_runtime_packages_normalize_dotted_versions() {
         let manager = ContainerManager::with_runtime(ContainerRuntime::Docker);
-        let dockerfile =
-            manager.generate_dockerfile(
-            "ubuntu:24.04",
-            &[("java", "17.0.12"), ("ruby", "3.1.2")],
-            &InstallerDigests::new(),
-        )
-        .content;
+        let dockerfile = manager
+            .generate_dockerfile(
+                "ubuntu:24.04",
+                &[("java", "17.0.12"), ("ruby", "3.1.2")],
+                &InstallerDigests::new(),
+            )
+            .content;
 
         assert!(dockerfile.contains("apt-get install -y openjdk-17-jdk"));
         assert!(dockerfile.contains("apt-get install -y ruby3.1"));
@@ -1119,15 +1156,36 @@ mod tests {
         }
         let generated = manager.generate_dockerfile(
             "ubuntu:24.04",
-            &[("rust", "stable"), ("bun", "latest"), ("node", "20.10.0"), ("go", "1.22.5")],
+            &[
+                ("rust", "stable"),
+                ("bun", "latest"),
+                ("node", "20.10.0"),
+                ("go", "1.22.5"),
+            ],
             &digests,
         );
 
-        assert!(generated.unpinned_urls.is_empty(), "{:?}", generated.unpinned_urls);
+        assert!(
+            generated.unpinned_urls.is_empty(),
+            "{:?}",
+            generated.unpinned_urls
+        );
         // No remote content is piped into an interpreter any more.
-        assert!(!generated.content.contains("| sh -s"), "{:?}", generated.content);
-        assert!(!generated.content.contains("| bash"), "{:?}", generated.content);
-        assert!(!generated.content.contains("| tar"), "{:?}", generated.content);
+        assert!(
+            !generated.content.contains("| sh -s"),
+            "{:?}",
+            generated.content
+        );
+        assert!(
+            !generated.content.contains("| bash"),
+            "{:?}",
+            generated.content
+        );
+        assert!(
+            !generated.content.contains("| tar"),
+            "{:?}",
+            generated.content
+        );
         // Every installer verifies before executing.
         assert_eq!(generated.content.matches("sha256sum -c -").count(), 4);
     }
@@ -1140,7 +1198,10 @@ mod tests {
             &[("rust", "stable")],
             &InstallerDigests::new(),
         );
-        assert_eq!(generated.unpinned_urls, vec!["https://sh.rustup.rs".to_string()]);
+        assert_eq!(
+            generated.unpinned_urls,
+            vec!["https://sh.rustup.rs".to_string()]
+        );
         assert!(generated.content.contains("WARNING"), "{generated:?}");
     }
 
@@ -1152,7 +1213,10 @@ mod tests {
         ensure_dockerignore(dir.path()).expect("dockerignore created");
         let content = fs::read_to_string(dir.path().join(".dockerignore")).expect("read");
         for entry in [".git", ".env", ".env.*", "*.key", ".omg/"] {
-            assert!(content.lines().any(|line| line.trim() == entry), "{content}");
+            assert!(
+                content.lines().any(|line| line.trim() == entry),
+                "{content}"
+            );
         }
 
         // Idempotent: a second pass must not duplicate entries.

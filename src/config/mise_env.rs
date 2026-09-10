@@ -529,7 +529,9 @@ fn read_env_file(path: &Path) -> Result<Option<String>> {
     let file = match std::fs::File::open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error).with_context(|| format!("Failed to read {}", path.display())),
+        Err(error) => {
+            return Err(error).with_context(|| format!("Failed to read {}", path.display()));
+        }
     };
     let metadata = file
         .metadata()
@@ -1114,14 +1116,13 @@ mod tests {
         assert!(error.to_string().contains("not a regular file"), "{error}");
 
         // A directory passes open() but is not a regular file.
-        let error = read_env_file(dir.path())
-            .expect_err("directory env files must be rejected");
+        let error = read_env_file(dir.path()).expect_err("directory env files must be rejected");
         assert!(error.to_string().contains("not a regular file"), "{error}");
 
         // Character devices (e.g. /dev/zero via an absolute directive)
         // stream forever; they are not regular files.
-        let error = read_env_file(Path::new("/dev/zero"))
-            .expect_err("device files must be rejected");
+        let error =
+            read_env_file(Path::new("/dev/zero")).expect_err("device files must be rejected");
         assert!(error.to_string().contains("not a regular file"), "{error}");
     }
 

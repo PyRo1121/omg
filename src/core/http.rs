@@ -58,8 +58,7 @@ pub fn is_private_or_local_host(host: Option<&str>) -> bool {
         return true;
     };
     let host = host.trim_start_matches('[').trim_end_matches(']');
-    if host.eq_ignore_ascii_case("localhost") || host.to_ascii_lowercase().ends_with(".localhost")
-    {
+    if host.eq_ignore_ascii_case("localhost") || host.to_ascii_lowercase().ends_with(".localhost") {
         return true;
     }
     let Ok(ip) = host.parse::<std::net::IpAddr>() else {
@@ -133,8 +132,7 @@ fn is_loopback_host(host: Option<&str>) -> bool {
         return false;
     };
     let host = host.trim_start_matches('[').trim_end_matches(']');
-    if host.eq_ignore_ascii_case("localhost") || host.to_ascii_lowercase().ends_with(".localhost")
-    {
+    if host.eq_ignore_ascii_case("localhost") || host.to_ascii_lowercase().ends_with(".localhost") {
         return true;
     }
     host.parse::<std::net::IpAddr>()
