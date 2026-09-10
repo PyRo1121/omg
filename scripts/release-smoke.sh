@@ -82,7 +82,11 @@ load_distro() {
       # the probe on the host against the aarch64-darwin release archive.
       distro_suffix="-aarch64-darwin"
       distro_image=""
-      distro_index_cmd="brew update"
+      # GitHub's macOS images can hold Homebrew's update lock briefly after a
+      # previous refresh (or a background auto-update), which surfaces as
+      # "Another `brew update` process is already running". Retry once after a
+      # pause; a genuine failure still exits non-zero and fails the probe.
+      distro_index_cmd="brew update || { sleep 15; brew update; }"
       distro_installed_assert="brew list tree >/dev/null"
       distro_removed_assert="! brew list tree >/dev/null"
       # Containers start every case from a fresh filesystem; the shared host
