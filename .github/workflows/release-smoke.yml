@@ -89,6 +89,12 @@ jobs:
     name: "Smoke macos (native)"
     runs-on: macos-14
     timeout-minutes: 30
+    env:
+      # The probe refreshes the Homebrew index itself (`brew update`, asserted
+      # by the runner fixtures). Letting Homebrew auto-update as well races that
+      # explicit refresh and aborts the run with "Another `brew update` process
+      # is already running".
+      HOMEBREW_NO_AUTO_UPDATE: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
