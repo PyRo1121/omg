@@ -16,6 +16,9 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::OnceLock;
 
+use crate::cli::style::sanitize_terminal_text;
+use crate::core::http::BoundedResponseExt;
+
 const LICENSE_TOKEN_ISSUER: &str = super::service_api::ORIGIN;
 const LICENSE_TOKEN_AUDIENCE: &str = "omg-cli";
 
@@ -762,13 +765,14 @@ pub async fn validate_license_with_user(
         .context("Failed to connect to dashboard")?;
 
     let status = response.status();
+    // The body is remote input: bound it before allocation (csf_08340651).
     let response_text = response
-        .text()
+        .bounded_text()
         .await
-        .context("Failed to read license response body")?;
+        .context("Failed to read license response body (or it exceeded the 16 MiB limit)")?;
 
     // Parse response first
-    let resp: LicenseResponse = serde_json::from_str(&response_text).context(format!(
+    let mut resp: LicenseResponse = serde_json::from_str(&response_text).context(format!(
         "Failed to parse license response. Status: {status}"
     ))?;
 
@@ -780,6 +784,15 @@ pub async fn validate_license_with_user(
         resp.token.is_some(),
         resp.error
     );
+
+    // Remote error text is echoed to the terminal by the caller via
+    // anyhow; strip terminal control sequences at the trust boundary
+    // (csf_861ca461).
+    resp.error = resp
+        .error
+        .take()
+        .map(|error| sanitize_terminal_text(&error));
+    resp.tier = resp.tier.take().map(|tier| sanitize_terminal_text(&tier));
 
     Ok(resp)
 }
@@ -817,40 +830,92 @@ async fn licensed_get<T: serde::de::DeserializeOwned>(
         anyhow::bail!("Request failed (status: {})", response.status());
     }
 
+    // Dashboard metadata is remote input: cap the body before allocation
+    // (csf_08340651).
     response
-        .json()
+        .bounded_json()
         .await
         .with_context(|| format!("Failed to parse {parse_context} response"))
 }
 
+/// Neutralize terminal control sequences in remote dashboard metadata.
+///
+/// Team rosters, policies, and audit-log entries are attacker-adjacent
+/// remote input (any linked machine contributes fields such as hostname);
+/// they reach the terminal through the CLI and TUI, so every string field
+/// is stripped of OSC/CSI and bidi/zero-width sequences at the fetch
+/// boundary (csf_861ca461).
+fn sanitize_option(value: &mut Option<String>) {
+    if let Some(text) = value.take() {
+        *value = Some(sanitize_terminal_text(&text));
+    }
+}
+
+fn sanitize_team_members(mut members: Vec<TeamMember>) -> Vec<TeamMember> {
+    for member in &mut members {
+        member.machine_id = sanitize_terminal_text(&member.machine_id);
+        sanitize_option(&mut member.hostname);
+        sanitize_option(&mut member.os);
+        sanitize_option(&mut member.arch);
+        sanitize_option(&mut member.omg_version);
+        member.last_seen_at = sanitize_terminal_text(&member.last_seen_at);
+    }
+    members
+}
+
+fn sanitize_policy_rules(mut rules: Vec<PolicyRule>) -> Vec<PolicyRule> {
+    for rule in &mut rules {
+        rule.scope = sanitize_terminal_text(&rule.scope);
+        rule.rule = sanitize_terminal_text(&rule.rule);
+    }
+    rules
+}
+
+fn sanitize_audit_logs(mut logs: Vec<AuditLogEntry>) -> Vec<AuditLogEntry> {
+    for log in &mut logs {
+        log.action = sanitize_terminal_text(&log.action);
+        sanitize_option(&mut log.resource_type);
+        sanitize_option(&mut log.resource_id);
+        sanitize_option(&mut log.ip_address);
+        log.created_at = sanitize_terminal_text(&log.created_at);
+    }
+    logs
+}
+
 /// Fetch team members associated with this license
 pub async fn fetch_team_members() -> Result<Vec<TeamMember>> {
-    licensed_get(
-        super::service_api::TEAM_MEMBERS,
-        "Dashboard rejected this roster request. Relink with `omg account link --token-stdin`.",
-        "team members",
-    )
-    .await
+    Ok(sanitize_team_members(
+        licensed_get(
+            super::service_api::TEAM_MEMBERS,
+            "Dashboard rejected this roster request. Relink with `omg account link --token-stdin`.",
+            "team members",
+        )
+        .await?,
+    ))
 }
 
 /// Fetch enterprise policies associated with this license
 pub async fn fetch_policies() -> Result<Vec<PolicyRule>> {
-    licensed_get(
-        super::service_api::TEAM_POLICIES,
-        "Dashboard rejected this policy request. Relink with `omg account link --token-stdin`.",
-        "policies",
-    )
-    .await
+    Ok(sanitize_policy_rules(
+        licensed_get(
+            super::service_api::TEAM_POLICIES,
+            "Dashboard rejected this policy request. Relink with `omg account link --token-stdin`.",
+            "policies",
+        )
+        .await?,
+    ))
 }
 
 /// Fetch audit logs associated with this license
 pub async fn fetch_audit_logs() -> Result<Vec<AuditLogEntry>> {
-    licensed_get(
-        super::service_api::TEAM_AUDIT_LOG,
-        "Dashboard rejected this activity request. Relink with `omg account link --token-stdin`.",
-        "audit logs",
-    )
-    .await
+    Ok(sanitize_audit_logs(
+        licensed_get(
+            super::service_api::TEAM_AUDIT_LOG,
+            "Dashboard rejected this activity request. Relink with `omg account link --token-stdin`.",
+            "audit logs",
+        )
+        .await?,
+    ))
 }
 
 /// Activate a license key
@@ -1294,6 +1359,58 @@ mod tests {
         match require_feature("not-a-real-feature") {
             Ok(()) => panic!("unknown feature must be denied"),
             Err(err) => assert!(err.to_string().contains("Unknown feature"), "got: {err}"),
+        }
+    }
+
+    #[test]
+    fn dashboard_metadata_is_stripped_of_terminal_control_sequences() {
+        let hostile = "\u{1b}]52;c;pwned\u{7}host\u{1b}[31m".to_string();
+        let members = sanitize_team_members(vec![TeamMember {
+            machine_id: hostile.clone(),
+            hostname: Some(hostile.clone()),
+            os: Some(hostile.clone()),
+            arch: Some(hostile.clone()),
+            omg_version: Some(hostile.clone()),
+            last_seen_at: hostile.clone(),
+            is_active: true,
+        }]);
+        assert_eq!(members.len(), 1);
+        let member = &members[0];
+        for field in [
+            member.machine_id.as_str(),
+            member.hostname.as_deref().unwrap_or_default(),
+            member.os.as_deref().unwrap_or_default(),
+            member.arch.as_deref().unwrap_or_default(),
+            member.omg_version.as_deref().unwrap_or_default(),
+            member.last_seen_at.as_str(),
+        ] {
+            assert!(!field.contains('\u{1b}'), "ESC must be stripped: {field}");
+            assert!(!field.contains('\u{7}'), "BEL must be stripped: {field}");
+        }
+
+        let policies = sanitize_policy_rules(vec![PolicyRule {
+            scope: hostile.clone(),
+            rule: hostile.clone(),
+            enforced: true,
+        }]);
+        assert!(!policies[0].scope.contains('\u{1b}'));
+        assert!(!policies[0].rule.contains('\u{1b}'));
+
+        let logs = sanitize_audit_logs(vec![AuditLogEntry {
+            action: hostile.clone(),
+            resource_type: Some(hostile.clone()),
+            resource_id: Some(hostile.clone()),
+            ip_address: Some(hostile.clone()),
+            created_at: hostile,
+        }]);
+        for field in [
+            logs[0].action.as_str(),
+            logs[0].resource_type.as_deref().unwrap_or_default(),
+            logs[0].resource_id.as_deref().unwrap_or_default(),
+            logs[0].ip_address.as_deref().unwrap_or_default(),
+            logs[0].created_at.as_str(),
+        ] {
+            assert!(!field.contains('\u{1b}'), "ESC must be stripped: {field}");
         }
     }
 }

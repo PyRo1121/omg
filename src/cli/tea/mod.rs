@@ -72,6 +72,7 @@
 //! ```
 
 mod async_bridge;
+pub(crate) use async_bridge::run_blocking_future;
 mod cmd;
 mod renderer;
 

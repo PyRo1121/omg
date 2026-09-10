@@ -14,6 +14,14 @@ use std::os::unix::fs::OpenOptionsExt;
 
 const MAX_PKGBUILD_BYTES: u64 = 1024 * 1024;
 
+/// Upper bound for one expanded PKGBUILD variable value.
+///
+/// A PKGBUILD is untrusted input, and variable substitution is recursive: a
+/// chain of assignments that reference each other doubles the expanded value
+/// at every level. Without a budget a ~2 KB file expands to gigabytes before
+/// the review prompt is even shown.
+const MAX_SUBSTITUTED_VALUE_BYTES: usize = 1024 * 1024;
+
 fn invalid_pkgbuild_data(message: impl Into<String>) -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::InvalidData, message.into())
 }
@@ -309,22 +317,29 @@ impl PkgBuild {
         // names cannot partially replace longer names.
         let mut substitutions: Vec<_> = vars.iter().collect();
         substitutions.sort_by_key(|(key, _)| std::cmp::Reverse(key.len()));
-        let substitute = |val: &str| -> String {
+        let substitute = |val: &str| -> Result<String> {
             let mut result = val.to_string();
             for (key, value) in &substitutions {
                 result = result.replace(&format!("${key}"), value);
                 result = result.replace(&format!("${{{key}}}"), value);
+                anyhow::ensure!(
+                    result.len() <= MAX_SUBSTITUTED_VALUE_BYTES,
+                    "PKGBUILD variable '{key}' expands beyond {MAX_SUBSTITUTED_VALUE_BYTES} bytes"
+                );
             }
-            result
+            Ok(result)
         };
-        let scalar = |key: &str| vars.get(key).map_or_else(String::new, |v| substitute(v));
+        let scalar = |key: &str| -> Result<String> {
+            vars.get(key)
+                .map_or_else(|| Ok(String::new()), |value| substitute(value))
+        };
         let array = |key: &str| -> Result<Vec<String>> {
             vars.get(key)
-                .map_or_else(|| Ok(Vec::new()), |value| parse_array(&substitute(value)))
+                .map_or_else(|| Ok(Vec::new()), |value| parse_array(&substitute(value)?))
         };
 
         Ok(Self {
-            name: scalar("pkgname"),
+            name: scalar("pkgname")?,
             // A PKGBUILD is an untrusted boundary: a present pkgver that fails
             // the strict parser must fail the parse with a typed error instead
             // of comparing as a fabricated 0 (ARCH-R14). A missing pkgver keeps
@@ -332,14 +347,14 @@ impl PkgBuild {
             version: match vars.get("pkgver") {
                 None => super::types::zero_version(),
                 Some(v) => {
-                    let raw = substitute(v);
+                    let raw = substitute(v)?;
                     super::types::parse_version(&raw)
                         .with_context(|| format!("PKGBUILD has an unparseable pkgver: '{raw}'"))?
                 }
             },
-            release: scalar("pkgrel"),
-            description: scalar("pkgdesc"),
-            url: scalar("url"),
+            release: scalar("pkgrel")?,
+            description: scalar("pkgdesc")?,
+            url: scalar("url")?,
             license: array("license")?,
             depends: array("depends")?,
             makedepends: array("makedepends")?,
@@ -483,6 +498,57 @@ mod tests {
 
         assert_eq!(package.description, "top-level description");
         assert_eq!(package.validpgpkeys, ["TOPLEVELKEY"]);
+    }
+
+    #[test]
+    fn exponential_variable_expansion_is_rejected() {
+        use std::fmt::Write as _;
+
+        // Every level doubles the previous value, so a ~1 KB PKGBUILD would
+        // otherwise expand to gigabytes inside `substitute` before the review
+        // prompt is even shown.
+        let mut pkgbuild = String::new();
+        let mut previous = String::new();
+        for level in 1..=24 {
+            let key = "a".repeat(level);
+            let value = if level == 1 {
+                "X".to_string()
+            } else {
+                format!("${previous}${previous}")
+            };
+            writeln!(pkgbuild, "{key}=\"{value}\"").expect("write fixture");
+            previous = key;
+        }
+        writeln!(pkgbuild, "pkgname=\"${previous}${previous}\"").expect("write fixture");
+        pkgbuild.push_str("pkgver=1\npkgrel=1\n");
+
+        let error =
+            PkgBuild::parse_content(&pkgbuild).expect_err("exponential expansion must be rejected");
+        assert!(
+            error.to_string().contains("expands beyond"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn ordinary_variable_references_still_expand() {
+        let package = PkgBuild::parse_content(
+            r#"
+                _pkgname=demo
+                pkgname="$_pkgname"
+                pkgver=1.2.3
+                pkgrel=1
+                pkgdesc="${_pkgname} utility"
+                url="https://example.com/$_pkgname"
+                source=("$_pkgname-$pkgver.tar.gz")
+            "#,
+        )
+        .expect("ordinary substitution must keep working");
+
+        assert_eq!(package.name, "demo");
+        assert_eq!(package.description, "demo utility");
+        assert_eq!(package.url, "https://example.com/demo");
+        assert_eq!(package.sources, ["demo-1.2.3.tar.gz"]);
     }
 
     #[test]

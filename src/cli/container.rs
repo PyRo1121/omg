@@ -6,8 +6,8 @@ use crate::cli::components::Components;
 use crate::cli::tea::Cmd;
 
 use crate::core::container::{
-    ContainerConfig, ContainerManager, ContainerRuntime, detect_runtime, dev_container_config,
-    normalized_base_image,
+    ContainerConfig, ContainerManager, ContainerRuntime, InstallerDigests, detect_runtime,
+    dev_container_config, ensure_dockerignore, normalized_base_image,
 };
 
 /// Parse environment variables from strict `KEY=VALUE` entries.
@@ -69,6 +69,99 @@ fn validate_container_ref(kind: &str, value: &str) -> Result<()> {
         anyhow::bail!("Invalid {kind} name");
     }
     Ok(())
+}
+
+/// Resolve the SHA-256 digest for one installer URL.
+///
+/// Scripts are fetched over the shared bounded TLS client and hashed; the
+/// Go tarball digest is looked up in go.dev's published release metadata
+/// instead of downloading the (hundreds-of-MB) artifact.
+async fn resolve_installer_digest(url: &str) -> Result<String> {
+    use crate::core::http::BoundedResponseExt;
+    use sha2::Digest as _;
+
+    let response = crate::core::http::shared_client()
+        .get(url)
+        .send()
+        .await
+        .with_context(|| format!("Failed to fetch {url} for digest pinning"))?;
+    anyhow::ensure!(
+        response.status().is_success(),
+        "Failed to fetch {url} for digest pinning: HTTP {}",
+        response.status()
+    );
+    if url.starts_with("https://go.dev/dl/") {
+        let metadata: serde_json::Value = response.bounded_json().await?;
+        return go_tarball_digest(&metadata, url)
+            .with_context(|| format!("go.dev does not publish a digest for {url}"));
+    }
+    let body = response.bounded_text().await?;
+    use std::fmt::Write as _;
+    let mut digest = String::with_capacity(64);
+    for byte in sha2::Sha256::digest(body.as_bytes()) {
+        let _ = write!(digest, "{byte:02x}");
+    }
+    Ok(digest)
+}
+
+/// Look up one Go tarball digest in go.dev's release metadata JSON.
+fn go_tarball_digest(metadata: &serde_json::Value, tarball_url: &str) -> Result<String> {
+    const EMPTY: &[serde_json::Value] = &[];
+    let filename = tarball_url
+        .rsplit('/')
+        .next()
+        .context("Tarball URL has no file component")?;
+    for release in metadata
+        .as_array()
+        .context("go.dev release metadata is not a JSON array")?
+    {
+        for file in release
+            .get("files")
+            .and_then(serde_json::Value::as_array)
+            .map_or(EMPTY, Vec::as_slice)
+        {
+            if file.get("filename").and_then(serde_json::Value::as_str) == Some(filename)
+                && let Some(digest) = file.get("sha256").and_then(serde_json::Value::as_str)
+            {
+                return Ok(digest.to_string());
+            }
+        }
+    }
+    anyhow::bail!("no matching release file")
+}
+
+/// Generate the Dockerfile with every remote installer pinned to a digest
+/// captured over TLS now, so root build steps verify the bytes they
+/// execute instead of trusting whatever the network returns at build time.
+fn pinned_dockerfile(
+    manager: &ContainerManager,
+    base: &str,
+    runtime_refs: &[(&str, &str)],
+) -> Result<String> {
+    let draft = manager.generate_dockerfile(base, runtime_refs, &InstallerDigests::new());
+    if draft.unpinned_urls.is_empty() {
+        return Ok(draft.content);
+    }
+
+    let urls = draft.unpinned_urls;
+    let digests = crate::cli::tea::run_blocking_future(async move {
+        let mut digests = InstallerDigests::new();
+        for url in &urls {
+            let digest = resolve_installer_digest(url)
+                .await
+                .with_context(|| format!("Failed to pin {url} for verification"))?;
+            digests.insert(url.clone(), digest);
+        }
+        Ok::<InstallerDigests, anyhow::Error>(digests)
+    })??;
+
+    let verified = manager.generate_dockerfile(base, runtime_refs, &digests);
+    anyhow::ensure!(
+        verified.unpinned_urls.is_empty(),
+        "Could not pin digests for {} (refusing to generate a Dockerfile that runs unverified downloads as root)",
+        verified.unpinned_urls.join(", ")
+    );
+    Ok(verified.content)
 }
 
 /// Show container runtime status
@@ -488,7 +581,10 @@ pub fn init(base_image: Option<String>) -> Result<()> {
 
     let runtime_refs: Vec<(&str, &str)> = runtimes.iter().map(|(r, v)| (*r, v.as_str())).collect();
 
-    let dockerfile = manager.generate_dockerfile(&base, &runtime_refs);
+    let dockerfile = pinned_dockerfile(&manager, &base, &runtime_refs)?;
+
+    // `COPY . .` must never embed untracked credentials or repository data.
+    ensure_dockerignore(&cwd)?;
 
     std::fs::write(&dockerfile_path, dockerfile)?;
 
@@ -562,5 +658,40 @@ mod tests {
         assert!(validate_container_ref("container", "a|b").is_err());
         assert!(validate_container_ref("image", "a&b").is_err());
         assert!(validate_container_ref("image", "a\u{0}b").is_err());
+    }
+
+    /// Go tarball digests come from go.dev's published release metadata,
+    /// matched by exact filename.
+    #[test]
+    fn go_tarball_digest_matches_the_release_file() {
+        let metadata: serde_json::Value = serde_json::from_str(
+            r#"[
+                {
+                    "version": "go1.22.5",
+                    "files": [
+                        {
+                            "filename": "go1.22.5.src.tar.gz",
+                            "sha256": "baaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                        },
+                        {
+                            "filename": "go1.22.5.linux-amd64.tar.gz",
+                            "sha256": "caaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                        }
+                    ]
+                }
+            ]"#,
+        )
+        .expect("fixture json");
+
+        let digest = go_tarball_digest(&metadata, "https://go.dev/dl/go1.22.5.linux-amd64.tar.gz")
+            .expect("digest found");
+        assert!(digest.starts_with("ca"), "{digest}");
+
+        let error = go_tarball_digest(&metadata, "https://go.dev/dl/go9.9.9.linux-amd64.tar.gz")
+            .expect_err("unknown version must fail");
+        assert!(
+            error.to_string().contains("no matching release file"),
+            "{error}"
+        );
     }
 }

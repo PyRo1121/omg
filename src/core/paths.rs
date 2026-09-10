@@ -51,12 +51,33 @@ pub fn reset_test_overrides() {
 #[inline]
 fn env_path(var: &str) -> Option<PathBuf> {
     // Direct sudo and library callers do not pass through the child-env scrub.
-    if crate::core::is_root() && var.starts_with("OMG_PACMAN_") {
+    // A root process must never take a state or configuration location from the
+    // caller: every pacman override and every OMG state/config/socket override
+    // is ignored so an inherited variable cannot redirect the policy, the
+    // configuration, the caches, or the daemon socket of a root child
+    // (csf_640a559599992bb4a020f8d2).
+    if crate::core::is_root() && is_root_protected_env(var) {
         return None;
     }
     std::env::var_os(var)
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
+}
+
+/// Environment variables that may never select a root process's state location.
+///
+/// Kept next to [`env_path`] so a new override cannot be added without deciding
+/// whether root is allowed to honour it.
+fn is_root_protected_env(var: &str) -> bool {
+    var.starts_with("OMG_PACMAN_")
+        || matches!(
+            var,
+            "OMG_CONFIG_DIR"
+                | "OMG_DATA_DIR"
+                | "OMG_CACHE_DIR"
+                | "OMG_DAEMON_DATA_DIR"
+                | "OMG_SOCKET_PATH"
+        )
 }
 
 #[inline]
@@ -646,6 +667,40 @@ mod tests {
                 assert!(!pacman_root_overridden());
             }
         });
+    }
+
+    #[test]
+    fn root_protected_env_covers_every_state_override() {
+        // A root process must never take a state, configuration, cache or
+        // socket location from the caller. Asserting the predicate directly
+        // keeps this deterministic: the process environment is never mutated,
+        // so the check cannot perturb tests that run in parallel.
+        for name in [
+            "OMG_PACMAN_CONF",
+            "OMG_PACMAN_ROOT",
+            "OMG_PACMAN_DB_DIR",
+            "OMG_PACMAN_SYNC_DIR",
+            "OMG_PACMAN_LOCAL_DIR",
+            "OMG_PACMAN_CACHE_DIR",
+            "OMG_PACMAN_CACHE_ROOT_DIR",
+            "OMG_PACMAN_MIRRORLIST",
+            "OMG_CONFIG_DIR",
+            "OMG_DATA_DIR",
+            "OMG_CACHE_DIR",
+            "OMG_DAEMON_DATA_DIR",
+            "OMG_SOCKET_PATH",
+        ] {
+            assert!(is_root_protected_env(name), "root must ignore {name}");
+        }
+
+        // Unrelated variables are not silently swallowed by this guard; they
+        // are handled (or deliberately not handled) elsewhere.
+        for name in ["PATH", "HOME", "RUST_LOG", "OMG_TEST_MODE"] {
+            assert!(
+                !is_root_protected_env(name),
+                "{name} must not be gated by the state-location guard"
+            );
+        }
     }
 
     #[test]

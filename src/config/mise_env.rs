@@ -34,6 +34,7 @@
 //! encrypted-secret backends, and per-plugin env directives.
 
 use std::collections::{HashMap, HashSet};
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -506,27 +507,64 @@ pub(crate) fn parse_mise_env_file(file_path: &Path) -> Result<MiseEnv> {
 
 /// Read an env file with a size cap; missing files are `Ok(None)` so the
 /// caller can apply strict/lenient policy.
+///
+/// The file is type-checked before and after opening, and read through the
+/// same bounded handle used for the size check. This closes two holes
+/// reachable from project-controlled `_.file` directives resolved during
+/// completion and automatic shell hooks: special files (FIFOs, devices such
+/// as `/dev/zero`) would hang or stream forever, and a metadata-then-reopen
+/// race could swap a small file for an unbounded one.
 fn read_env_file(path: &Path) -> Result<Option<String>> {
-    match std::fs::File::open(path) {
-        Ok(file) => {
-            let size = file
-                .metadata()
-                .with_context(|| format!("Failed to stat {}", path.display()))?
-                .len();
-            if size > MAX_ENV_FILE_BYTES {
-                anyhow::bail!(
-                    "Env file {} exceeds {} bytes; refusing to load",
-                    path.display(),
-                    MAX_ENV_FILE_BYTES
-                );
-            }
-            let content = std::fs::read_to_string(path)
-                .with_context(|| format!("Failed to read {}", path.display()))?;
-            Ok(Some(content))
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error).with_context(|| format!("Failed to read {}", path.display())),
+    // A pre-open type check is what keeps FIFO opens from blocking: opening
+    // a named pipe for read blocks until a writer appears, so it must be
+    // rejected before `File::open`.
+    if let Ok(metadata) = std::fs::symlink_metadata(path) {
+        anyhow::ensure!(
+            !metadata.file_type().is_symlink() && metadata.is_file(),
+            "Env file {} is not a regular file; refusing to load",
+            path.display()
+        );
     }
+
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error).with_context(|| format!("Failed to read {}", path.display()));
+        }
+    };
+    let metadata = file
+        .metadata()
+        .with_context(|| format!("Failed to stat {}", path.display()))?;
+    anyhow::ensure!(
+        metadata.is_file(),
+        "Env file {} is not a regular file; refusing to load",
+        path.display()
+    );
+    anyhow::ensure!(
+        metadata.len() <= MAX_ENV_FILE_BYTES,
+        "Env file {} exceeds {} bytes; refusing to load",
+        path.display(),
+        MAX_ENV_FILE_BYTES
+    );
+
+    // Read from the opened handle with a hard take() bound so a file that
+    // lies about its size (or grows while being read) cannot exhaust memory.
+    let mut buffer = Vec::with_capacity(
+        usize::try_from(metadata.len()).unwrap_or(MAX_ENV_FILE_BYTES as usize) + 1,
+    );
+    file.take(MAX_ENV_FILE_BYTES + 1)
+        .read_to_end(&mut buffer)
+        .with_context(|| format!("Failed to read {}", path.display()))?;
+    anyhow::ensure!(
+        buffer.len() as u64 <= MAX_ENV_FILE_BYTES,
+        "Env file {} exceeds {} bytes; refusing to load",
+        path.display(),
+        MAX_ENV_FILE_BYTES
+    );
+    let content = String::from_utf8(buffer)
+        .with_context(|| format!("Env file {} is not valid UTF-8", path.display()))?;
+    Ok(Some(content))
 }
 
 /// Parse dotenv content: `KEY=value`, optional `export` prefix, `#`
@@ -1062,6 +1100,55 @@ fn parse_nul_env(output: &[u8]) -> HashMap<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Env-file reads reachable from completion and shell hooks must reject
+    /// special files (hang/stream-forever vectors) before opening them.
+    #[cfg(unix)]
+    #[test]
+    fn env_file_reads_reject_special_files() {
+        let dir = tempfile::tempdir().expect("temp directory");
+
+        // Symlinks are rejected outright.
+        std::os::unix::fs::symlink("/etc/passwd", dir.path().join("linked.env"))
+            .expect("symlink fixture");
+        let error = read_env_file(&dir.path().join("linked.env"))
+            .expect_err("symlinked env files must be rejected");
+        assert!(error.to_string().contains("not a regular file"), "{error}");
+
+        // A directory passes open() but is not a regular file.
+        let error = read_env_file(dir.path()).expect_err("directory env files must be rejected");
+        assert!(error.to_string().contains("not a regular file"), "{error}");
+
+        // Character devices (e.g. /dev/zero via an absolute directive)
+        // stream forever; they are not regular files.
+        let error =
+            read_env_file(Path::new("/dev/zero")).expect_err("device files must be rejected");
+        assert!(error.to_string().contains("not a regular file"), "{error}");
+    }
+
+    /// Env-file reads must stay bounded even when a file lies about (or
+    /// outgrows) its reported size.
+    #[test]
+    fn env_file_reads_are_bounded() {
+        let dir = tempfile::tempdir().expect("temp directory");
+        let path = dir.path().join("fat.env");
+        let oversized = "KEY=0123456789\n".repeat(100_000); // ~1.3 MiB
+        std::fs::write(&path, oversized).expect("oversized fixture");
+
+        let error = read_env_file(&path).expect_err("oversized env files must be rejected");
+        assert!(error.to_string().contains("refusing to load"), "{error}");
+
+        // A normal file still loads.
+        std::fs::write(&path, "A=1\n").expect("valid fixture");
+        let content = read_env_file(&path).expect("valid env file loads");
+        assert_eq!(content.as_deref(), Some("A=1\n"));
+
+        // Missing files stay `Ok(None)` for caller policy.
+        assert_eq!(
+            read_env_file(&dir.path().join("missing.env")).expect("missing is None"),
+            None
+        );
+    }
 
     fn base(pairs: &[(&str, &str)]) -> HashMap<String, String> {
         pairs

@@ -115,27 +115,41 @@ ask_yes_no() {
   [[ "$reply" =~ ^[Yy]$ ]]
 }
 
-# Install a binary atomically: copy to a temp name, chmod, then rename over
-# the destination so an interrupted install never leaves a truncated binary.
+# Install a binary atomically: stage inside a private `mktemp -d` directory,
+# chmod, then rename over the destination so an interrupted install never
+# leaves a truncated binary.
+#
+# SECURITY (daybreak csf_00c97e45): the staging name must never be
+# predictable (e.g. `${dst}.tmp.$$`). In a shared install dir a local
+# attacker could pre-create that path as a symlink and redirect the copy
+# onto an unrelated file outside the install location. `mktemp -d` creates
+# an unpredictably named, mode-0700 directory no other user can traverse,
+# so the staged copy cannot be redirected before the final rename.
 install_binary() {
   local src="$1"
   local dst="$2"
-  local tmp_dst="${dst}.tmp.$$"
+  local staging_dir tmp_dst
 
   if [[ ! -f "$src" ]]; then
     warn "Skipping $(basename "$dst"): binary missing from install source"
     return 1
   fi
 
+  if ! staging_dir=$(mktemp -d "$(dirname "$dst")/omg-install.XXXXXX"); then
+    error "Failed to create a private staging directory in $(dirname "$dst")"
+  fi
+  tmp_dst="$staging_dir/$(basename "$dst")"
+
   if ! cp "$src" "$tmp_dst"; then
-    rm -f "$tmp_dst"
+    rm -rf "$staging_dir"
     error "Failed to copy $(basename "$src") to $INSTALL_DIR"
   fi
   chmod +x "$tmp_dst"
   if ! mv -f "$tmp_dst" "$dst"; then
-    rm -f "$tmp_dst"
+    rm -rf "$staging_dir"
     error "Failed to install $dst"
   fi
+  rmdir "$staging_dir" 2>/dev/null || rm -rf "$staging_dir"
 }
 
 check_runtime_dependencies() {
@@ -863,6 +877,11 @@ setup_shell() {
   fi
 
   # Ensure Hook
+  #
+  # SECURITY (daybreak csf_c17f3813): the hook line evaluates only the
+  # installed omg binary's own output (`omg hook-env`), which single-quotes
+  # every value and refuses repo-controlled `_.source`/`_.path` input. Never
+  # source or eval any file from a project repository here.
   if [[ -f "$rc_file" ]]; then
     if ! grep -q "omg hook" "$rc_file"; then
       echo >>"$rc_file"

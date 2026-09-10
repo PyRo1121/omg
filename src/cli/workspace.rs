@@ -480,8 +480,9 @@ fn run_project_command(
         // terminal. Automation without a terminal keeps working, and the
         // command is always echoed so logs show what ran.
         println!(
-            "  {} Running repo-defined command: {custom_cmd}",
-            style::arrow("→")
+            "  {} Running repo-defined command: {}",
+            style::arrow("→"),
+            consent_text(custom_cmd)
         );
         // Fail closed without a terminal: a planted workspace file must not
         // auto-execute in CI. Only an explicit --yes opts in.
@@ -492,9 +493,7 @@ fn run_project_command(
         }
         if console::user_attended()
             && !dialoguer::Confirm::new()
-                .with_prompt(format!(
-                    "Run '{command}' from the workspace file in '{path}'?"
-                ))
+                .with_prompt(consent_prompt(command, path))
                 .default(false)
                 .interact()?
         {
@@ -546,6 +545,42 @@ fn run_project_command(
 /// PATH lookup. A PATH-shadowed `omg` must not run with workspace privileges.
 fn sibling_omg() -> std::ffi::OsString {
     crate::core::paths::sibling_binary("omg").map_or_else(|| "omg".into(), PathBuf::into_os_string)
+}
+
+/// Text rendered from project-controlled strings in the consent UI.
+///
+/// Workspace files and project paths are repository data: OSC/CSI escape
+/// sequences could otherwise redraw the terminal and spoof the yes/no
+/// consent preview for the command about to run.
+fn consent_text(text: &str) -> String {
+    style::sanitize_terminal_text(text)
+}
+
+/// The yes/no prompt shown before a repo-defined command runs.
+fn consent_prompt(command: &str, path: &str) -> String {
+    format!(
+        "Run '{}' from the workspace file in '{}'?",
+        consent_text(command),
+        consent_text(path)
+    )
+}
+
+/// Command that runs `omg env check` for one workspace project.
+///
+/// Read-only workspace commands must resolve the CLI through the binary
+/// installed next to the running executable: a PATH-resolved `omg` can be
+/// shadowed by project-controlled directories (repo `bin/`, node_modules,
+/// cargo wrappers), which would hand arbitrary project code a trusted
+/// context.
+fn env_check_command(project_path: &Path) -> Result<std::process::Command> {
+    let binary = crate::core::paths::sibling_binary("omg").ok_or_else(|| {
+        anyhow::anyhow!(
+            "Could not locate the omg binary next to the running executable; \n             refusing PATH fallback for workspace commands"
+        )
+    })?;
+    let mut command = std::process::Command::new(binary);
+    command.args(["env", "check"]).current_dir(project_path);
+    Ok(command)
 }
 
 /// Show environment diff across workspace
@@ -645,10 +680,8 @@ pub fn check() -> Result<()> {
         let project = &workspace.projects[name];
         println!("{} {}", style::arrow("→"), style::package(name));
 
-        let result = std::process::Command::new("omg")
-            .args(["env", "check"])
-            .current_dir(&project.path)
-            .status();
+        let result = env_check_command(Path::new(&project.path))
+            .and_then(|mut command| command.status().map_err(anyhow::Error::from));
 
         match result {
             Ok(status) if status.success() => {
@@ -952,5 +985,88 @@ mod tests {
             .expect_err("a non-repository must fail instead of returning an empty diff");
 
         assert!(error.to_string().contains("git diff failed"), "{error}");
+    }
+
+    /// A planted workspace file must not be able to redraw the terminal or
+    /// fake the consent preview with OSC/CSI sequences.
+    #[test]
+    fn consent_prompt_neutralizes_control_sequences() {
+        for (command, path) in [
+            ("build\u{1b}]0;pwned\u{7}", "api"),
+            ("build", "api\u{1b}[2Jfake prompt"),
+            ("\u{1b}]8;;http://evil\u{1b}\\click", "x\u{202e}spoof"),
+        ] {
+            let prompt = consent_prompt(command, path);
+            assert!(!prompt.contains('\u{1b}'), "prompt: {prompt:?}");
+            assert!(!prompt.contains('\u{7}'), "prompt: {prompt:?}");
+            assert!(!prompt.contains('\u{202e}'), "prompt: {prompt:?}");
+            // The echoed command text goes through the same filter.
+            assert!(!consent_text(command).contains('\u{1b}'));
+        }
+    }
+
+    /// `workspace check` must not resolve `omg` through PATH: a project
+    /// -controlled directory can shadow the real binary. Without a sibling
+    /// binary the command refuses instead of executing an impostor.
+    #[test]
+    #[serial_test::serial]
+    fn env_check_refuses_path_fallback_instead_of_running_impostors() {
+        if crate::core::paths::sibling_binary("omg").is_some() {
+            // A real sibling exists in this environment (the workspace test
+            // binary is named after a module, so this is not expected); the
+            // refusal path is skipped rather than asserting the wrong thing.
+            return;
+        }
+
+        let impostor_dir = tempfile::tempdir().expect("impostor directory");
+        let impostor = impostor_dir.path().join("omg");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::write(&impostor, "#!/bin/sh\ntouch impostor-marker\n").expect("impostor");
+            fs::set_permissions(&impostor, fs::Permissions::from_mode(0o755))
+                .expect("impostor permissions");
+        }
+
+        let project_dir = tempfile::tempdir().expect("project directory");
+        let previous_path = std::env::var("PATH").ok();
+        #[cfg(unix)]
+        {
+            // SAFETY: Test-only code, serialized by serial_test; no other
+            // thread reads PATH concurrently.
+            #[expect(unsafe_code)]
+            unsafe {
+                std::env::set_var(
+                    "PATH",
+                    format!(
+                        "{}:{}",
+                        impostor_dir.path().display(),
+                        previous_path.as_deref().unwrap_or("/usr/bin")
+                    ),
+                );
+            }
+        }
+
+        let error = env_check_command(project_dir.path())
+            .and_then(|mut command| command.status().map_err(anyhow::Error::from));
+
+        if let Some(path) = previous_path {
+            // SAFETY: see above.
+            #[expect(unsafe_code)]
+            unsafe {
+                std::env::set_var("PATH", path);
+            }
+        }
+
+        let error = error.expect_err("PATH fallback must be refused without a sibling binary");
+        assert!(
+            error.to_string().contains("refusing PATH fallback"),
+            "{error}"
+        );
+        assert!(
+            !project_dir.path().join("impostor-marker").exists(),
+            "a PATH impostor must never run"
+        );
+        let _ = fs::remove_file(&impostor);
     }
 }

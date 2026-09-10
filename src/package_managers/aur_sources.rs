@@ -41,30 +41,327 @@ pub fn parse_sources(pkg_dir: &Path) -> Result<Vec<SourceFile>> {
 
     let srcinfo = SourceInfoV1::from_string(&content).context("Failed to parse .SRCINFO")?;
 
-    let mut sources = Vec::new();
+    let sources = source_entries(&srcinfo)
+        .iter()
+        .filter_map(|source| extract_http_source(source))
+        .collect::<Vec<_>>();
 
-    // Parse common sources (apply to all architectures)
-    for source in &srcinfo.base.sources {
-        let source_str = source.to_string();
-        if let Some(source_file) = extract_http_source(&source_str) {
-            sources.push(source_file);
-        }
-    }
+    debug!("Parsed {} HTTP/HTTPS sources from .SRCINFO", sources.len());
+    Ok(sources)
+}
 
-    // Also parse architecture-specific sources
+/// Every declared source string, including architecture-specific entries.
+///
+/// Both the HTTP and the VCS prefetch paths work from this list so they can
+/// never disagree about which sources a PKGBUILD declares.
+fn source_entries(srcinfo: &SourceInfoV1) -> Vec<String> {
+    let mut entries = srcinfo
+        .base
+        .sources
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+
     if let Some(arch) = super::aur::utils::current_arch()
         && let Some(arch_props) = srcinfo.base.architecture_properties.get(&arch)
     {
-        for source in &arch_props.sources {
-            let source_str = source.to_string();
-            if let Some(source_file) = extract_http_source(&source_str) {
-                sources.push(source_file);
+        entries.extend(arch_props.sources.iter().map(ToString::to_string));
+    }
+
+    entries
+}
+
+/// VCS clients makepkg can delegate to. Mirrors makepkg's `get_protocol`.
+const VCS_PROTOCOLS: [&str; 5] = ["git", "svn", "hg", "bzr", "fossil"];
+
+/// A source that makepkg fetches with a VCS client rather than over plain HTTP.
+///
+/// The offline build sandbox (`bwrap --unshare-net`) makes these sources
+/// unfetchable during the build, so they must be mirrored into SRCDEST first.
+/// `filename` and `url` reproduce makepkg's own `get_filename`/`get_url`
+/// helpers so a prefetched copy lands exactly where makepkg looks for it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VcsSource {
+    /// makepkg protocol name: `git`, `svn`, `hg`, `bzr`, or `fossil`.
+    pub protocol: String,
+    /// URL handed to the VCS client: the `proto+` prefix and any `?query` /
+    /// `#fragment` removed, matching makepkg's `download_<proto>`.
+    pub url: String,
+    /// SRCDEST entry name, matching makepkg's `get_filename`.
+    pub filename: String,
+    /// The `.SRCINFO` entry as written, for diagnostics.
+    pub raw: String,
+}
+
+/// Parse `.SRCINFO` for VCS sources (`git+`, `svn+`, `hg+`, `bzr+`, `fossil+`).
+pub fn parse_vcs_sources(pkg_dir: &Path) -> Result<Vec<VcsSource>> {
+    let srcinfo_path = pkg_dir.join(".SRCINFO");
+    if !srcinfo_path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let content = std::fs::read_to_string(&srcinfo_path)
+        .with_context(|| format!("Failed to read .SRCINFO at {}", srcinfo_path.display()))?;
+    let srcinfo = SourceInfoV1::from_string(&content).context("Failed to parse .SRCINFO")?;
+
+    let sources = source_entries(&srcinfo)
+        .iter()
+        .filter_map(|source| extract_vcs_source(source))
+        .collect::<Vec<_>>();
+
+    debug!("Parsed {} VCS sources from .SRCINFO", sources.len());
+    Ok(sources)
+}
+
+/// Extract a VCS source from a `.SRCINFO` source entry.
+///
+/// Reproduces makepkg's `get_protocol`, `get_url` and `get_filename` so the
+/// prefetched mirror is found by makepkg without any special casing.
+fn extract_vcs_source(source_url: &str) -> Option<VcsSource> {
+    // PKGBUILD rename syntax: `newname::url`
+    // https://man.archlinux.org/PKGBUILD.5#sources_and_checksums
+    let (custom_filename, netfile) = match source_url.split_once("::") {
+        Some((name, rest)) => (Some(name), rest),
+        None => (None, source_url),
+    };
+
+    // makepkg's get_protocol: text before "://", then before any '+'.
+    let (before_scheme, _) = netfile.split_once("://")?;
+    let protocol = before_scheme.split('+').next().unwrap_or(before_scheme);
+    if !VCS_PROTOCOLS.contains(&protocol) {
+        return None;
+    }
+
+    let filename = custom_filename.map_or_else(
+        || makepkg_vcs_filename(netfile, protocol),
+        ToString::to_string,
+    );
+
+    // makepkg's download_<proto> strips the `proto+` prefix, then the fragment,
+    // then the query string, before handing the URL to the VCS client.
+    let url = netfile
+        .strip_prefix(&format!("{protocol}+"))
+        .unwrap_or(netfile)
+        .split('#')
+        .next()
+        .unwrap_or_default()
+        .split('?')
+        .next()
+        .unwrap_or_default()
+        .to_string();
+
+    Some(VcsSource {
+        protocol: protocol.to_string(),
+        url,
+        filename,
+        raw: source_url.to_string(),
+    })
+}
+
+/// Reproduce makepkg's `get_filename` for a VCS source entry.
+fn makepkg_vcs_filename(netfile: &str, protocol: &str) -> String {
+    // ${filename%%#*} then ${filename%%\?*} then ${filename%/} then ${filename##*/}
+    let without_fragment = netfile.split('#').next().unwrap_or_default();
+    let without_query = without_fragment.split('?').next().unwrap_or_default();
+    let base = without_query
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or_default();
+
+    match protocol {
+        // ${filename%%.git*} — strips from the first `.git` occurrence.
+        "git" => base
+            .find(".git")
+            .map_or_else(|| base.to_string(), |index| base[..index].to_string()),
+        // ${filename#*lp:}
+        "bzr" => base
+            .split_once("lp:")
+            .map_or_else(|| base.to_string(), |(_, rest)| rest.to_string()),
+        // ${filename}.fossil
+        "fossil" => format!("{base}.fossil"),
+        _ => base.to_string(),
+    }
+}
+
+/// Outcome of the VCS prefetch pass.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct VcsPrefetchSummary {
+    /// SRCDEST entries that were already populated.
+    pub cached: Vec<String>,
+    /// Sources newly mirrored by omg.
+    pub prefetched: Vec<String>,
+    /// Sources that still require network during the build because no cached
+    /// copy exists. omg can only mirror `git`; other VCS clients (and git URLs
+    /// on unauthenticated transports) stay listed here.
+    pub needs_network: Vec<String>,
+}
+
+/// Reject SRCDEST entry names that are not a single plain path component.
+fn validate_source_filename(filename: &str) -> Result<()> {
+    anyhow::ensure!(
+        !filename.is_empty()
+            && filename != "."
+            && filename != ".."
+            && !filename.contains('/')
+            && !filename.contains('\\')
+            && !Path::new(filename).is_absolute(),
+        "unsafe source filename: {filename:?}"
+    );
+    Ok(())
+}
+
+/// Mirror every VCS source into `srcdest` so the network-less sandbox can build.
+///
+/// makepkg's `extract_git` creates the working copy with a *local* `git clone`
+/// from `$SRCDEST` whenever `--cleanbuild` cleared `$SRCDIR`, and its
+/// `download_git` only warns when the mirror's `git fetch` fails offline. A
+/// populated mirror is therefore sufficient for a fully offline git build.
+///
+/// Non-git sources are reported in [`VcsPrefetchSummary::needs_network`]: omg
+/// cannot reproduce `svn`/`hg`/`bzr`/`fossil` fetches, so those still need
+/// `aur.allow_network = true` or a pre-populated SRCDEST.
+pub async fn prefetch_vcs_sources(sources: &[VcsSource], srcdest: &Path) -> VcsPrefetchSummary {
+    let mut summary = VcsPrefetchSummary::default();
+
+    for source in sources {
+        if validate_source_filename(&source.filename).is_err() {
+            warn!(
+                "Rejecting VCS source with an unsafe SRCDEST filename: {:?}",
+                source.raw
+            );
+            summary.needs_network.push(source.raw.clone());
+            continue;
+        }
+
+        let destination = srcdest.join(&source.filename);
+        if is_populated_directory(&destination).await {
+            summary.cached.push(source.raw.clone());
+            continue;
+        }
+
+        if source.protocol != "git" || !is_prefetchable_git_url(&source.url) {
+            summary.needs_network.push(source.raw.clone());
+            continue;
+        }
+
+        match mirror_git_repository(&source.url, &destination).await {
+            Ok(()) => {
+                debug!("Mirrored VCS source {} into SRCDEST", source.url);
+                summary.prefetched.push(source.raw.clone());
+            }
+            Err(error) => {
+                // A concurrent prefetch may have won the race; treat a now
+                // populated destination as success rather than failing the
+                // build for an already-satisfied source.
+                if is_populated_directory(&destination).await {
+                    summary.cached.push(source.raw.clone());
+                } else {
+                    warn!("Failed to mirror VCS source {}: {error:#}", source.url);
+                    summary.needs_network.push(source.raw.clone());
+                }
             }
         }
     }
 
-    debug!("Parsed {} HTTP/HTTPS sources from .SRCINFO", sources.len());
-    Ok(sources)
+    summary
+}
+
+/// True when `path` is a directory holding at least one entry.
+///
+/// Symlinks are deliberately not followed: an SRCDEST entry planted as a
+/// symlink must never be treated as a valid cache.
+async fn is_populated_directory(path: &Path) -> bool {
+    match tokio::fs::symlink_metadata(path).await {
+        Ok(metadata) if metadata.is_dir() => {
+            std::fs::read_dir(path).is_ok_and(|mut entries| entries.next().is_some())
+        }
+        _ => false,
+    }
+}
+
+/// Schemes omg is willing to mirror on its own.
+///
+/// Plain `http://` and `git://` are excluded because the transport is
+/// unauthenticated; those keep requiring the explicit `aur.allow_network`
+/// opt-in (makepkg then fetches them inside the sandbox).
+fn is_prefetchable_git_url(url: &str) -> bool {
+    url.starts_with("https://") || url.starts_with("ssh://") || url.starts_with("file://")
+}
+
+/// `git clone --mirror` a source into its SRCDEST entry, atomically.
+async fn mirror_git_repository(url: &str, destination: &Path) -> Result<()> {
+    let parent = destination.parent().unwrap_or_else(|| Path::new("."));
+    tokio::fs::create_dir_all(parent).await.ok();
+
+    // Clear a stale non-directory or empty-directory occupant, but never a
+    // symlink: a planted link could redirect the mirror outside SRCDEST.
+    match tokio::fs::symlink_metadata(destination).await {
+        Ok(metadata) => {
+            anyhow::ensure!(
+                !metadata.file_type().is_symlink(),
+                "refusing to mirror into a symlinked SRCDEST entry: {}",
+                destination.display()
+            );
+            if metadata.is_dir() {
+                tokio::fs::remove_dir(destination)
+                    .await
+                    .with_context(|| format!("Failed to clear {}", destination.display()))?;
+            } else {
+                tokio::fs::remove_file(destination)
+                    .await
+                    .with_context(|| format!("Failed to clear {}", destination.display()))?;
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("Failed to inspect {}", destination.display()));
+        }
+    }
+
+    // Clone into a same-filesystem staging path so an interrupted clone never
+    // leaves a half-populated mirror that makepkg would accept as a cache.
+    let staging = tempfile::Builder::new()
+        .prefix(".vcs-")
+        .tempdir_in(parent)
+        .with_context(|| format!("Failed to stage a mirror in {}", parent.display()))?;
+    let staging_path = staging.path().join("mirror");
+
+    let mut command = tokio::process::Command::new("git");
+    command
+        .arg("clone")
+        .arg("--mirror")
+        .arg("--origin=origin")
+        .arg("--")
+        .arg(url)
+        .arg(&staging_path)
+        // The URL comes from an untrusted PKGBUILD: never read ambient or
+        // repository configuration and never prompt for credentials.
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
+        .env_remove("GIT_ASKPASS")
+        .env_remove("SSH_ASKPASS");
+
+    let output = command
+        .output()
+        .await
+        .context("Failed to run git clone --mirror")?;
+    anyhow::ensure!(
+        output.status.success(),
+        "git clone --mirror failed for {url}: {}",
+        String::from_utf8_lossy(&output.stderr).trim()
+    );
+
+    tokio::fs::rename(&staging_path, destination)
+        .await
+        .with_context(|| format!("Failed to publish mirror at {}", destination.display()))?;
+    Ok(())
 }
 
 /// Extract HTTP/HTTPS source from a source URL string
@@ -166,12 +463,7 @@ pub async fn download_sources(sources: Vec<SourceFile>, srcdest: &Path) -> Sourc
             // hostile PKGBUILD's `name::url` rename syntax. Reject anything
             // that is not a plain filename — separators, parent components,
             // absolute paths — so downloads can never escape SRCDEST.
-            if filename.is_empty()
-                || filename.contains('/')
-                || filename.contains('\\')
-                || Path::new(&filename).is_absolute()
-                || filename.split('/').any(|part| part == "..")
-            {
+            if validate_source_filename(&filename).is_err() {
                 warn!("Rejecting unsafe source filename from PKGBUILD: {filename:?}");
                 return Err(anyhow::anyhow!("unsafe source filename: {filename:?}"));
             }
@@ -513,5 +805,172 @@ mod public_source_tests {
                 .await
                 .is_err()
         );
+    }
+
+    // --- VCS sources ---------------------------------------------------
+
+    #[test]
+    fn git_source_matches_makepkg_filename_and_url() {
+        // The exact shape reported in the field: `?signed` plus a `#tag=`
+        // fragment must not change the SRCDEST entry name, and the URL handed
+        // to git must drop both, because makepkg compares the mirror's
+        // `remote.origin.url` against the stripped form.
+        let source = extract_vcs_source(
+            "git+https://gitlab.freedesktop.org/gstreamer/orc.git?signed#tag=0.4.44",
+        )
+        .expect("git+ sources must be recognised");
+
+        assert_eq!(source.protocol, "git");
+        assert_eq!(source.filename, "orc");
+        assert_eq!(
+            source.url,
+            "https://gitlab.freedesktop.org/gstreamer/orc.git"
+        );
+    }
+
+    #[test]
+    fn vcs_source_honours_rename_syntax() {
+        let source = extract_vcs_source("custom::git+https://example.com/real-repo.git#tag=v1")
+            .expect("renamed git+ sources must be recognised");
+
+        assert_eq!(source.filename, "custom");
+        assert_eq!(source.url, "https://example.com/real-repo.git");
+    }
+
+    #[test]
+    fn other_vcs_protocols_are_recognised_without_a_git_suffix() {
+        for (entry, protocol, filename) in [
+            ("svn+https://svn.example.com/project/trunk", "svn", "trunk"),
+            ("hg+https://hg.example.com/repo", "hg", "repo"),
+            (
+                "bzr+https://launchpad.net/bzr-project",
+                "bzr",
+                "bzr-project",
+            ),
+            (
+                "fossil+https://fossil.example.com/repo",
+                "fossil",
+                "repo.fossil",
+            ),
+        ] {
+            let source = extract_vcs_source(entry).expect("VCS entry must be recognised");
+            assert_eq!(source.protocol, protocol, "{entry}");
+            assert_eq!(source.filename, filename, "{entry}");
+        }
+    }
+
+    #[test]
+    fn plain_https_and_local_sources_are_not_vcs() {
+        assert!(extract_vcs_source("https://example.com/file.tar.gz").is_none());
+        assert!(extract_vcs_source("local-file.patch").is_none());
+        assert!(extract_vcs_source("https://example.com/repo.git").is_none());
+    }
+
+    #[test]
+    fn only_authenticated_transports_are_mirrored_by_omg() {
+        assert!(is_prefetchable_git_url("https://example.com/repo.git"));
+        assert!(is_prefetchable_git_url("ssh://git@example.com/repo.git"));
+        assert!(is_prefetchable_git_url("file:///srv/repo.git"));
+        // Unauthenticated transports keep requiring `aur.allow_network`.
+        assert!(!is_prefetchable_git_url("http://example.com/repo.git"));
+        assert!(!is_prefetchable_git_url("git://example.com/repo.git"));
+    }
+
+    #[test]
+    fn source_filenames_may_not_escape_srcdest() {
+        for rejected in ["", ".", "..", "a/b", "a\\b", "/absolute"] {
+            assert!(
+                validate_source_filename(rejected).is_err(),
+                "{rejected:?} must be rejected"
+            );
+        }
+        for accepted in ["orc", "source.tar.gz", ".hidden"] {
+            assert!(
+                validate_source_filename(accepted).is_ok(),
+                "{accepted:?} must be accepted"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn git_sources_are_mirrored_into_srcdest_and_then_cached() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let origin = temp.path().join("origin");
+        std::fs::create_dir_all(&origin).expect("create origin");
+
+        // Build the fixture with a single shell invocation so this test forks
+        // the test process once instead of once per Git command. Other suites
+        // rely on `flock` timing, and every fork in this process briefly
+        // duplicates the whole descriptor table.
+        let status = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(
+                "set -e\n\
+                 git init --quiet --initial-branch=main\n\
+                 printf hello > README\n\
+                 git add README\n\
+                 git commit --quiet -m init\n\
+                 git tag v1\n",
+            )
+            .current_dir(&origin)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@example.com")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@example.com")
+            .status()
+            .expect("git available");
+        assert!(status.success(), "failed to build the origin fixture");
+
+        let srcdest = temp.path().join("srcdest");
+        std::fs::create_dir_all(&srcdest).expect("create srcdest");
+        let source = VcsSource {
+            protocol: "git".to_string(),
+            url: format!("file://{}", origin.display()),
+            filename: "mirror".to_string(),
+            raw: "git+file:///origin#tag=v1".to_string(),
+        };
+
+        let first = prefetch_vcs_sources(std::slice::from_ref(&source), &srcdest).await;
+        assert_eq!(
+            first.prefetched.len(),
+            1,
+            "mirror must be created: {first:?}"
+        );
+        assert!(first.needs_network.is_empty(), "{first:?}");
+        // A bare mirror keeps the tag makepkg checks out for `#tag=`.
+        assert!(srcdest.join("mirror").join("objects").is_dir());
+
+        // A second pass must reuse the mirror instead of re-cloning.
+        let second = prefetch_vcs_sources(std::slice::from_ref(&source), &srcdest).await;
+        assert_eq!(second.cached.len(), 1, "mirror must be reused: {second:?}");
+        assert!(second.prefetched.is_empty(), "{second:?}");
+    }
+
+    #[tokio::test]
+    async fn unprefetchable_vcs_sources_are_reported_not_silently_skipped() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let srcdest = temp.path().join("srcdest");
+        std::fs::create_dir_all(&srcdest).expect("create srcdest");
+
+        let sources = vec![
+            VcsSource {
+                protocol: "svn".to_string(),
+                url: "https://svn.example.com/project/trunk".to_string(),
+                filename: "trunk".to_string(),
+                raw: "svn+https://svn.example.com/project/trunk".to_string(),
+            },
+            VcsSource {
+                protocol: "git".to_string(),
+                url: "http://example.com/repo.git".to_string(),
+                filename: "repo".to_string(),
+                raw: "git+http://example.com/repo.git".to_string(),
+            },
+        ];
+
+        let summary = prefetch_vcs_sources(&sources, &srcdest).await;
+        assert_eq!(summary.needs_network.len(), 2, "{summary:?}");
+        assert!(summary.prefetched.is_empty(), "{summary:?}");
     }
 }
