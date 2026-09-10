@@ -148,6 +148,7 @@ async fn download_database_signature(
     client: &Client,
     database_url: &str,
     staged_signature: &Path,
+    live_signature: &Path,
     siglevel: alpm::SigLevel,
 ) -> Result<()> {
     match tokio::fs::remove_file(staged_signature).await {
@@ -169,6 +170,20 @@ async fn download_database_signature(
     if response.status() == reqwest::StatusCode::NOT_FOUND
         && siglevel.contains(alpm::SigLevel::DATABASE_OPTIONAL)
     {
+        // `DatabaseOptional` allows an unsigned database, but it must never
+        // let a mirror *downgrade* a repository that already carries a
+        // verified signature: a mirror that simply stops serving the .sig
+        // would otherwise be able to strip it and publish an unauthenticated
+        // database (csf sync signature-downgrade class). Treating it as a
+        // mirror failure makes the retry loop try the next mirror, and fails
+        // closed when every mirror omits the signature.
+        anyhow::ensure!(
+            !live_signature.exists(),
+            "Mirror {safe_url} served no database signature, but {} already exists; \
+             refusing to downgrade this repository to an unsigned database. \
+             Fix the mirror, or delete that signature file to accept unsigned databases.",
+            live_signature.display()
+        );
         return Ok(());
     }
     anyhow::ensure!(
@@ -194,6 +209,14 @@ async fn download_db(
     siglevel: alpm::SigLevel,
     task: &ProgressTask,
 ) -> Result<()> {
+    // The live signature path is the live database path with `.sig` appended,
+    // matching the `signature_destination` naming used when staging.
+    let live_signature = {
+        let mut path = live_dest.as_os_str().to_os_string();
+        path.push(".sig");
+        PathBuf::from(path)
+    };
+
     let existing_mtime = if live_dest.exists() {
         tokio::fs::metadata(live_dest)
             .await
@@ -266,7 +289,15 @@ async fn download_db(
                     .with_context(|| {
                         format!("Failed to stage unchanged database {}", live_dest.display())
                     })?;
-                match download_database_signature(client, url, staged_signature, siglevel).await {
+                match download_database_signature(
+                    client,
+                    url,
+                    staged_signature,
+                    &live_signature,
+                    siglevel,
+                )
+                .await
+                {
                     Ok(()) => {
                         task.finish(Outcome::Done);
                         return Ok(());
@@ -304,8 +335,14 @@ async fn download_db(
                 last_error = Some(error);
                 continue;
             }
-            if let Err(error) =
-                download_database_signature(client, url, staged_signature, siglevel).await
+            if let Err(error) = download_database_signature(
+                client,
+                url,
+                staged_signature,
+                &live_signature,
+                siglevel,
+            )
+            .await
             {
                 last_error = Some(error);
                 continue;
@@ -497,6 +534,12 @@ fn commit_staged_files(
         let backup = publications[index]
             .staged
             .with_extension(format!("omg-backup-{index}"));
+        if !publications[index].publish {
+            // This entry is not being replaced (a repository served no database
+            // signature). Leave the live file untouched: deleting it would let
+            // a mirror strip a signature that is already installed.
+            continue;
+        }
         if let Err(error) = rustix::fs::linkat(
             rustix::fs::CWD,
             &publications[index].destination,
@@ -518,9 +561,9 @@ fn commit_staged_files(
         let publication = &publications[index];
         let result = if publication.publish {
             std::fs::rename(&publication.staged, &publication.destination)
-        } else if publication.backup.is_some() {
-            std::fs::remove_file(&publication.destination)
         } else {
+            // Not published: the live entry is intentionally left as-is (see
+            // the backup loop), so there is nothing to do.
             Ok(())
         };
         if let Err(error) = result {
@@ -1001,7 +1044,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_optional_signature_removes_stale_live_signature() {
+    fn missing_optional_signature_preserves_live_signature() {
         let mut directory = tempfile::tempdir().expect("database directory");
         let database_root = directory.path().to_path_buf();
         let live_database = directory.path().join("core.db");
@@ -1009,7 +1052,7 @@ mod tests {
         let staged_database = directory.path().join("core.staged");
         let absent_signature = directory.path().join("core.sig.absent");
         std::fs::write(&live_database, b"old").expect("seed live database");
-        std::fs::write(&live_signature, b"old-signature").expect("seed stale signature");
+        std::fs::write(&live_signature, b"old-signature").expect("seed live signature");
         std::fs::write(&staged_database, b"new").expect("stage database");
 
         commit_staged_files(
@@ -1032,7 +1075,14 @@ mod tests {
         .expect("publish unsigned optional database");
 
         assert_eq!(std::fs::read(live_database).unwrap(), b"new");
-        assert!(!live_signature.exists());
+        // Publication must never delete a signature that was not replaced.
+        // The download path already refuses to downgrade a signed repository
+        // to unsigned, so this only guards the deletion itself.
+        assert_eq!(
+            std::fs::read(&live_signature).unwrap(),
+            b"old-signature",
+            "a signature the mirror did not replace must be left in place"
+        );
     }
 
     #[test]
