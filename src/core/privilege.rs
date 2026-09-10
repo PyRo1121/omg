@@ -98,6 +98,38 @@ const PRIVILEGED_ENV_SCRUB: &[&str] = &[
     "OMG_PACMAN_CACHE_DIR",
     "OMG_PACMAN_CACHE_ROOT_DIR",
     "OMG_PACMAN_MIRRORLIST",
+    // State and configuration redirection: a root child must resolve its
+    // config, policy, data, cache and socket locations itself, never from the
+    // caller's environment. `paths::env_path` also refuses these for root, so
+    // this list covers paths that read the environment directly.
+    "OMG_CONFIG_DIR",
+    "OMG_DATA_DIR",
+    "OMG_CACHE_DIR",
+    "OMG_DAEMON_DATA_DIR",
+    "OMG_SOCKET_PATH",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "XDG_CACHE_HOME",
+    "XDG_RUNTIME_DIR",
+    // Diagnostic sinks and trust-policy overrides that must not be selectable
+    // by the caller of a privileged operation.
+    "OMG_SENTRY_DSN",
+    "OMG_SELF_UPDATE_ALLOW_UNVERIFIED_PROVENANCE",
+    // TLS trust anchors and the egress path. reqwest reads these on its own
+    // (rustls-native-certs honours SSL_CERT_FILE/SSL_CERT_DIR; hyper-util reads
+    // the proxy variables), so a permissive sudoers env_keep would otherwise
+    // let the caller choose which CA root trusts or which proxy it talks to.
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "CURL_CA_BUNDLE",
+    "HTTPS_PROXY",
+    "HTTP_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY",
+    "https_proxy",
+    "http_proxy",
+    "all_proxy",
+    "no_proxy",
     // Force terminal-based password prompt, never GUI askpass
     "SUDO_ASKPASS",
     "SSH_ASKPASS",
