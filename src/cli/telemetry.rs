@@ -36,7 +36,7 @@ pub fn privacy_status() -> Result<()> {
     println!("  omg privacy opt-in   Re-enable telemetry");
     println!();
     println!("  Account export and deletion require an authenticated session:");
-    println!("  https://omg.latham.cloud/privacy/");
+    println!("  https://getomg.xyz/privacy/");
     Ok(())
 }
 

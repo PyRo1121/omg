@@ -42,4 +42,4 @@ The daemon maintains a binary snapshot for package counters. The `omg ec`, `omg 
 Official queries can use daemon caches or a direct backend fallback. On Arch, official and AUR searches run concurrently unless `--no-aur` is set. AUR lookup does not wait for insufficient local results. See [search behavior](./package-search.md).
 
 ### Status Monitoring
-System status is generated in the background every 5 minutes and stored in both Tier 1 and Tier 2. This ensures that prompt counters (`omg ec|tc|oc|uc`) always have access to a pre-computed, durable state without needing to query the system live.
+System status is generated in the background every 5 minutes and stored in Tier 1 and Tier 2 (`status-cache.json`). The daemon also writes the 32-byte atomic Tier 3 binary snapshot (`omg.status` next to the socket), allowing prompt counters (`omg ec|tc|oc|uc`) to read package totals in microseconds with zero IPC.

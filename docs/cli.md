@@ -42,7 +42,7 @@ This guide documents every OMG command with detailed explanations, examples, and
 Search for packages across official repositories and AUR.
 
 ```bash
-omg search <query> [OPTIONS]
+omg search <query> [OPTIONS] [aliases: s]
 ```
 
 **Options:**
@@ -51,7 +51,7 @@ omg search <query> [OPTIONS]
 | -------- | ------- | ------------- |
 | `--detailed` | `-d` | Show detailed source metadata (votes, popularity where available) |
 | `--no-aur` | | Search official repositories only (skip community sources) |
-| `--limit <LIMIT>` | `-l` | Maximum number of results to display (default: 50) |
+| `--limit <LIMIT>` | `-l` | Maximum number of results to display (default: 15) |
 
 **Examples:**
 
@@ -77,7 +77,7 @@ Latency depends on the backend, cache state, query, and enabled sources. See [be
 Install packages from official repositories or AUR.
 
 ```bash
-omg install [packages...] [OPTIONS]
+omg install [packages...] [OPTIONS] [aliases: i]
 ```
 
 **Options:**
@@ -87,6 +87,7 @@ omg install [packages...] [OPTIONS]
 | `--yes` | `-y` | Skip confirmation prompt |
 | `--dry-run` | | Show what would be installed without making changes |
 | `--review` | | Force PKGBUILD review for each AUR build (on by default; see `aur.review_pkgbuild`) |
+| `--allow-local-file` | | Explicitly permit installation from local package archives |
 
 **Examples:**
 
@@ -138,7 +139,7 @@ package names, and the `i` alias.
 Remove installed packages.
 
 ```bash
-omg remove <packages...> [OPTIONS]
+omg remove <packages...> [OPTIONS] [aliases: r]
 ```
 
 **Options:**
@@ -169,7 +170,7 @@ omg remove pkg1 pkg2 pkg3
 Update all packages or check for updates.
 
 ```bash
-omg update [OPTIONS]
+omg update [OPTIONS] [aliases: u]
 ```
 
 **Options:**
@@ -179,6 +180,7 @@ omg update [OPTIONS]
 | `--check` | `-c` | Only check for updates, don't install |
 | `--yes` | `-y` | Skip confirmation prompt |
 | `--dry-run` | | Show what would be updated without making changes |
+| `--no-sync` | | Do not refresh sync databases before upgrade |
 | `--fast` | `-f` | Fast mode: sync + upgrade in a single operation (no preview) |
 | `--turbo` | `-T` | Turbo mode: skip sync, use cached data, parallel extraction |
 | `--review` | | Force PKGBUILD review for each AUR build (on by default; see `aur.review_pkgbuild`) |
@@ -316,7 +318,7 @@ Measure this operation on the selected backend with recorded cache conditions; n
 Synchronize package databases.
 
 ```bash
-omg sync
+omg sync [aliases: sy]
 ```
 
 **Examples:**
@@ -465,6 +467,15 @@ omg use <runtime> [version]
 | `deno` | | `.deno-version`, `.dvmrc` |
 | `zig` | `ziglang` | `.zig-version` |
 | `dotnet` | | `global.json` |
+| `erlang` | | `.tool-versions` |
+| `php` | | `.php-version` |
+| `swift` | | `.swift-version` |
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--uninstall` | Uninstall the specified version instead of activating it |
 
 Plus 54 GitHub-release tools managed through one generic backend
 (`ripgrep`, `fd`, `bat`, `eza`, `fzf`, `starship`, `just`, `task`, `jq`,
@@ -553,7 +564,7 @@ omg use pi 0.83.0
 List installed or available runtime versions.
 
 ```bash
-omg list [runtime] [OPTIONS]
+omg list [runtime] [OPTIONS] [aliases: ls]
 ```
 
 **Options:**
@@ -621,8 +632,14 @@ Print the shell hook script for runtime auto-switching.
 > [Shell Integration](./shell-integration.md).
 
 ```bash
-omg hook <shell>
+omg hook <shell> [OPTIONS]
 ```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--uninstall` | Remove OMG hooks from shell startup configuration |
 
 **Supported Shells:**
 
@@ -668,6 +685,14 @@ omg completions <shell> [OPTIONS]
 |--------|-------------|
 | `--stdout` | Print to stdout instead of installing |
 
+**Supported Shells:**
+
+- `zsh`
+- `bash`
+- `fish`
+- `powershell` (alias: `pwsh`)
+- `elvish`
+
 **Examples:**
 
 ```bash
@@ -679,6 +704,9 @@ omg completions bash
 
 # Install Fish completions
 omg completions fish
+
+# Output PowerShell completions
+omg completions powershell --stdout
 
 # Print a script without installing it
 omg completions zsh --stdout > _omg
@@ -945,7 +973,7 @@ omg run build,test,lint --parallel
 Create new projects from templates.
 
 ```bash
-omg new <stack> <name>
+omg new <stack> <name> [aliases: create]
 ```
 
 **Available Stacks:**
@@ -1083,8 +1111,15 @@ omg init --skip-shell
 Update OMG to the latest version.
 
 ```bash
-omg self-update [aliases: up]
+omg self-update [OPTIONS] [aliases: up]
 ```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--force` | Force update even if already on the latest version |
+| `--version <VERSION>` | Update or downgrade to a specific version |
 
 **Features:**
 
@@ -1162,9 +1197,9 @@ omg snapshot <SUBCOMMAND>
 
 | Subcommand | Description |
 | ------------ | ------------- |
-| `create` | Create a new snapshot |
+| `create [-m <msg>]` | Create a new snapshot (optional message via `-m, --message`) |
 | `list` | List all snapshots |
-| `restore <id>` | Restore a snapshot |
+| `restore <id> [-y]` | Restore a snapshot (skip prompt with `-y, --yes`) |
 | `delete <id>` | Delete a snapshot |
 
 **Examples:**
@@ -1389,7 +1424,7 @@ omg ci <SUBCOMMAND>
 
 | Subcommand | Description |
 | ------------ | ------------- |
-| `init <provider>` | Generate CI config (github, gitlab, circleci) |
+| `init <provider> [--advanced]` | Generate CI config (github, gitlab, circleci; optional `--advanced` matrix) |
 | `validate` | Validate environment matches CI expectations |
 | `cache` | Show recommended cache paths |
 
@@ -1728,7 +1763,14 @@ These counters have no universal latency guarantee.
 
 - `status`: system status
 - `search` / `s`: package search
-- `info` / `i`: package details
+- `install` / `i`: package installation
+- `remove` / `r`: package removal
+- `update` / `u`: package update
+- `sync` / `sy`: database sync
+- `info`: package details
+- `list` / `ls`: list runtimes
+- `dash` / `d`: terminal dashboard
+- `self-update` / `up`: update CLI binary
 
 Execution paths and costs depend on the backend and daemon availability.
 

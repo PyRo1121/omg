@@ -56,7 +56,7 @@ omg env check
 
 The check compares the recorded environment with the current machine and reports drift. It exits nonzero when they differ. Review the lockfile before committing or sharing it because it contains environment inventory.
 
-`omg env share` can publish the lockfile through GitHub Gist and requires GitHub CLI access. Sharing uploads data. `omg env sync <gist-url>` downloads and validates a lockfile, backs up a differing existing file, and checks drift. Neither sync nor check installs packages or runtimes.
+`omg env share` can publish the lockfile through GitHub Gist and requires a `GITHUB_TOKEN` environment variable. Sharing uploads data. `omg env sync <gist-url>` downloads and validates a lockfile, backs up a differing existing file, and checks drift. Neither sync nor check installs packages or runtimes.
 
 ## Add automatic switching
 

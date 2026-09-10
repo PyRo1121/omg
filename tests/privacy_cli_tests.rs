@@ -37,7 +37,7 @@ fn test_privacy_status_default() {
     );
     assert!(
         output.contains("Account export and deletion require an authenticated session")
-            && output.contains("https://omg.latham.cloud/privacy/"),
+            && output.contains("https://getomg.xyz/privacy/"),
         "Output should direct account-level rights to the authenticated web surface: {output}"
     );
 }
@@ -523,7 +523,7 @@ fn test_privacy_commands_work_offline() {
     result.assert_success();
     let output = result.combined_output();
     assert!(
-        output.contains("privacy export") && output.contains("https://omg.latham.cloud/privacy/"),
+        output.contains("privacy export") && output.contains("https://getomg.xyz/privacy/"),
         "Status must render local commands and the authenticated account surface: {output}"
     );
 
