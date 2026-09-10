@@ -16,7 +16,9 @@ _omg_completions() {
         suggestions=$(omg complete --shell bash --current "$cur" --last "$last" --full "$full" 2>/dev/null) || return 0
         while IFS= read -r suggestion; do
             if [[ -n "$suggestion" ]]; then
-                COMPREPLY+=("$suggestion")
+                # `omg complete` already rejects shell metacharacters; quote
+                # anyway so a future suggestion cannot become a live construct.
+                COMPREPLY+=("$(printf '%q' "$suggestion")")
             fi
         done <<< "$suggestions"
     fi

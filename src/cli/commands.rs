@@ -96,9 +96,30 @@ pub async fn complete(_shell: &str, current: &str, last: &str, full: Option<&str
     };
 
     for suggestion in suggestions {
-        println!("{suggestion}");
+        // The shell inserts completion output into the user's command line
+        // verbatim (`COMPREPLY` in bash, `compadd` in zsh), and this text can
+        // originate in untrusted project files (`.nvmrc`, `package.json`
+        // scripts) or remote metadata. Emit only plain words so a crafted value
+        // can never become a live shell construct such as `$(…)`.
+        if is_safe_completion(&suggestion) {
+            println!("{suggestion}");
+        }
     }
     Ok(())
+}
+
+/// Whether a completion suggestion is safe to hand to a shell verbatim.
+///
+/// Deliberately excludes every shell metacharacter — `$`, backticks, quotes,
+/// semicolons, pipes, redirections, globs, whitespace and control characters —
+/// so a suggestion can only ever expand to a single literal word.
+fn is_safe_completion(suggestion: &str) -> bool {
+    !suggestion.is_empty()
+        && suggestion.len() <= 512
+        && suggestion.chars().all(|character| {
+            character.is_ascii_alphanumeric()
+                || matches!(character, '.' | '_' | '+' | '@' | '/' | ':' | '-' | '=')
+        })
 }
 
 fn package_completion_command<'a>(root: Option<&'a str>, last: &'a str) -> &'a str {
@@ -1831,5 +1852,53 @@ mod tests {
                 .contains("No supported package manager backend available"),
             "got: {error}"
         );
+    }
+
+    #[test]
+    fn completion_suggestions_cannot_inject_shell_syntax() {
+        // Plain identifiers, versions, paths and flags stay available.
+        for accepted in [
+            "node",
+            "lib32-orc",
+            "1.2.3",
+            "@scope/pkg",
+            "aur.allow_network",
+            "run-tests",
+            "--json",
+            "tools/node/v20",
+            "key=value",
+        ] {
+            assert!(is_safe_completion(accepted), "{accepted:?} must be allowed");
+        }
+
+        // Anything that the shell would interpret as more than a literal word
+        // is dropped: this is exactly how a hostile `.nvmrc` escalated into a
+        // live command line.
+        for rejected in [
+            "",
+            "$(touch /tmp/pwned)",
+            "`id`",
+            "a;id",
+            "a|id",
+            "a&&id",
+            "a$(id)",
+            "a b",
+            "a\nb",
+            "a'b",
+            "a\"b",
+            "a> /etc/passwd",
+            "a<b",
+            "*",
+            "~root",
+            "a\\b",
+        ] {
+            assert!(
+                !is_safe_completion(rejected),
+                "{rejected:?} must be rejected"
+            );
+        }
+
+        assert!(is_safe_completion(&"a".repeat(512)));
+        assert!(!is_safe_completion(&"a".repeat(513)));
     }
 }
