@@ -129,9 +129,12 @@ pub fn fchown_path_no_follow(path: &Path, uid: Option<u32>, gid: Option<u32>) ->
 
     let mut options = std::fs::OpenOptions::new();
     options.read(true).custom_flags(nix::libc::O_NOFOLLOW);
-    let file = options
-        .open(path)
-        .with_context(|| format!("Failed to open {} without following symlinks", path.display()))?;
+    let file = options.open(path).with_context(|| {
+        format!(
+            "Failed to open {} without following symlinks",
+            path.display()
+        )
+    })?;
     nix::unistd::fchown(
         &file,
         uid.map(nix::unistd::Uid::from_raw),
@@ -218,7 +221,25 @@ fn atomic_write_file_sync_inner<P: AsRef<Path>, C: AsRef<[u8]>>(
         None
     } else {
         match std::fs::symlink_metadata(&path) {
-            Ok(metadata) if metadata.file_type().is_file() => Some(metadata.permissions()),
+            Ok(metadata) if metadata.file_type().is_file() => {
+                // Preserve only the nine permission bits. Reapplying the raw
+                // `st_mode` would carry set-user-ID, set-group-ID and sticky
+                // bits onto the replacement, so a caller that can pre-create
+                // the destination could turn a privileged write into a
+                // set-user-ID, world-writable executable (csf_5eef98bc
+                // family).
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    Some(std::fs::Permissions::from_mode(
+                        metadata.permissions().mode() & 0o777,
+                    ))
+                }
+                #[cfg(not(unix))]
+                {
+                    Some(metadata.permissions())
+                }
+            }
             Ok(_) => None,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
             Err(error) => {
@@ -301,6 +322,26 @@ mod tests {
             std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
             0o640
         );
+        assert_eq!(std::fs::read(&path).unwrap(), b"new");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_never_carries_set_id_bits_onto_the_replacement() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = TempDir::new().unwrap();
+        let path = directory.path().join("planted-executable");
+        std::fs::write(&path, b"old").unwrap();
+        // A caller that can pre-create the destination must not be able to
+        // make the privileged replacement set-user-ID/set-group-ID/sticky.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o4777)).unwrap();
+
+        atomic_write_file_sync(&path, b"new").unwrap();
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o7000, 0, "set-id/sticky bits leaked: {mode:o}");
+        assert_eq!(mode & 0o777, 0o777, "ordinary permission bits are kept");
         assert_eq!(std::fs::read(&path).unwrap(), b"new");
     }
 
