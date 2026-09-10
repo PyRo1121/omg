@@ -33,7 +33,9 @@ use super::super::aur_index::AurIndex;
 use super::super::aur_metadata::{
     AurJsonPackage, index_path, metadata_index_is_fresh, metadata_path,
 };
-use super::super::aur_sources::{download_sources, parse_sources};
+use super::super::aur_sources::{
+    download_sources, parse_sources, parse_vcs_sources, prefetch_vcs_sources,
+};
 #[cfg(feature = "pgp")]
 use super::super::pkgbuild::PkgBuild;
 use crate::config::{AurBuildMethod, Settings};
@@ -467,49 +469,6 @@ fn configure_auxiliary_output(command: &mut Command) {
     } else {
         command.stdout(Stdio::null()).stderr(Stdio::null());
     }
-}
-
-pub(crate) fn refresh_git_checkout(pkg_dir: &Path) -> Result<()> {
-    let steps: [&[&str]; 3] = [
-        &["fetch", "--depth=1", "--filter=blob:none", "origin"],
-        &["clean", "-fd"],
-        &["reset", "--hard", "FETCH_HEAD"],
-    ];
-    let user = original_user();
-    let home = if user.is_some() {
-        original_user_home()?
-    } else {
-        None
-    };
-    for args in steps {
-        let mut cmd = if let Some(ref user) = user {
-            let mut cmd = crate::core::privilege::system_command("sudo")?;
-            cmd.args(["-u", user]);
-            if let Some(ref home_path) = home {
-                cmd.arg("-H");
-                cmd.env("HOME", home_path);
-            }
-            cmd.arg("git");
-            cmd
-        } else {
-            std::process::Command::new("git")
-        };
-        let output = cmd
-            .current_dir(pkg_dir)
-            .args(args)
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .stdin(Stdio::null())
-            .output()
-            .with_context(|| format!("Failed to run git {} in {}", args[0], pkg_dir.display()))?;
-        anyhow::ensure!(
-            output.status.success(),
-            "git {} failed in {}: {}",
-            args.join(" "),
-            pkg_dir.display(),
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
-    Ok(())
 }
 
 /// Give PKGBUILD-driven processes a minimal deterministic environment.
@@ -2183,6 +2142,24 @@ impl AurClient {
             }
         }
 
+        // Best-effort VCS mirroring: it warms SRCDEST for a later offline
+        // rebuild, but a failure here is not fatal when networking is allowed.
+        match parse_vcs_sources(&pkg_dir) {
+            Ok(vcs_sources) if !vcs_sources.is_empty() => {
+                let summary = prefetch_vcs_sources(&vcs_sources, &env.srcdest).await;
+                if !summary.needs_network.is_empty() {
+                    tracing::debug!(
+                        "VCS sources for {package} still need network at build time: {}",
+                        summary.needs_network.join(", ")
+                    );
+                }
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!("Failed to parse AUR VCS sources for {package}: {error}");
+            }
+        }
+
         let cache_key = self.cache_key(&pkg_dir, &env.makeflags)?;
 
         let cached = self
@@ -3177,19 +3154,31 @@ impl AurClient {
     }
 
     async fn git_pull(&self, pkg_dir: &Path) -> Result<()> {
-        self.refresh_checkout_from(pkg_dir).await
-    }
-
-    async fn refresh_checkout_from(&self, pkg_dir: &Path) -> Result<()> {
         let package = pkg_dir
             .file_name()
             .and_then(|name| name.to_str())
             .context("Invalid AUR source directory")?;
         crate::core::security::validate_package_name(package)?;
-        let pkg_dir = pkg_dir.to_path_buf();
-        self.blocking_build_work(move || refresh_git_checkout(&pkg_dir))
+        self.refresh_checkout_from(pkg_dir, &format!("{AUR_GIT_URL}/{package}.git"))
             .await
-            .context("Git refresh task failed")
+    }
+
+    /// Discard a previously built checkout and clone it again.
+    ///
+    /// Any checkout a sandboxed PKGBUILD could write is untrusted input:
+    /// `.git/config` and `.git/info/attributes` survive `git clean`, and both
+    /// can name a filter or hook that Git would then run on the host during an
+    /// in-place refresh. Cloning from the remote again is what guarantees the
+    /// refresh never executes attacker-controlled Git configuration
+    /// (csf_63f859d75634568213c96858).
+    async fn refresh_checkout_from(&self, pkg_dir: &Path, url: &str) -> Result<()> {
+        let package = pkg_dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .context("Invalid AUR source directory")?;
+        crate::core::security::validate_package_name(package)?;
+        remove_dir_as_user(pkg_dir).await?;
+        self.git_clone_from(package, url).await
     }
 
     async fn run_build(
@@ -3205,6 +3194,23 @@ impl AurClient {
                 summary.failed == 0,
                 "AUR source prefetch failed; build networking is disabled. Cache the declared sources before retrying."
             );
+
+            // VCS sources (git+, svn+, …) are fetched by makepkg with a VCS
+            // client, which cannot reach the network inside the sandbox. Mirror
+            // the ones omg can reproduce into SRCDEST, and fail with an
+            // actionable message for the rest instead of letting makepkg
+            // surface a bare DNS failure from inside the namespace.
+            let vcs_sources = parse_vcs_sources(pkg_dir)?;
+            if !vcs_sources.is_empty() {
+                let vcs = prefetch_vcs_sources(&vcs_sources, &env.srcdest).await;
+                anyhow::ensure!(
+                    vcs.needs_network.is_empty(),
+                    "AUR package '{package}' declares VCS sources that must be fetched while building, \
+                     but build networking is disabled and no cached copy exists in SRCDEST: {}. \
+                     Set 'aur.allow_network = true' (or pre-populate SRCDEST) and retry.",
+                    vcs.needs_network.join(", ")
+                );
+            }
         }
         match self.settings.aur.build_method {
             AurBuildMethod::Bubblewrap => self.run_sandboxed_makepkg(pkg_dir, env, package).await,
@@ -6667,6 +6673,9 @@ mod tests {
         );
         std::fs::write(checkout.join("PKGBUILD"), "pkgver=2\n").unwrap();
 
+        // Taint the checkout the way a sandboxed PKGBUILD can. Each vector
+        // reaches Git state that `git clean -fd` never removes, so an in-place
+        // refresh would execute the filter on the host.
         let marker = temp.path().join("filter-executed");
         let filter = format!("touch {}; cat", marker.display());
         assert!(
@@ -6680,26 +6689,72 @@ mod tests {
             .status
             .success()
         );
+        // 1. Work-tree attributes (the only vector the previous test covered).
         std::fs::write(checkout.join(".gitattributes"), "* filter=hostile\n").unwrap();
+        // 2. Repository-local attributes, which outrank the work tree.
+        std::fs::create_dir_all(checkout.join(".git/info")).unwrap();
+        std::fs::write(checkout.join(".git/info/attributes"), "* filter=hostile\n").unwrap();
+        // 3. A config-selected attributes file outside the work tree.
+        let external_attributes = temp.path().join("external-attributes");
+        std::fs::write(&external_attributes, "* filter=hostile\n").unwrap();
+        assert!(
+            git(&[
+                "-C".as_ref(),
+                checkout.as_os_str(),
+                "config".as_ref(),
+                "core.attributesFile".as_ref(),
+                external_attributes.as_os_str(),
+            ])
+            .status
+            .success()
+        );
+        // 4. A config-selected working tree pointing outside the checkout.
+        let outside = temp.path().join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("precious.txt"), "keep\n").unwrap();
+        assert!(
+            git(&[
+                "-C".as_ref(),
+                checkout.as_os_str(),
+                "config".as_ref(),
+                "core.worktree".as_ref(),
+                outside.as_os_str(),
+            ])
+            .status
+            .success()
+        );
+
         let client = AurClient {
             build_dir: temp.path().to_path_buf(),
             settings: Settings::default(),
             package_base_locks: Arc::new(dashmap::DashMap::new()),
         };
-        client.refresh_checkout_from(&checkout).await.unwrap();
+        client
+            .refresh_checkout_from(&checkout, remote.to_str().unwrap())
+            .await
+            .unwrap();
         assert!(
             !marker.exists(),
             "a tainted checkout must never execute a Git filter on the host"
         );
+        assert!(
+            outside.join("precious.txt").exists(),
+            "a tainted core.worktree must never redirect Git outside the checkout"
+        );
         assert!(!checkout.join(".gitattributes").exists());
-        assert_ne!(
+        assert!(
+            !checkout.join(".git/info/attributes").exists(),
+            "repository-local attributes must not survive a refresh"
+        );
+        assert_eq!(
             std::fs::read_to_string(checkout.join("PKGBUILD")).unwrap(),
-            "pkgver=2\n"
+            "pkgver=1\n",
+            "the checkout must be re-cloned from the remote, discarding local edits"
         );
     }
 
-    #[test]
-    fn refresh_git_checkout_fetches_new_origin_commit() {
+    #[tokio::test]
+    async fn refresh_checkout_from_fetches_new_origin_commit() {
         let temp = tempfile::tempdir().unwrap();
         let remote = temp.path().join("remote.git");
         let seed = temp.path().join("seed");
@@ -6830,7 +6885,15 @@ mod tests {
             .success()
         );
         assert!(!checkout.join("new-file").exists());
-        refresh_git_checkout(&checkout).unwrap();
+        let client = AurClient {
+            build_dir: temp.path().to_path_buf(),
+            settings: Settings::default(),
+            package_base_locks: Arc::new(dashmap::DashMap::new()),
+        };
+        client
+            .refresh_checkout_from(&checkout, remote.to_str().unwrap())
+            .await
+            .unwrap();
         assert_eq!(
             std::fs::read_to_string(checkout.join("new-file")).unwrap(),
             "from-origin\n"
