@@ -29,7 +29,7 @@ jobs:
       - name: Install pinned nightly toolchain
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
-          toolchain: nightly-2026-08-20
+          toolchain: nightly-2026-09-12
 
       - name: Cache fuzz dependencies
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2

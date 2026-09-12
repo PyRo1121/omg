@@ -200,7 +200,7 @@ jobs:
         # Match rust-toolchain.toml (1.95.0) instead of floating "stable"
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
-          toolchain: "1.95.0"
+          toolchain: "1.98.1"
 
       - name: Build
         run: cargo build --release --no-default-features --features debian,pgp,license --locked
@@ -283,7 +283,7 @@ jobs:
         # Match rust-toolchain.toml (1.95.0) instead of floating "stable"
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
-          toolchain: "1.95.0"
+          toolchain: "1.98.1"
 
       - name: Build
         run: cargo build --release --no-default-features --features macos,pgp,license --locked
@@ -328,7 +328,7 @@ jobs:
       - name: Install SBOM metadata toolchain
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
-          toolchain: "1.95.0"
+          toolchain: "1.98.1"
 
       - name: Install SBOM generator
         uses: taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b # v2.87.4
