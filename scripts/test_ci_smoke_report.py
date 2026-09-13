@@ -70,11 +70,41 @@ class ReportingTests(unittest.TestCase):
                     REPORT.configure()
             self.assertEqual(config.read_text(), "original")
 
+    def test_verify_accepts_successful_delivery_receipts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            evidence = Path(directory)
+            run = evidence / "run-safe"
+            run.mkdir()
+            (run / "reporting-status.json").write_text(
+                json.dumps({"exit_code": 0}) + "\n", encoding="utf-8"
+            )
+            self.assertEqual(REPORT.verify(evidence), 0)
+
+    def test_verify_rejects_failed_or_missing_delivery_receipts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            evidence = Path(directory)
+            self.assertNotEqual(REPORT.verify(evidence), 0)
+            run = evidence / "run-failed"
+            run.mkdir()
+            (run / "reporting-status.json").write_text(
+                json.dumps({"exit_code": 1}) + "\n", encoding="utf-8"
+            )
+            self.assertNotEqual(REPORT.verify(evidence), 0)
+
     def test_missing_bash_preserves_failure_evidence(self):
         with tempfile.TemporaryDirectory() as directory:
             with patch.object(REPORT.subprocess, "run", side_effect=FileNotFoundError):
                 self.assertEqual(REPORT.status("ubuntu", "qemu-ubuntu-preflight", "cancelled", Path(directory)), 0)
             self.assertEqual(json.loads((Path(directory) / "results.json").read_text())[0]["exit_code"], 130)
+
+    def test_verify_requires_a_receipt_for_every_exported_run(self):
+        with tempfile.TemporaryDirectory() as directory:
+            evidence = Path(directory)
+            good = evidence / "run-good"
+            good.mkdir()
+            (good / "reporting-status.json").write_text('{"exit_code": 0}')
+            (evidence / "run-missing").mkdir()
+            self.assertNotEqual(REPORT.verify(evidence), 0)
 
 
 if __name__ == "__main__":

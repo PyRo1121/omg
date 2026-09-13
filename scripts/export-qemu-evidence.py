@@ -20,7 +20,7 @@ NAME = r"[a-zA-Z0-9][a-zA-Z0-9_.-]*"
 RUN = r"run-[a-zA-Z0-9-]+"
 HOST_FILES = {
     "results.json", "sentry-results.json", "metadata.txt", "host-metadata.txt",
-    "cleanup.log", "reporting.log", "kvm-probe.log", "engine-preflight.log",
+    "cleanup.log", "reporting.log", "reporting-status.json", "kvm-probe.log", "engine-preflight.log",
     "controller-setup.log", "image-setup.log", "boot.log", "guest-check.log",
     "evidence-copy.log", "benchmark-validation.log", "transactions.log",
     "transaction-validation.log", "inventory.log",

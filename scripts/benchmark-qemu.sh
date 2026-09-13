@@ -209,7 +209,9 @@ cleanup() {
   else
     printf 'Inventory telemetry projection failed; reporting lifecycle result only\n' >> "$work/cleanup.log"
   fi
-  timeout --kill-after=2s 12s env OMG_SMOKE_RELEASE="$tag" OMG_SMOKE_ENVIRONMENT=qemu-matrix "$repo_root/scripts/report-smoke-sentry.sh" "$report_input" > "$work/reporting.log" 2>&1 || true
+  reporting_rc=0
+  timeout --kill-after=2s 12s env OMG_SMOKE_RELEASE="$tag" OMG_SMOKE_ENVIRONMENT=qemu-matrix "$repo_root/scripts/report-smoke-sentry.sh" "$report_input" > "$work/reporting.log" 2>&1 || reporting_rc=$?
+  jq -n --argjson exit_code "$reporting_rc" '{exit_code:$exit_code}' > "$work/reporting-status.json"
   printf '%s %s. Evidence: %s\n' "$distro" "$result" "$work"
   exit "$rc"
 }

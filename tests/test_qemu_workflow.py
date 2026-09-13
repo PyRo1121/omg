@@ -47,10 +47,10 @@ class QemuWorkflowTests(unittest.TestCase):
         values = dict(line.split('=', 1) for line in output.read_text().splitlines()) if output.exists() else {}
         return result, values
 
-    def selection(self, directory, staged, distro, arch, tag=''):
+    def selection(self, directory, staged, distro, arch, tag='', event_name='workflow_dispatch'):
         block = step('Resolve selection')
         env = dict(STAGED=str(staged).lower(), REQUESTED_DISTRO=distro,
-                   REQUESTED_ARCH=arch, REQUESTED_RELEASE_TAG=tag,
+                   REQUESTED_ARCH=arch, REQUESTED_RELEASE_TAG=tag, EVENT_NAME=event_name,
                    BUILD_X64=literal(block, 'BUILD_X64', 10), BUILD_ARM64=literal(block, 'BUILD_ARM64', 10))
         # A local shell function replaces the only release API call.
         return self.run_script('gh() { printf "v9.8.7\\n"; }\n' + literal(block, 'run', 8), env, directory)
@@ -81,6 +81,13 @@ class QemuWorkflowTests(unittest.TestCase):
             result, values = self.selection(Path(tmp), False, 'debian', 'x64', 'v1.2.3')
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(values['tag'], 'v1.2.3')
+
+    def test_pull_request_never_selects_configurable_arm_runner(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result, values = self.selection(Path(tmp), True, 'all', 'all', event_name='pull_request')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(values['x64'], 'true')
+            self.assertEqual(values['arm64'], 'false')
 
     def test_summary_rejects_failed_cancelled_and_missing_selected_jobs(self):
         script = literal(step('Summarize and require selected guest jobs'), 'run', 8)
@@ -129,6 +136,37 @@ class ReportingIntegrationTests(unittest.TestCase):
         self.assertIn('--case-id qemu-matrix-workflow --status failure', body)
         self.assertIn('if: always() && failure()', body)
         self.assertIn('OMG_SMOKE_ENVIRONMENT: qemu-matrix', body)
+
+
+class SecurityBoundaryTests(unittest.TestCase):
+    def test_pull_requests_cannot_select_configurable_arm_runners(self):
+        bash = os.environ.get('OMG_TEST_BASH') or shutil.which('bash')
+        if not bash:
+            self.skipTest('requires Bash')
+        run = literal(step('Resolve selection'), 'run', 8)
+        flag_logic = run[run.index('x64=true'):run.index('if [[ "$REQUESTED_DISTRO" == all')]
+        command = flag_logic + "printf '%s %s\\n' \"$x64\" \"$arm64\"\n"
+        base = dict(os.environ, STAGED='true', REQUESTED_ARCH='all', REQUESTED_DISTRO='all')
+        pull_request = subprocess.run(
+            [bash, '--noprofile', '--norc', '-euo', 'pipefail', '-c', command],
+            env=dict(base, EVENT_NAME='pull_request'), text=True, capture_output=True,
+        )
+        dispatch = subprocess.run(
+            [bash, '--noprofile', '--norc', '-euo', 'pipefail', '-c', command],
+            env=dict(base, EVENT_NAME='workflow_dispatch'), text=True, capture_output=True,
+        )
+        self.assertEqual((pull_request.returncode, pull_request.stdout.strip()), (0, 'true false'))
+        self.assertEqual((dispatch.returncode, dispatch.stdout.strip()), (0, 'true true'))
+
+    def test_custom_arm_runner_permissions_are_preconfigured(self):
+        body = TEXT.split('\n  guest-arm:\n', 1)[1].split('\n  #', 1)[0]
+        self.assertNotIn('chmod 666 /dev/kvm', body)
+
+    def test_guest_jobs_enforce_telemetry_delivery_receipts(self):
+        for job in ('guest', 'guest-arm'):
+            body = TEXT.split('\n  ' + job + ':\n', 1)[1].split('\n  #', 1)[0]
+            self.assertIn('ci-smoke-report.py verify', body)
+            self.assertIn('--evidence-root "$RUNNER_TEMP/qemu-upload"', body)
 
 
 if __name__ == '__main__':

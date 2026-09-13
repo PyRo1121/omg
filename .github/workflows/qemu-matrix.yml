@@ -3,9 +3,10 @@
 # Boots disposable KVM guests per distro and runs the package-lifecycle
 # guest check via scripts/benchmark-qemu.sh.
 # - schedule/dispatch default: published release guests, x86_64 (no build).
-# - pull_request (or dispatch + staged=true): per-distro builds packaged
-#   exactly like the release recipe, tested via --staged-dir.
-# - aarch64 legs are staged-only; guest runners use OMG_QEMU_ARM_RUNNER
+# - pull_request: x86_64 per-distro builds packaged exactly like the release
+#   recipe and tested via --staged-dir. ARM is excluded because its configurable
+#   runner must never execute untrusted pull-request code.
+# - aarch64 legs are staged workflow-dispatch only; guest runners use OMG_QEMU_ARM_RUNNER
 #   (default ubuntu-24.04-arm) and must pass a native ARM/KVM probe. The release
 #   workflow publishes no aarch64-linux archives, so ARM guests test
 #   arm64-native builds (guest-arm job). Arch has no ARM leg: upstream
@@ -160,6 +161,7 @@ jobs:
           REQUESTED_DISTRO: ${{ inputs.distro || 'all' }}
           REQUESTED_ARCH: ${{ inputs.arch || 'all' }}
           STAGED: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.staged) }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           if [[ "$STAGED" == true && -n "$REQUESTED_RELEASE_TAG" ]]; then
             echo "::error::staged builds use the workflow revision; tag is only for published releases"
@@ -172,7 +174,7 @@ jobs:
           x64=true
           arm64=false
           [[ "$REQUESTED_ARCH" != arm64 ]] || x64=false
-          if [[ "$STAGED" == true && "$REQUESTED_ARCH" != x64 && "$REQUESTED_DISTRO" != arch ]]; then arm64=true; fi
+          if [[ "$STAGED" == true && "$EVENT_NAME" != pull_request && "$REQUESTED_ARCH" != x64 && "$REQUESTED_DISTRO" != arch ]]; then arm64=true; fi
           if [[ "$REQUESTED_DISTRO" == all ]]; then
             distros='["arch","debian","ubuntu","fedora"]'
             arm_distros='["debian","ubuntu","fedora"]'
@@ -588,6 +590,10 @@ jobs:
             find "$RUNNER_TEMP/qemu-upload" -name reporting.log -type f -exec cat {} +
           fi
 
+      - name: Verify Sentry delivery receipts
+        if: always()
+        run: python3 scripts/ci-smoke-report.py verify --evidence-root "$RUNNER_TEMP/qemu-upload"
+
       - name: Upload guest evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -644,12 +650,6 @@ jobs:
           OMG_SMOKE_SENTRY_DSN: ${{ secrets.OMG_SMOKE_SENTRY_DSN }}
         run: python3 scripts/ci-smoke-report.py configure
 
-      - name: Open KVM device permissions
-        # Same passthrough contract as the x64 legs; the in-script KVM
-        # probe (plus the workflow fail-fast below) refuses TCG fallback.
-        run: |
-          sudo chmod 666 /dev/kvm || true
-
       - name: Fail fast without KVM
         run: |
           if [[ ! -c /dev/kvm ]]; then
@@ -689,6 +689,10 @@ jobs:
           if [[ -d "$RUNNER_TEMP/qemu-upload" ]]; then
             find "$RUNNER_TEMP/qemu-upload" -name reporting.log -type f -exec cat {} +
           fi
+
+      - name: Verify Sentry delivery receipts
+        if: always()
+        run: python3 scripts/ci-smoke-report.py verify --evidence-root "$RUNNER_TEMP/qemu-upload"
 
       - name: Upload guest evidence
         if: always()

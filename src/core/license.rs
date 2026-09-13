@@ -25,7 +25,7 @@ const LICENSE_TOKEN_AUDIENCE: &str = "omg-cli";
 /// Production Ed25519 public key used for offline license-token verification.
 ///
 /// The matching public artifact is published at
-/// `https://omg.latham.cloud/.well-known/omg-license-ed25519-v1.pem`.
+/// `https://getomg.xyz/.well-known/omg-license-ed25519-v1.pem`.
 const LICENSE_JWT_VERIFICATION_KEY: &[u8] = b"-----BEGIN PUBLIC KEY-----
 MCowBQYDK2VwAyEA0TzkAlaX2+uVvrUh0VE4LO9HjBtDx7dt469do025EKg=
 -----END PUBLIC KEY-----

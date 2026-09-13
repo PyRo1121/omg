@@ -6,6 +6,7 @@ on:
       - ".github/workflows/release-smoke.yml"
       - "scripts/release-smoke.sh"
       - "scripts/test-release-smoke.sh"
+      - "scripts/test-release-provenance.sh"
       - "scripts/report-smoke-sentry.sh"
       - "scripts/ci-smoke-report.py"
       - "scripts/test_ci_smoke_report.py"
@@ -41,6 +42,9 @@ jobs:
 
       - name: Test release smoke coordinator
         run: ./scripts/test-release-smoke.sh
+
+      - name: Test native release provenance gate
+        run: bash scripts/test-release-provenance.sh
 
   resolve-release:
     name: Resolve release once

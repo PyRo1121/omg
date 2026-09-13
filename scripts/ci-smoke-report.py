@@ -64,6 +64,40 @@ def status(distro, case_id, state, evidence):
     return 0
 
 
+def verify(evidence_root):
+    if not evidence_root.is_dir():
+        print("::error::Sentry delivery evidence directory is missing")
+        return 2
+    runs = sorted(evidence_root.glob("run-*"))
+    if not runs:
+        print("::error::Sentry delivery receipt is missing")
+        return 2
+    receipts = []
+    for run in runs:
+        if run.is_symlink() or not run.is_dir():
+            print("::error::Invalid Sentry delivery run directory")
+            return 2
+        receipts.append(run / "reporting-status.json")
+    failures = []
+    for receipt in receipts:
+        if receipt.is_symlink() or not receipt.is_file() or receipt.stat().st_size > 4096:
+            print(f"::error::Invalid Sentry delivery receipt: {receipt.name}")
+            return 2
+        payload = json.loads(receipt.read_text(encoding="utf-8"))
+        exit_code = payload.get("exit_code") if isinstance(payload, dict) else None
+        if isinstance(exit_code, bool) or not isinstance(exit_code, int) or not 0 <= exit_code <= 255:
+            print(f"::error::Invalid Sentry delivery status: {receipt.name}")
+            return 2
+        if exit_code != 0:
+            failures.append((receipt.parent.name, exit_code))
+    if failures:
+        detail = ", ".join(f"{run}=exit-{code}" for run, code in failures)
+        print(f"::error::Sentry delivery failed: {detail}")
+        return 1
+    print(f"Verified {len(receipts)} Sentry delivery receipt(s)")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -73,10 +107,14 @@ def main():
     report.add_argument("--case-id", required=True)
     report.add_argument("--status", required=True)
     report.add_argument("--evidence-dir", type=Path, required=True)
+    verify_parser = commands.add_parser("verify")
+    verify_parser.add_argument("--evidence-root", type=Path, required=True)
     args = parser.parse_args()
     try:
         if args.command == "configure":
             return configure()
+        if args.command == "verify":
+            return verify(args.evidence_root)
         return status(args.distro, args.case_id, args.status, args.evidence_dir)
     except (ValueError, KeyError, OSError):
         print("::error::Invalid Sentry configuration or reporting input; check configuration and paths")

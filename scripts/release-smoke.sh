@@ -395,6 +395,14 @@ resolve_artifact() {
   if [[ -n "$digest_pin_file" ]]; then
     verify_pinned_digest "$digest" "$archive" "$digest_pin_file" || return 1
   fi
+  if [[ "$executor" == "native" && -z "$staged_dir" ]]; then
+    # A release uploader can replace an archive and its server-side digest.
+    # Verify the release workflow identity before extracting or running it.
+    gh attestation verify "$workdir/$archive" \
+      --repo "$repo" \
+      --source-ref "refs/tags/$tag" \
+      --signer-workflow "$repo/.github/workflows/release.yml" || return 1
+  fi
 }
 
 run_case() (
@@ -640,7 +648,7 @@ if [[ -n "$digest_pin_file" && ! -f "$digest_pin_file" ]]; then
 fi
 if [[ "$executor" == "native" && -z "$digest_pin_file" ]]; then
   # Native execution runs the extracted release binary directly on this
-  # host; it must never execute unattested code. The sidecar ships with the
+  # host; require a pinned digest before execution. The sidecar ships with the
   # release, so an attacker who replaces both assets defeats sidecar-only
   # checks — require an independently pinned digest before execution.
   printf 'error: --executor native requires OMG_SMOKE_DIGEST_PIN_FILE (sha256sum-style pin file) so release assets cannot be silently replaced.\n' >&2

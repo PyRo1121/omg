@@ -40,8 +40,9 @@ machines. Use disposable isolated runners suitable for executing PR-controlled
 code with Docker and KVM access.
 
 The rollout plan is to provision and verify the ARM runner, assign its single
-label to `OMG_QEMU_ARM_RUNNER` in repository Actions variables, then dispatch
-a staged ARM run and inspect the health result and all selected guest evidence.
+label to `OMG_QEMU_ARM_RUNNER` in repository Actions variables, then manually
+dispatch a staged ARM run and inspect the health result and all selected guest
+evidence. Pull-request runs never select this configurable runner.
 The health job checks architecture, device access and the KVM API before ARM
 builds begin. It does not change device permissions or enable emulation. ARM
 builds still use the existing hosted CPU runner labels; ARM guest jobs use the
@@ -49,7 +50,7 @@ configured KVM runner label and repeat their own device checks. The summary
 requires both ARM health and selected guests to succeed. Missing, skipped or
 failed selected ARM health cannot produce a passing matrix.
 
-ARM health is independent of x64 jobs. A staged `arch=all` run can therefore
+ARM health is independent of x64 jobs. A manually dispatched staged `arch=all` run can therefore
 produce x64 evidence while failing visibly for unavailable ARM capacity. A
 staged `arch=x64` run requests only x64 coverage and skips ARM health and builds.
 

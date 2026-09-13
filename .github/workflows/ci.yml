@@ -117,6 +117,9 @@ jobs:
       - name: Check local CI targets
         run: make ci-local-quick
 
+      - name: Verify installer destination safety
+        run: bash tests/installer_security.sh
+
   portable:
     name: "Portable Rust"
     needs: quick-gate
@@ -597,6 +600,9 @@ jobs:
 
       # sccache temporarily disabled due to service outage
 
+      - name: Verify installer destination safety
+        run: bash tests/installer_security.sh
+
       - name: Build
         run: cargo build --release --no-default-features --features macos,pgp,license --locked
 
@@ -772,9 +778,9 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "All required checks passed!" >> $GITHUB_STEP_SUMMARY
 
-  # The only write-scoped job in this workflow. It runs exclusively on push
-  # to main; pull_request runs of PR-controlled workflow code can never
-  # obtain this token, even if the PR edits this file.
+  # This definition grants write permissions only to the push-to-main job.
+  # A collaborator who can modify workflows can also change this condition;
+  # repository rules, not this editable condition, govern that authority.
   release-tag:
     name: "Tag Release"
     needs: [quick-gate, portable, linux-matrix, sandbox-cancellation, feature-intersections, macos, ubuntu, ci-success]

@@ -595,7 +595,7 @@ async fn install_managed(
     // the shared bin dir where they would shadow system Python/pip.
     // https://peps.python.org/pep-0405/
     let is_venv = install_dir.join("pyvenv.cfg").is_file();
-    link_binaries(&install_dir, bin_dir, tools_dir, is_venv)?;
+    link_binaries(&install_dir, bin_dir, is_venv)?;
 
     Ok(())
 }
@@ -604,15 +604,22 @@ async fn install_managed(
 ///
 /// The shared bin directory is exposed on PATH via the omg shell hook, so a
 /// tool install must never replace commands it does not own: only symlinks
-/// that point back into OMG's managed tools directory are ours to swap.
+/// that point back into this package's install directory are ours to swap.
 /// Regular files (the user's own scripts or real system-style installs) and
 /// links into other locations are left untouched.
-fn is_managed_link(dest: &Path, tools_dir: &Path) -> bool {
+fn is_managed_link(dest: &Path, install_dir: &Path) -> bool {
     #[cfg(unix)]
     {
         fs::symlink_metadata(dest).is_ok_and(|metadata| {
             metadata.is_symlink()
-                && fs::read_link(dest).is_ok_and(|target| target.starts_with(tools_dir))
+                && fs::read_link(dest).is_ok_and(|target| {
+                    target.strip_prefix(install_dir).is_ok_and(|relative| {
+                        relative.components().next().is_some()
+                            && relative
+                                .components()
+                                .all(|part| matches!(part, std::path::Component::Normal(_)))
+                    })
+                })
         })
     }
     #[cfg(not(unix))]
@@ -624,12 +631,7 @@ fn is_managed_link(dest: &Path, tools_dir: &Path) -> bool {
     }
 }
 
-fn link_binaries(
-    install_dir: &Path,
-    bin_dir: &Path,
-    tools_dir: &Path,
-    skip_venv_base_tools: bool,
-) -> Result<()> {
+fn link_binaries(install_dir: &Path, bin_dir: &Path, skip_venv_base_tools: bool) -> Result<()> {
     println!("  {} Linking binaries...", style::dim("→"));
 
     // Find binaries in standard locations within the isolated install dir
@@ -671,9 +673,9 @@ fn link_binaries(
 
                 // Remove existing link only if it is one of ours
                 if dest.symlink_metadata().is_ok() {
-                    if !is_managed_link(&dest, tools_dir) {
+                    if !is_managed_link(&dest, install_dir) {
                         println!(
-                            "    {} Refusing to replace existing command {} (not managed by omg tool)",
+                            "    {} Refusing to replace existing command {} (not owned by this tool)",
                             style::warning("⚠"),
                             filename.to_string_lossy()
                         );
@@ -1004,9 +1006,8 @@ mod tests {
         }
     }
 
-    /// Tool installs may only swap links OMG itself created. Symlinks into
-    /// other locations (and plain files) in the shared bin directory belong
-    /// to the user or to other tools and must survive an install.
+    /// Tool installs may only swap their own package's links. Other packages,
+    /// foreign symlinks and plain files must survive an install.
     #[cfg(unix)]
     #[test]
     fn linking_never_replaces_commands_omg_does_not_manage() {
@@ -1034,6 +1035,7 @@ mod tests {
         executable(&install_dir.join("bin").join("foreign"), b"new");
         executable(&install_dir.join("bin").join("userfile"), b"new");
         executable(&install_dir.join("bin").join("fresh"), b"new");
+        executable(&install_dir.join("bin").join("upgrade"), b"upgraded");
 
         let previous_install = tools_dir.join("cargo").join("previous");
         fs::create_dir_all(previous_install.join("bin")).expect("previous fixture");
@@ -1045,15 +1047,20 @@ mod tests {
             bin_dir.join("ours"),
         )
         .expect("managed link fixture");
+        symlink(
+            install_dir.join("bin").join("upgrade"),
+            bin_dir.join("upgrade"),
+        )
+        .expect("same package link fixture");
         symlink("/etc/hostname", bin_dir.join("foreign")).expect("foreign link fixture");
         fs::write(bin_dir.join("userfile"), b"user data").expect("user file fixture");
 
-        link_binaries(&install_dir, &bin_dir, &tools_dir, false).expect("linking");
+        link_binaries(&install_dir, &bin_dir, false).expect("linking");
 
-        // Managed link: replaced with the new install's binary.
+        // Another managed package owns this name and must survive installation.
         assert_eq!(
-            fs::read_link(bin_dir.join("ours")).expect("managed link replaced"),
-            install_dir.join("bin").join("ours")
+            fs::read_link(bin_dir.join("ours")).expect("other package link preserved"),
+            previous_install.join("bin").join("ours")
         );
         // Foreign symlink and user file: untouched.
         assert_eq!(
@@ -1069,6 +1076,27 @@ mod tests {
             fs::read_link(bin_dir.join("fresh")).expect("fresh link created"),
             install_dir.join("bin").join("fresh")
         );
+        assert_eq!(
+            fs::read(bin_dir.join("upgrade")).expect("same package upgrade available"),
+            b"upgraded"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn link_replacement_requires_the_same_package_and_contained_target() {
+        let temp = tempfile::tempdir().expect("temp directory");
+        let install = temp.path().join("tools/cargo/package");
+        let dest = temp.path().join("command");
+        for (target, replaceable) in [
+            (install.join("bin/command"), true),
+            (install.join("../other/bin/command"), false),
+            (temp.path().join("tools/npm/package/bin/command"), false),
+        ] {
+            symlink(target, &dest).expect("link fixture");
+            assert_eq!(is_managed_link(&dest, &install), replaceable);
+            fs::remove_file(&dest).expect("remove fixture");
+        }
     }
 
     #[test]
