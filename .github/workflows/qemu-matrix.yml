@@ -39,6 +39,8 @@ on:
       - "scripts/test-qa-file-issue.sh"
       - "scripts/qa-evidence-lib.sh"
       - "scripts/qa-file-issue.sh"
+      - "scripts/export-qemu-evidence.py"
+      - "scripts/test_export_qemu_evidence.py"
       - "scripts/ci-smoke-report.py"
       - "scripts/test_ci_smoke_report.py"
       - "scripts/report-smoke-sentry.sh"
@@ -113,6 +115,7 @@ jobs:
           ./scripts/test-release-smoke.sh
           ./scripts/test-qa-file-issue.sh
           python3 -m unittest discover -s scripts -p test_ci_smoke_report.py
+          sudo -n python3 -m unittest discover -s scripts -p test_export_qemu_evidence.py
 
       - name: Resolve selection
         id: selection
@@ -571,11 +574,18 @@ jobs:
           fi
           ./scripts/benchmark-qemu.sh "${args[@]}"
 
+      - name: Export allowlisted guest evidence
+        if: always()
+        run: |
+          sudo -n timeout --kill-after=5s 60s python3 scripts/export-qemu-evidence.py \
+            --source "$RUNNER_TEMP/qemu-evidence" --destination "$RUNNER_TEMP/qemu-upload" \
+            --uid "$(id -u)" --gid "$(id -g)"
+
       - name: Surface Sentry delivery evidence
         if: always()
         run: |
-          if [[ -d "$RUNNER_TEMP/qemu-evidence" ]]; then
-            find "$RUNNER_TEMP/qemu-evidence" -name reporting.log -type f -exec cat {} +
+          if [[ -d "$RUNNER_TEMP/qemu-upload" ]]; then
+            find "$RUNNER_TEMP/qemu-upload" -name reporting.log -type f -exec cat {} +
           fi
 
       - name: Upload guest evidence
@@ -583,14 +593,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: qemu-evidence-${{ matrix.distro }}
-          path: |
-            ${{ runner.temp }}/qemu-evidence/**/*.json
-            ${{ runner.temp }}/qemu-evidence/**/*.jsonl
-            ${{ runner.temp }}/qemu-evidence/**/*.log
-            ${{ runner.temp }}/qemu-evidence/**/*.txt
-            ${{ runner.temp }}/qemu-evidence/**/*.tsv
-            ${{ runner.temp }}/qemu-evidence/**/*.md
-            ${{ runner.temp }}/qemu-evidence/**/*.csv
+          path: ${{ runner.temp }}/qemu-upload/
           if-no-files-found: error
           retention-days: 30
 
@@ -673,11 +676,18 @@ jobs:
             --release "${{ needs.prepare.outputs.tag }}" \
             --staged-dir staged --inventory-tiers hermetic,container --inventory-allow-mutations
 
+      - name: Export allowlisted guest evidence
+        if: always()
+        run: |
+          sudo -n timeout --kill-after=5s 60s python3 scripts/export-qemu-evidence.py \
+            --source "$RUNNER_TEMP/qemu-evidence" --destination "$RUNNER_TEMP/qemu-upload" \
+            --uid "$(id -u)" --gid "$(id -g)"
+
       - name: Surface Sentry delivery evidence
         if: always()
         run: |
-          if [[ -d "$RUNNER_TEMP/qemu-evidence" ]]; then
-            find "$RUNNER_TEMP/qemu-evidence" -name reporting.log -type f -exec cat {} +
+          if [[ -d "$RUNNER_TEMP/qemu-upload" ]]; then
+            find "$RUNNER_TEMP/qemu-upload" -name reporting.log -type f -exec cat {} +
           fi
 
       - name: Upload guest evidence
@@ -685,14 +695,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: qemu-arm-evidence-${{ matrix.distro }}
-          path: |
-            ${{ runner.temp }}/qemu-evidence/**/*.json
-            ${{ runner.temp }}/qemu-evidence/**/*.jsonl
-            ${{ runner.temp }}/qemu-evidence/**/*.log
-            ${{ runner.temp }}/qemu-evidence/**/*.txt
-            ${{ runner.temp }}/qemu-evidence/**/*.tsv
-            ${{ runner.temp }}/qemu-evidence/**/*.md
-            ${{ runner.temp }}/qemu-evidence/**/*.csv
+          path: ${{ runner.temp }}/qemu-upload/
           if-no-files-found: error
           retention-days: 30
 

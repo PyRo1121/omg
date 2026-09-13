@@ -111,13 +111,16 @@ class ReportingIntegrationTests(unittest.TestCase):
             body = TEXT.split('\n  ' + job + ':\n', 1)[1].split('\n  #', 1)[0]
             self.assertIn('run: python3 scripts/ci-smoke-report.py configure', body)
             self.assertIn('OMG_SMOKE_SENTRY_DSN: ${{ secrets.OMG_SMOKE_SENTRY_DSN }}', body)
-            self.assertIn('find "$RUNNER_TEMP/qemu-evidence" -name reporting.log', body)
+            self.assertIn('find "$RUNNER_TEMP/qemu-upload" -name reporting.log', body)
             self.assertNotIn('${{ env.HOME }}', body)
-            # Upload only diagnostic file types; failed cleanup may retain
-            # private keys, cloud-init configuration and guest disk images.
-            paths = re.findall(r'^            (\$\{\{ runner.temp \}\}/qemu-evidence/.*)$', body, re.M)
-            self.assertTrue(paths)
-            self.assertTrue(all(path.endswith(('.json', '.jsonl', '.log', '.txt', '.tsv', '.md', '.csv')) for path in paths))
+            # Export only bounded diagnostics: guest-owned raw state may be
+            # unreadable, and failed cleanup may retain keys or disk images.
+            self.assertIn('sudo -n timeout --kill-after=5s 60s python3 scripts/export-qemu-evidence.py', body)
+            self.assertIn('--source "$RUNNER_TEMP/qemu-evidence" --destination "$RUNNER_TEMP/qemu-upload"', body)
+            self.assertIn('path: ${{ runner.temp }}/qemu-upload/', body)
+            self.assertNotIn('qemu-evidence/**/*', body)
+            self.assertIn('- name: Export allowlisted guest evidence\n        if: always()', body)
+            self.assertIn('- name: Upload guest evidence\n        if: always()', body)
 
     def test_workflow_failure_reports_even_when_guests_never_start(self):
         body = TEXT.split('\n  summary:\n', 1)[1]

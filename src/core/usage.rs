@@ -527,7 +527,22 @@ fn acquire_usage_lock(lock_path: &Path) -> Result<std::fs::File> {
         name,
         flags | OFlags::CREATE,
         Mode::RUSR | Mode::WUSR,
-    )?;
+    )
+    .with_context(|| {
+        // Keep the original errno and record descriptor-relative state only
+        // on failure. This distinguishes a removed parent from a platform
+        // open/create failure without retrying or changing the lock target.
+        let parent_state = directory
+            .metadata()
+            .map(|entry| (entry.dev(), entry.ino(), entry.nlink()));
+        let entry_state =
+            rustix::fs::statat(&directory, name, rustix::fs::AtFlags::SYMLINK_NOFOLLOW)
+                .map(|entry| (entry.st_dev, entry.st_ino, entry.st_mode, entry.st_nlink));
+        format!(
+            "Failed to open anchored usage lock {name:?}; parent (device, inode, links): \
+             {parent_state:?}; entry (device, inode, mode, links): {entry_state:?}"
+        )
+    })?;
     let lock = std::fs::File::from(lock);
     let metadata = lock.metadata()?;
     anyhow::ensure!(metadata.is_file(), "Usage lock is not a regular file");
@@ -1042,6 +1057,50 @@ mod tests {
 
         let stats = UsageStats::load_from(&path).expect("final stats must be valid");
         assert_eq!(stats.total_commands, (WRITERS * UPDATES_PER_WRITER) as u64);
+    }
+
+    #[test]
+    fn simultaneous_first_usage_locks_share_one_inode() {
+        use std::os::unix::fs::MetadataExt;
+
+        // Repeated fresh directories exercise concurrent first creation,
+        // separately from the JSON merge and save paths. Do not retry failures.
+        for round in 0..32 {
+            let directory = lock_fixture_tempdir();
+            let path = directory.path().join("usage.lock");
+            let barrier = std::sync::Arc::new(std::sync::Barrier::new(4));
+            let mut workers = Vec::new();
+            for _ in 0..4 {
+                let path = path.clone();
+                let barrier = std::sync::Arc::clone(&barrier);
+                workers.push(std::thread::spawn(move || -> Result<(u64, u64)> {
+                    barrier.wait();
+                    let lock = acquire_usage_lock(&path)?;
+                    let entry = lock.metadata()?;
+                    Ok((entry.dev(), entry.ino()))
+                }));
+            }
+            // Join every worker before reporting an error, keeping the fixture
+            // alive even if one worker fails so cleanup cannot mask the cause.
+            let results: Vec<_> = workers
+                .into_iter()
+                .map(std::thread::JoinHandle::join)
+                .collect();
+            let identities: Vec<_> = results
+                .into_iter()
+                .map(|result| {
+                    result
+                        .expect("first-lock worker panicked")
+                        .unwrap_or_else(|error| {
+                            panic!("first-lock round {round} failed: {error:#}")
+                        })
+                })
+                .collect();
+            let expected = std::fs::metadata(&path).expect("created usage lock");
+            for identity in identities {
+                assert_eq!(identity, (expected.dev(), expected.ino()));
+            }
+        }
     }
 
     #[test]
