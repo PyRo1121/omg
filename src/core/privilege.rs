@@ -83,6 +83,8 @@ pub fn sudo_command() -> anyhow::Result<tokio::process::Command> {
 /// account database gives ownership checks and audit records one consistent
 /// identity source.
 pub fn invoking_uid() -> anyhow::Result<u32> {
+    use anyhow::Context;
+
     let effective_uid = rustix::process::geteuid().as_raw();
     if effective_uid != 0 {
         return Ok(effective_uid);
