@@ -132,6 +132,10 @@ impl RpmDatabaseObservation {
         // identity while still rejecting replacement of the main database.
         // Concurrent commits remain covered by data_version at publication.
         let identity = RpmDatabaseIdentity::read(path)?;
+        #[cfg(test)]
+        eprintln!(
+            "RPM observer initialized: before={before_open:?}, after={identity:?}, version={data_version}"
+        );
         if identity.database != before_open.database {
             return None;
         }
@@ -143,15 +147,26 @@ impl RpmDatabaseObservation {
     }
 
     fn is_current(&self, path: &Path) -> bool {
-        if RpmDatabaseIdentity::read(path) != Some(self.identity) {
+        let current_identity = RpmDatabaseIdentity::read(path);
+        if current_identity != Some(self.identity) {
+            #[cfg(test)]
+            eprintln!(
+                "RPM observer identity changed: cached={:?}, current={current_identity:?}",
+                self.identity
+            );
             return false;
         }
         let Ok(connection) = self.connection.lock() else {
             return false;
         };
-        connection
-            .query_row("PRAGMA data_version", [], |row| row.get::<_, i64>(0))
-            .is_ok_and(|version| version == self.data_version)
+        let current_version =
+            connection.query_row("PRAGMA data_version", [], |row| row.get::<_, i64>(0));
+        #[cfg(test)]
+        eprintln!(
+            "RPM observer version: cached={}, current={current_version:?}",
+            self.data_version
+        );
+        current_version.is_ok_and(|version| version == self.data_version)
             && RpmDatabaseIdentity::read(path) == Some(self.identity)
     }
 }
