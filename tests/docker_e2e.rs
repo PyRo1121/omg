@@ -53,8 +53,14 @@ fn ensure_docker_image() -> bool {
 
 /// Run a single command in a fresh Docker container
 fn run_in_docker(cmd: &[&str]) -> (bool, String, String) {
+    run_in_docker_with_options(&[], cmd)
+}
+
+fn run_in_docker_with_options(options: &[&str], cmd: &[&str]) -> (bool, String, String) {
     let output = Command::new("docker")
-        .args(["run", "--rm", "omg-arch-e2e"])
+        .args(["run", "--rm"])
+        .args(options)
+        .arg("omg-arch-e2e")
         .args(cmd)
         .output()
         .expect("Failed to run Docker command");
@@ -64,7 +70,7 @@ fn run_in_docker(cmd: &[&str]) -> (bool, String, String) {
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
     if !success {
         eprintln!(
-            "Docker command {cmd:?} failed with {}\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}",
+            "Docker command {cmd:?} (options {options:?}) failed with {}\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}",
             output.status
         );
     }
@@ -171,7 +177,12 @@ fn test_docker_update_check() {
     require_docker_tests();
     assert!(ensure_docker_image(), "Docker image not ready");
 
-    let (success, stdout, _stderr) = run_in_docker(&["omg", "update", "--check"]);
+    // The unprivileged parent delegates catalog refresh through sudo using
+    // its pinned /proc/PID/exe inode. Linux's PTRACE_MODE_READ_FSCREDS check
+    // requires SYS_PTRACE for the root child to cross the parent's UID;
+    // Docker drops that capability by default. Grant it only to this fixture.
+    let (success, stdout, _stderr) =
+        run_in_docker_with_options(&["--cap-add=SYS_PTRACE"], &["omg", "update", "--check"]);
 
     assert!(success, "Update check should succeed");
     // Contract: arch::update check_only path prints a phase header announcing
