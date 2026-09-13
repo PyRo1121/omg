@@ -1136,6 +1136,14 @@ The previous directory is retained until shared command links also succeed. A
 link failure rolls the directory back, removes links introduced by the failed
 version, and restores the previous version's commands.
 
+On Linux, every managed package-manager process sets the kernel's
+`no_new_privs` flag before execution and receives closed standard input. The
+flag is inherited by build and lifecycle-script descendants and cannot be
+unset, so executing setuid, setgid, or file-capability programs cannot grant
+them new privileges. Closed input prevents install hooks from using OMG's
+terminal to request sudo or other interactive credentials. These controls do
+not restrict ordinary filesystem or network access.
+
 If a corporate TLS proxy or private certificate authority is required, scope
 `OMG_TOOL_ALLOW_HOST_ENV` to the affected package and expose only the necessary
 proxy and certificate variables in that shell. The package's build process can
@@ -1164,7 +1172,10 @@ These defaults follow the upstream security controls documented by
 [npm](https://docs.npmjs.com/viewing-package-provenance/),
 [pip](https://pip.pypa.io/en/stable/topics/secure-installs/),
 [Cargo](https://doc.rust-lang.org/cargo/commands/cargo-install.html), and the
-[Go module system](https://go.dev/ref/mod#authenticating). npm provenance proves
+[Go module system](https://go.dev/ref/mod#authenticating). Linux privilege
+containment follows the kernel's
+[`no_new_privs` contract](https://docs.kernel.org/userspace-api/no_new_privs.html).
+npm provenance proves
 the published artifact's origin and integrity; it does not prove that the
 publisher's code is safe.
 

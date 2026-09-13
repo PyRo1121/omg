@@ -25,6 +25,11 @@
   CLI reference.
 - Disable CGO and automatic Go toolchain downloads during tool installation by
   default, with independent package-scoped exceptions.
+- Close managed installer standard input and set Linux `no_new_privs` before
+  execution so build hooks cannot request terminal credentials or gain
+  privileges through setuid, setgid, or file-capability programs. This follows
+  the Linux kernel
+  [`no_new_privs` contract](https://docs.kernel.org/userspace-api/no_new_privs.html).
 - Support private registry workflows through independently scoped environment,
   script/build, lockfile, and signature-verification exceptions.
 - Print every matching package-scoped security exception before starting an

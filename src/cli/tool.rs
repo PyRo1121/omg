@@ -11,6 +11,9 @@ use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+#[cfg(target_os = "linux")]
+use std::os::unix::process::CommandExt as _;
+
 use crate::cli::style;
 
 const ALLOW_NPM_SCRIPTS_ENV: &str = "OMG_TOOL_DANGEROUSLY_ALLOW_ALL_NPM_SCRIPTS";
@@ -35,6 +38,22 @@ fn package_is_allowed(variable: &str, package: &str) -> bool {
 
 fn host_environment_is_allowed(manager: &str, package: &str) -> bool {
     package_is_allowed(ALLOW_HOST_ENV, &format!("{manager}:{package}"))
+}
+
+fn restrict_manager_process(command: &mut Command) {
+    // Package-manager builds are non-interactive children of OMG. Closing
+    // stdin prevents publisher-controlled install hooks from borrowing the
+    // caller's terminal to request credentials or sudo authentication.
+    command.stdin(std::process::Stdio::null());
+    #[cfg(target_os = "linux")]
+    // SAFETY: pre_exec only invokes the async-signal-safe prctl wrapper. It
+    // allocates no Rust state and runs after fork immediately before exec.
+    unsafe {
+        command.pre_exec(|| {
+            nix::sys::prctl::set_no_new_privs()
+                .map_err(|error| std::io::Error::from_raw_os_error(error as i32))
+        });
+    }
 }
 
 fn validate_managed_package(manager: &str, package: &str) -> Result<()> {
@@ -124,6 +143,8 @@ fn write_security_receipt(staging_dir: &Path, manager: &str, package: &str) -> R
         "executable_sha256": executable_hashes,
         "protections": {
             "isolated_environment": !host_environment,
+            "installer_stdin_closed": true,
+            "linux_no_new_privs": cfg!(target_os = "linux"),
             "npm_scripts_disabled": npm_scripts_disabled,
             "npm_signatures_verified": npm_signatures_verified,
             "pip_binary_only": pip_binary_only,
@@ -245,7 +266,9 @@ fn secured_manager_command(
     package: &str,
 ) -> Result<Command> {
     if host_environment_is_allowed(manager, package) {
-        return Ok(manager_command(program, staging_dir));
+        let mut command = manager_command(program, staging_dir);
+        restrict_manager_process(&mut command);
+        return Ok(command);
     }
 
     let requested_program = Path::new(program.as_ref());
@@ -358,6 +381,8 @@ fn secured_manager_command(
             command.env("RUSTUP_HOME", rustup_home);
         }
     }
+
+    restrict_manager_process(&mut command);
     Ok(command)
 }
 
@@ -1615,6 +1640,11 @@ mod tests {
         assert_eq!(receipt["protections"]["go_checksum_database"], true);
         assert_eq!(receipt["protections"]["go_cgo_disabled"], false);
         assert_eq!(receipt["protections"]["go_local_toolchain_only"], true);
+        assert_eq!(receipt["protections"]["installer_stdin_closed"], true);
+        assert_eq!(
+            receipt["protections"]["linux_no_new_privs"],
+            cfg!(target_os = "linux")
+        );
         assert_eq!(
             receipt["executable_sha256"]["bin/tool"],
             hex::encode(Sha256::digest(b"verified executable"))
@@ -1679,6 +1709,25 @@ mod tests {
             assert_eq!(entries.first(), executable.parent());
             assert!(entries.contains(&PathBuf::from("/usr/bin")));
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn secured_commands_close_stdin_and_forbid_new_privileges() {
+        let staging = tempfile::tempdir().expect("staging directory");
+        let assert_restricted = || {
+            let status = secured_manager_command("/bin/sh", staging.path(), "npm", "eslint")
+                .expect("secured command")
+                .args([
+                    "-c",
+                    "grep -Eq '^NoNewPrivs:[[:space:]]+1$' /proc/self/status && ! read value",
+                ])
+                .status()
+                .expect("execute secured command");
+            assert!(status.success());
+        };
+        assert_restricted();
+        temp_env::with_var(ALLOW_HOST_ENV, Some("npm:eslint"), assert_restricted);
     }
 
     /// Tool installs may only swap their own package's links. Other packages,
