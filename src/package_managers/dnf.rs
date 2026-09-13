@@ -132,10 +132,6 @@ impl RpmDatabaseObservation {
         // identity while still rejecting replacement of the main database.
         // Concurrent commits remain covered by data_version at publication.
         let identity = RpmDatabaseIdentity::read(path)?;
-        #[cfg(test)]
-        eprintln!(
-            "RPM observer initialized: before={before_open:?}, after={identity:?}, version={data_version}"
-        );
         if identity.database != before_open.database {
             return None;
         }
@@ -147,26 +143,15 @@ impl RpmDatabaseObservation {
     }
 
     fn is_current(&self, path: &Path) -> bool {
-        let current_identity = RpmDatabaseIdentity::read(path);
-        if current_identity != Some(self.identity) {
-            #[cfg(test)]
-            eprintln!(
-                "RPM observer identity changed: cached={:?}, current={current_identity:?}",
-                self.identity
-            );
+        if RpmDatabaseIdentity::read(path) != Some(self.identity) {
             return false;
         }
         let Ok(connection) = self.connection.lock() else {
             return false;
         };
-        let current_version =
-            connection.query_row("PRAGMA data_version", [], |row| row.get::<_, i64>(0));
-        #[cfg(test)]
-        eprintln!(
-            "RPM observer version: cached={}, current={current_version:?}",
-            self.data_version
-        );
-        current_version.is_ok_and(|version| version == self.data_version)
+        connection
+            .query_row("PRAGMA data_version", [], |row| row.get::<_, i64>(0))
+            .is_ok_and(|version| version == self.data_version)
             && RpmDatabaseIdentity::read(path) == Some(self.identity)
     }
 }
@@ -388,7 +373,19 @@ impl DnfPackageManager {
         // Try SQLite first (Fedora 33+, RHEL 9+) - 50-100x faster
         if db_path.exists() {
             let identity = RpmDatabaseObservation::read(db_path);
-            match Self::read_rpm_sqlite(db_path) {
+            // Opening another SQLite connection can chmod the WAL and change
+            // its ctime even without a commit. Read through the observer so
+            // the inventory and its commit generation share one connection.
+            let result = if let Some(observation) = &identity {
+                let connection = observation
+                    .connection
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("RPM observer connection lock poisoned"))?;
+                Self::read_rpm_sqlite_connection(&connection)
+            } else {
+                Self::read_rpm_sqlite(db_path)
+            };
+            match result {
                 Ok(packages) => return Ok((packages, identity)),
                 Err(e) => {
                     tracing::warn!("SQLite access failed: {e:#}, falling back to rpm -qa");
@@ -631,6 +628,10 @@ impl DnfPackageManager {
         )
         .context("Failed to open RPM SQLite database")?;
 
+        Self::read_rpm_sqlite_connection(&conn)
+    }
+
+    fn read_rpm_sqlite_connection(conn: &Connection) -> Result<Vec<InstalledPackage>> {
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
 
         let mut stmt = conn.prepare("SELECT blob FROM Packages")?;

@@ -65,6 +65,7 @@ mod tests {
             executable_files: Vec::new(),
             privileged_files: Vec::new(),
             install_hook: None,
+            paired_build_reasons: Vec::new(),
         }
     }
 
