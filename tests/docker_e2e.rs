@@ -59,25 +59,22 @@ fn run_in_docker(cmd: &[&str]) -> (bool, String, String) {
         .output()
         .expect("Failed to run Docker command");
 
-    (
-        output.status.success(),
-        String::from_utf8_lossy(&output.stdout).to_string(),
-        String::from_utf8_lossy(&output.stderr).to_string(),
-    )
+    let success = output.status.success();
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    if !success {
+        eprintln!(
+            "Docker command {cmd:?} failed with {}\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}",
+            output.status
+        );
+    }
+
+    (success, stdout, stderr)
 }
 
 /// Run a shell script in a single Docker container (preserves state between commands)
 fn run_script_in_docker(script: &str) -> (bool, String, String) {
-    let output = Command::new("docker")
-        .args(["run", "--rm", "omg-arch-e2e", "sh", "-c", script])
-        .output()
-        .expect("Failed to run Docker command");
-
-    (
-        output.status.success(),
-        String::from_utf8_lossy(&output.stdout).to_string(),
-        String::from_utf8_lossy(&output.stderr).to_string(),
-    )
+    run_in_docker(&["sh", "-c", script])
 }
 
 /// Strip ANSI escape codes from text for reliable string matching
