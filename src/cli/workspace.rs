@@ -635,13 +635,19 @@ pub fn diff(branch: &str) -> Result<()> {
     Ok(())
 }
 
+fn git_inspection_command() -> Result<std::process::Command> {
+    let mut command = crate::core::privilege::system_command("git")?;
+    command.args(["diff", "--no-ext-diff", "--no-textconv"]);
+    Ok(command)
+}
+
 fn git_lockfile_diff(project_path: &Path, branch: &str) -> Result<Vec<u8>> {
     anyhow::ensure!(
         !branch.trim_start().starts_with('-'),
         "Git branch or revision must not begin with '-'"
     );
-    let output = std::process::Command::new("git")
-        .args(["diff", "--no-ext-diff", branch, "--", "omg.lock"])
+    let output = git_inspection_command()?
+        .args([branch, "--", "omg.lock"])
         .current_dir(project_path)
         .output()
         .with_context(|| format!("Failed to run git diff in {}", project_path.display()))?;
@@ -975,6 +981,18 @@ mod tests {
 
         assert!(error.to_string().contains("must not begin with '-'"));
         assert!(!output.exists());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn git_inspection_uses_a_trusted_program_and_disables_external_filters() {
+        let command = git_inspection_command().expect("trusted Git");
+        assert!(Path::new(command.get_program()).is_absolute());
+        let arguments: Vec<_> = command.get_args().collect();
+        assert!(arguments.contains(&std::ffi::OsStr::new("--no-ext-diff")));
+        assert!(arguments.contains(&std::ffi::OsStr::new("--no-textconv")));
+        assert!(command.get_envs().any(|(key, value)| key == "PATH"
+            && value == Some(std::ffi::OsStr::new(crate::core::privilege::SYSTEM_PATH))));
     }
 
     #[test]

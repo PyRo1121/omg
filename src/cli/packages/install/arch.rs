@@ -78,7 +78,10 @@ pub async fn install(packages: &[String], yes: bool, replacement_hops: u32) -> R
                 pkg,
                 &info.version,
                 false,
-                info.licenses.first().map(String::as_str),
+                crate::core::security::policy::combined_license_expression(
+                    info.licenses.iter().map(String::as_str),
+                )
+                .as_deref(),
             )
             .await?;
         } else {

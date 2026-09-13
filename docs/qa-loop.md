@@ -38,6 +38,18 @@ Each workflow has a `file-issues` job (`schedule` only,
 
 ## Agent runbook (the repeat part)
 
+Publishing dispatches must use the version-tag ref so their attestations can
+also pass existing-tag resync verification. Branch dispatches remain available
+for non-publishing dry runs. CI and Benchmark must have passed for the exact
+source commit. Their path filters intentionally omit unrelated documentation
+changes; manually dispatch both at that ref before publishing a documentation-
+only commit. Never substitute a successful run from a different commit.
+
+Smoke resolves a release tag once and waits for its runner fixtures before
+starting distro jobs. Its artifacts remain separated per distro during issue
+collection. Reporting configuration is passed as environment data; failed
+setup gets a sanitized fallback record when no harness results exist.
+
 1. Pick an open `qa-failure` issue. The body has everything: failing
    case, distro, excerpt, evidence paths, rerun command.
 2. Repro with the runbook command (same release tag as the linked run).

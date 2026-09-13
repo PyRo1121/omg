@@ -520,9 +520,11 @@ natively, so projects already using mise work without installing it.
 YAML is rejected), `_.source` (evaluated only for explicit `run`/tasks),
 `{{env.NAME}}`/`{{config_root}}`
 templates, and per-task `env` (including task `_.file`/`_.path`/`_.source`).
-Automatic hooks reject `_.source` because entering a repository does not
-constitute permission to execute its scripts. Missing env files and unmet
-required variables are skipped in hooks; malformed configuration is rejected.
+Automatic hooks select installed runtimes only. They do not apply project
+`[env]` assignments, unsets, files, paths, or scripts: entering a repository
+does not authorize changes to the interactive shell's execution environment.
+Runtime pin and manifest reads reject symlinks and special files and are
+limited to 1 MiB. Invalid pins are reported without blocking the prompt.
 `run` and task execution fail closed on missing files and unmet
 `required` entries.
 

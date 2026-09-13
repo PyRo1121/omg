@@ -666,30 +666,34 @@ const DOCKERIGNORE_MARKER: &str = "# added by omg container init";
 /// `COPY . .` in a generated Dockerfile ships the whole directory into the
 /// image; without ignore rules, untracked secrets (`.env`, key files) and
 /// the repository history (`.git/`) are embedded in every build. An
-/// existing file is preserved and only missing entries are appended under
-/// a marker comment.
+/// existing file is preserved and a final protection block is appended after
+/// user negations, including a Dockerfile-specific override when present.
 ///
 /// # Errors
 ///
 /// Returns errors from reading or writing `.dockerignore`.
 pub(crate) fn ensure_dockerignore(root: &Path) -> Result<()> {
-    use std::fmt::Write as _;
+    ensure_dockerignore_file(&root.join(".dockerignore"), true)?;
+    // BuildKit gives this file precedence over the root ignore file.
+    ensure_dockerignore_file(&root.join("Dockerfile.omg.dockerignore"), false)?;
+    // Podman prefers .containerignore over .dockerignore.
+    ensure_dockerignore_file(&root.join(".containerignore"), false)
+}
 
-    let ignore_path = root.join(".dockerignore");
-    let existing = match fs::read_to_string(&ignore_path) {
-        Ok(content) => content,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(error) => {
-            return Err(error).with_context(|| format!("Failed to read {}", ignore_path.display()));
-        }
-    };
-    let existing_lines: std::collections::HashSet<&str> = existing.lines().map(str::trim).collect();
-    let missing: Vec<&str> = DOCKERIGNORE_ENTRIES
-        .iter()
-        .copied()
-        .filter(|entry| !existing_lines.contains(entry))
-        .collect();
-    if missing.is_empty() {
+fn ensure_dockerignore_file(ignore_path: &Path, create: bool) -> Result<()> {
+    use std::fmt::Write as _;
+    let existing = crate::config::mise_env::read_bounded_regular_file(ignore_path)?;
+    if existing.is_none() && !create {
+        return Ok(());
+    }
+    let existing = existing.unwrap_or_default();
+    // Docker applies the last matching rule. Only a complete trailing block
+    // can establish protection in the presence of arbitrary user negations.
+    let mut protection = format!("{DOCKERIGNORE_MARKER}\n");
+    for entry in DOCKERIGNORE_ENTRIES {
+        writeln!(&mut protection, "{entry}").context("Failed to format .dockerignore entry")?;
+    }
+    if existing.ends_with(&protection) {
         return Ok(());
     }
 
@@ -697,11 +701,8 @@ pub(crate) fn ensure_dockerignore(root: &Path) -> Result<()> {
     if !output.is_empty() && !output.ends_with('\n') {
         output.push('\n');
     }
-    let _ = writeln!(output, "{DOCKERIGNORE_MARKER}");
-    for entry in missing {
-        writeln!(&mut output, "{entry}").context("Failed to format .dockerignore entry")?;
-    }
-    fs::write(&ignore_path, output)
+    output.push_str(&protection);
+    crate::core::safe_ops::atomic_write_file_sync(ignore_path, output)
         .with_context(|| format!("Failed to write {}", ignore_path.display()))
 }
 
@@ -1227,6 +1228,51 @@ mod tests {
             1,
             "{second}"
         );
+    }
+
+    #[test]
+    fn dockerignore_protection_follows_user_negations() {
+        let dir = tempfile::tempdir().expect("temp project");
+        let path = dir.path().join(".dockerignore");
+        fs::write(&path, ".env\n!.env\n!secrets.key\n").expect("user rules");
+        ensure_dockerignore(dir.path()).expect("protect context");
+        let content = fs::read_to_string(&path).expect("read rules");
+        assert!(content.rfind("\n.env\n") > content.find("!.env"));
+        assert!(content.rfind("*.key") > content.find("!secrets.key"));
+        ensure_dockerignore(dir.path()).expect("idempotent");
+        assert_eq!(content, fs::read_to_string(path).expect("read rules"));
+    }
+
+    #[test]
+    fn dockerfile_specific_ignore_receives_the_same_protection() {
+        let dir = tempfile::tempdir().expect("temp project");
+        let path = dir.path().join("Dockerfile.omg.dockerignore");
+        fs::write(&path, "!.env\n!secrets.key\n").expect("override");
+        ensure_dockerignore(dir.path()).expect("protect context");
+        let content = fs::read_to_string(path).expect("read override");
+        assert!(content.rfind("\n.env\n") > content.find("!.env"));
+        assert!(content.rfind("*.key") > content.find("!secrets.key"));
+    }
+
+    #[test]
+    fn podman_ignore_receives_the_same_protection() {
+        let dir = tempfile::tempdir().expect("temp project");
+        let path = dir.path().join(".containerignore");
+        fs::write(&path, "!.env\n").expect("override");
+        ensure_dockerignore(dir.path()).expect("protect context");
+        let content = fs::read_to_string(path).expect("read override");
+        assert!(content.rfind("\n.env\n") > content.find("!.env"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dockerignore_rejects_symlink_without_changing_target() {
+        let dir = tempfile::tempdir().expect("temp project");
+        let target = dir.path().join("external");
+        fs::write(&target, "preserve me").expect("target");
+        std::os::unix::fs::symlink(&target, dir.path().join(".dockerignore")).expect("symlink");
+        assert!(ensure_dockerignore(dir.path()).is_err());
+        assert_eq!(fs::read_to_string(target).expect("target"), "preserve me");
     }
 
     #[test]

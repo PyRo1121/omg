@@ -34,6 +34,10 @@ on:
       - "scripts/qemu-transactions.sh"
       - "scripts/qemu-inventory.sh"
       - "scripts/test-release-smoke.sh"
+      - "scripts/qa-file-issue.sh"
+      - "scripts/ci-smoke-report.py"
+      - "scripts/test_ci_smoke_report.py"
+      - "scripts/report-smoke-sentry.sh"
       - ".github/workflows/qemu-matrix.yml"
   schedule:
     # Nightly, staggered off docker-e2e's 02:00 slot.
@@ -50,12 +54,12 @@ on:
         options: [all, arch, debian, ubuntu, fedora]
         default: all
       arch:
-        description: "Guest arch (all includes arm64 staged legs)"
+        description: "Guest arch (arm64 requires staged; all adds ARM only when staged)"
         type: choice
         options: [all, x64, arm64]
         default: all
       staged:
-        description: "Build PR binaries and test via --staged-dir"
+        description: "Build the selected workflow revision and test via --staged-dir"
         type: boolean
         default: false
 
@@ -73,45 +77,128 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
 
+# Container jobs otherwise default to sh, which does not support [[ or arrays.
+defaults:
+  run:
+    shell: bash
+
 jobs:
+  prepare:
+    name: "Resolve test selection and provenance"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      staged: ${{ steps.selection.outputs.staged }}
+      x64: ${{ steps.selection.outputs.x64 }}
+      arm64: ${{ steps.selection.outputs.arm64 }}
+      distros: ${{ steps.selection.outputs.distros }}
+      arm-distros: ${{ steps.selection.outputs.arm-distros }}
+      build-x64: ${{ steps.selection.outputs.build-x64 }}
+      build-arm64: ${{ steps.selection.outputs.build-arm64 }}
+      tag: ${{ steps.selection.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Workflow selection regression checks
+        run: python3 -m unittest discover -s tests -p test_qemu_workflow.py
+
+      - name: Resolve selection
+        id: selection
+        env:
+          BUILD_X64: |
+            [
+              {
+                "distro": "arch",
+                "image": "archlinux:latest@sha256:b0deabeb3d283da2c7f7dbf0eea051b7b2cd0554e0b737cc457fd21683bdcdd1",
+                "features": "arch,pgp,license",
+                "setup": "pacman -Syu --noconfirm\npacman -S --noconfirm --needed base-devel git pkgconf openssl libarchive clang cmake curl jq\n"
+              },
+              {
+                "distro": "debian",
+                "image": "debian:bookworm@sha256:813017f3d62be4b5891a7acca6a01bdcd4b8513daa81b1ab99d3a50385b26931",
+                "features": "debian,pgp,license",
+                "setup": "apt-get update\nDEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \\\n  ca-certificates curl git build-essential pkg-config sudo \\\n  libssl-dev libapt-pkg-dev clang cmake zlib1g-dev liblzma-dev libbz2-dev\n"
+              },
+              {
+                "distro": "fedora",
+                "image": "fedora:latest@sha256:6c75d5bf57cb0fa5aa4b92c6a83c86c791644496d9ac230de7711f5b8ec3b898",
+                "features": "fedora,pgp,license",
+                "setup": "dnf install -y --setopt=install_weak_deps=False \\\n  git clang cmake openssl-devel pkgconfig findutils curl procps-ng \\\n  rpm dnf sqlite yum-utils fedora-release\nrpm --initdb\ndnf makecache --refresh\n"
+              }
+            ]
+          BUILD_ARM64: |
+            [
+              {
+                "distro": "debian",
+                "image": "debian:bookworm@sha256:5eac3978974cfa26a880057766c683e55c5763355d30a8beecbd263e0e1621d9",
+                "features": "debian,pgp,license",
+                "setup": "apt-get update\nDEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \\\n  ca-certificates curl git build-essential pkg-config sudo \\\n  libssl-dev libapt-pkg-dev clang cmake zlib1g-dev liblzma-dev libbz2-dev\n"
+              },
+              {
+                "distro": "fedora",
+                "image": "fedora:latest@sha256:e402cca673711fee025f9ce21c6c08b1bd25ee26b3c482119c8675fbaaedbc85",
+                "features": "fedora,pgp,license",
+                "setup": "dnf install -y --setopt=install_weak_deps=False \\\n  git clang cmake openssl-devel pkgconfig findutils curl procps-ng \\\n  rpm dnf sqlite yum-utils fedora-release\nrpm --initdb\ndnf makecache --refresh\n"
+              }
+            ]
+          REQUESTED_RELEASE_TAG: ${{ inputs.tag }}
+          REQUESTED_DISTRO: ${{ inputs.distro || 'all' }}
+          REQUESTED_ARCH: ${{ inputs.arch || 'all' }}
+          STAGED: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.staged) }}
+        run: |
+          if [[ "$STAGED" == true && -n "$REQUESTED_RELEASE_TAG" ]]; then
+            echo "::error::staged builds use the workflow revision; tag is only for published releases"
+            exit 1
+          fi
+          if [[ "$REQUESTED_ARCH" == arm64 && ( "$STAGED" != true || "$REQUESTED_DISTRO" == arch ) ]]; then
+            echo "::error::arm64 requires staged builds and Debian, Ubuntu, Fedora, or all"
+            exit 1
+          fi
+          x64=true
+          arm64=false
+          [[ "$REQUESTED_ARCH" != arm64 ]] || x64=false
+          if [[ "$STAGED" == true && "$REQUESTED_ARCH" != x64 && "$REQUESTED_DISTRO" != arch ]]; then arm64=true; fi
+          if [[ "$REQUESTED_DISTRO" == all ]]; then
+            distros='["arch","debian","ubuntu","fedora"]'
+            arm_distros='["debian","ubuntu","fedora"]'
+          else
+            distros=$(jq -cn --arg distro "$REQUESTED_DISTRO" '[$distro]')
+            arm_distros="$distros"
+          fi
+          printf 'build-x64=%s\n' "$(jq -c --arg distro "$REQUESTED_DISTRO" 'map(select($distro == "all" or .distro == $distro))' <<< "$BUILD_X64")" >> "$GITHUB_OUTPUT"
+          printf 'build-arm64=%s\n' "$(jq -c --arg distro "$REQUESTED_DISTRO" 'map(select($distro == "all" or .distro == $distro))' <<< "$BUILD_ARM64")" >> "$GITHUB_OUTPUT"
+          if [[ "$STAGED" == true ]]; then
+            VERSION=$(awk -F'"' '/^version =/ {print $2; exit}' Cargo.toml)
+            tag="v$VERSION"
+          elif [[ -n "$REQUESTED_RELEASE_TAG" ]]; then
+            tag="$REQUESTED_RELEASE_TAG"
+          else
+            tag=$(gh release view --json tagName --jq .tagName --repo "$GITHUB_REPOSITORY")
+          fi
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::invalid release tag"; exit 1; }
+          printf 'staged=%s\nx64=%s\narm64=%s\ndistros=%s\narm-distros=%s\ntag=%s\n' \
+            "$STAGED" "$x64" "$arm64" "$distros" "$arm_distros" "$tag" >> "$GITHUB_OUTPUT"
+          printf 'Harness/build revision: `%s`\n\nArtifact source: staged=%s, tag=%s\n\nSelected: distro=%s, x64=%s, arm64=%s\n' \
+            "$GITHUB_SHA" "$STAGED" "$tag" "$REQUESTED_DISTRO" "$x64" "$arm64" >> "$GITHUB_STEP_SUMMARY"
+
   #########################################################################
-  # STAGE 1: per-distro release builds for staged guest legs (PRs only)
+  # STAGE 1: selected per-distro builds for PR and staged dispatch guests
   #########################################################################
   build-staged:
     name: "Staged build (${{ matrix.distro }})"
     concurrency:
       group: qemu-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'schedule' && 'nightly' || 'interactive' }}-build-staged-${{ matrix.distro }}
       cancel-in-progress: ${{ github.event_name != 'schedule' }}
-    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.staged)
+    needs: prepare
+    if: needs.prepare.outputs.staged == 'true' && needs.prepare.outputs.x64 == 'true' && needs.prepare.outputs.build-x64 != '[]'
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - distro: arch
-            image: archlinux:latest@sha256:b0deabeb3d283da2c7f7dbf0eea051b7b2cd0554e0b737cc457fd21683bdcdd1
-            features: arch,pgp,license
-            setup: |
-              pacman -Syu --noconfirm
-              pacman -S --noconfirm --needed base-devel git pkgconf openssl libarchive clang cmake curl jq
-          - distro: debian
-            image: debian:bookworm@sha256:813017f3d62be4b5891a7acca6a01bdcd4b8513daa81b1ab99d3a50385b26931
-            features: debian,pgp,license
-            setup: |
-              apt-get update
-              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-                ca-certificates curl git build-essential pkg-config sudo \
-                libssl-dev libapt-pkg-dev clang cmake zlib1g-dev liblzma-dev libbz2-dev
-          - distro: fedora
-            image: fedora:latest@sha256:6c75d5bf57cb0fa5aa4b92c6a83c86c791644496d9ac230de7711f5b8ec3b898
-            features: fedora,pgp,license
-            setup: |
-              dnf install -y --setopt=install_weak_deps=False \
-                git clang cmake openssl-devel pkgconfig findutils curl procps-ng \
-                rpm dnf sqlite yum-utils fedora-release
-              rpm --initdb
-              dnf makecache --refresh
+        include: ${{ fromJSON(needs.prepare.outputs.build-x64) }}
     container:
       image: ${{ matrix.image }}
     steps:
@@ -121,6 +208,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ github.sha }}
 
       - name: Fix git permissions
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -139,6 +227,9 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
           key: qemu-staged-${{ matrix.distro }}-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run library and binary unit tests (including omgd)
+        run: cargo test --lib --bins --no-default-features --features ${{ matrix.features }} --locked --no-fail-fast -- --test-threads=1
 
       - name: Build
         run: |
@@ -162,16 +253,19 @@ jobs:
           name: staged-${{ matrix.distro }}
           path: omg-v*.tar.gz*
           retention-days: 7
+          if-no-files-found: error
 
   build-staged-ubuntu:
     name: "Staged build (ubuntu)"
-    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.staged)
+    needs: prepare
+    if: needs.prepare.outputs.staged == 'true' && needs.prepare.outputs.x64 == 'true' && (github.event_name != 'workflow_dispatch' || inputs.distro == 'all' || inputs.distro == 'ubuntu')
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ github.sha }}
 
       - name: Install Dependencies
         run: |
@@ -198,6 +292,9 @@ jobs:
             ~/.cargo/git/db/
           key: qemu-staged-ubuntu-registry-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Run library and binary unit tests (including omgd)
+        run: cargo test --lib --bins --no-default-features --features debian,pgp,license --locked --no-fail-fast -- --test-threads=1
+
       - name: Build
         run: cargo build --release --no-default-features --features debian,pgp,license --locked
 
@@ -215,9 +312,10 @@ jobs:
           name: staged-ubuntu
           path: omg-v*.tar.gz*
           retention-days: 7
+          if-no-files-found: error
 
   #########################################################################
-  # STAGE 1b: arm64-native staged builds for the ARM guest legs (PRs only).
+  # STAGE 1b: arm64-native builds for selected staged ARM guest legs.
   # No arch row: there is no aarch64 archlinux container image, matching
   # the missing arch/aarch64 guest pin in scripts/benchmark-qemu.sh.
   #########################################################################
@@ -226,33 +324,14 @@ jobs:
     concurrency:
       group: qemu-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'schedule' && 'nightly' || 'interactive' }}-build-staged-arm-${{ matrix.distro }}
       cancel-in-progress: ${{ github.event_name != 'schedule' }}
-    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.staged)
+    needs: prepare
+    if: needs.prepare.outputs.staged == 'true' && needs.prepare.outputs.arm64 == 'true' && needs.prepare.outputs.build-arm64 != '[]'
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - distro: debian
-            # arm64 per-arch digest (the x64-era list digest is not
-            # arch-resolving here by guarantee; pin the arch explicitly).
-            image: debian:bookworm@sha256:5eac3978974cfa26a880057766c683e55c5763355d30a8beecbd263e0e1621d9
-            features: debian,pgp,license
-            setup: |
-              apt-get update
-              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-                ca-certificates curl git build-essential pkg-config sudo \
-                libssl-dev libapt-pkg-dev clang cmake zlib1g-dev liblzma-dev libbz2-dev
-          - distro: fedora
-            # arm64 per-arch digest; see the debian row above.
-            image: fedora:latest@sha256:e402cca673711fee025f9ce21c6c08b1bd25ee26b3c482119c8675fbaaedbc85
-            features: fedora,pgp,license
-            setup: |
-              dnf install -y --setopt=install_weak_deps=False \
-                git clang cmake openssl-devel pkgconfig findutils curl procps-ng \
-                rpm dnf sqlite yum-utils fedora-release
-              rpm --initdb
-              dnf makecache --refresh
+        include: ${{ fromJSON(needs.prepare.outputs.build-arm64) }}
     container:
       image: ${{ matrix.image }}
     steps:
@@ -262,6 +341,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ github.sha }}
 
       - name: Fix git permissions
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -281,6 +361,9 @@ jobs:
             ~/.cargo/git/db/
           key: qemu-staged-arm-${{ matrix.distro }}-registry-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Run library and binary unit tests (including omgd)
+        run: cargo test --lib --bins --no-default-features --features ${{ matrix.features }} --locked --no-fail-fast -- --test-threads=1
+
       - name: Build
         run: |
           cargo build --release --no-default-features --features ${{ matrix.features }} --locked
@@ -299,16 +382,19 @@ jobs:
           name: staged-arm-${{ matrix.distro }}
           path: omg-v*.tar.gz*
           retention-days: 7
+          if-no-files-found: error
 
   build-staged-ubuntu-arm:
     name: "Staged build arm64 (ubuntu)"
-    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.staged)
+    needs: prepare
+    if: needs.prepare.outputs.staged == 'true' && needs.prepare.outputs.arm64 == 'true' && (github.event_name != 'workflow_dispatch' || inputs.distro == 'all' || inputs.distro == 'ubuntu')
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ github.sha }}
 
       - name: Install Dependencies
         run: |
@@ -335,6 +421,9 @@ jobs:
             ~/.cargo/git/db/
           key: qemu-staged-arm-ubuntu-registry-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Run library and binary unit tests (including omgd)
+        run: cargo test --lib --bins --no-default-features --features debian,pgp,license --locked --no-fail-fast -- --test-threads=1
+
       - name: Build
         run: cargo build --release --no-default-features --features debian,pgp,license --locked
 
@@ -352,6 +441,7 @@ jobs:
           name: staged-arm-ubuntu
           path: omg-v*.tar.gz*
           retention-days: 7
+          if-no-files-found: error
 
   #########################################################################
   # STAGE 2: disposable KVM guests per distro
@@ -361,11 +451,11 @@ jobs:
     concurrency:
       group: qemu-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'schedule' && 'nightly' || 'interactive' }}-guest-${{ matrix.distro }}
       cancel-in-progress: ${{ github.event_name != 'schedule' }}
-    needs: [build-staged, build-staged-ubuntu]
+    needs: [prepare, build-staged, build-staged-ubuntu]
     # Both build jobs are skipped on schedule/release-dispatch; PR and
     # dispatch-staged legs require their build green.
     if: >-
-      always() &&
+      !cancelled() && needs.prepare.result == 'success' && needs.prepare.outputs.x64 == 'true' &&
       (needs.build-staged.result == 'success' || needs.build-staged.result == 'skipped') &&
       (needs.build-staged-ubuntu.result == 'success' || needs.build-staged-ubuntu.result == 'skipped')
     runs-on: ubuntu-24.04
@@ -373,12 +463,30 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        distro: [arch, debian, ubuntu, fedora]
+        distro: ${{ fromJSON(needs.prepare.outputs.distros) }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Record evidence provenance
+        env:
+          ARTIFACT_TAG: ${{ needs.prepare.outputs.tag }}
+          STAGED: ${{ needs.prepare.outputs.staged }}
+          DISTRO: ${{ matrix.distro }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/qemu-evidence"
+          jq -n --arg revision "$GITHUB_SHA" --arg tag "$ARTIFACT_TAG" --arg staged "$STAGED" \
+            --arg distro "$DISTRO" --arg arch "$(uname -m)" \
+            '{harness_revision:$revision,artifact_tag:$tag,staged:($staged == "true"),distro:$distro,arch:$arch}' \
+            > "$RUNNER_TEMP/qemu-evidence/provenance.json"
+
+      - name: Configure Sentry reporting
+        env:
+          OMG_SMOKE_SENTRY_DSN: ${{ secrets.OMG_SMOKE_SENTRY_DSN }}
+        run: python3 scripts/ci-smoke-report.py configure
 
       - name: Open KVM device permissions
         # Runners expose /dev/kvm root-owned; the job user needs rw for
@@ -392,7 +500,7 @@ jobs:
             echo "::error::/dev/kvm is missing on this runner; refusing TCG fallback"
             exit 1
           fi
-          if [[ ! -w /dev/kvm && ! -r /dev/kvm ]]; then
+          if [[ ! -w /dev/kvm || ! -r /dev/kvm ]]; then
             echo "::error::/dev/kvm is not accessible on this runner"
             exit 1
           fi
@@ -405,22 +513,6 @@ jobs:
           name: staged-${{ matrix.distro }}
           path: staged/
 
-      - name: Resolve release tag
-        id: tag
-        env:
-          REQUESTED_RELEASE_TAG: ${{ inputs.tag }}
-        run: |
-          if [[ "${{ github.event_name }}" == 'pull_request' || "${{ inputs.staged }}" == 'true' ]]; then
-            VERSION=$(awk -F'"' '/^version =/ {print $2; exit}' Cargo.toml)
-            tag="v$VERSION"
-          elif [[ -n "$REQUESTED_RELEASE_TAG" ]]; then
-            tag="$REQUESTED_RELEASE_TAG"
-          else
-            tag=$(gh release view --json tagName --jq .tagName --repo PyRo1121/omg)
-          fi
-          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::bad tag: $tag"; exit 1; }
-          echo "value=$tag" >> "$GITHUB_OUTPUT"
-
       - name: Benchmark harness regression checks
         run: |
           scratch="$HOME/.cache/build-targets/omg-benchmark-tests"
@@ -430,15 +522,9 @@ jobs:
           rmdir "$scratch"
 
       - name: Run disposable guest lifecycle + read benchmarks + inventory rows
-        # inputs is null on schedule/PR: event checks first so those run.
-        # PRs run hermetic and container tiers; nightlies run everything the
-        # disposable guest can safely do (mutations on, credentials off).
-        # The arch input gates dispatch runs (x64 legs skip arm64-only runs).
-        if: >-
-          (github.event_name != 'workflow_dispatch' || inputs.distro == 'all' || inputs.distro == matrix.distro) &&
-          (github.event_name != 'workflow_dispatch' || inputs.arch == 'all' || inputs.arch == 'x64')
+        # Staged runs exercise hermetic/container inventory; published runs add network/PTY coverage.
         run: |
-          args=(--distro "${{ matrix.distro }}" --release "${{ steps.tag.outputs.value }}" --benchmark)
+          args=(--distro "${{ matrix.distro }}" --release "${{ needs.prepare.outputs.tag }}" --benchmark --evidence-dir "$RUNNER_TEMP/qemu-evidence")
           if [[ "${{ github.event_name }}" == 'pull_request' || "${{ inputs.staged }}" == 'true' ]]; then
             args+=(--staged-dir staged --inventory-tiers "hermetic,container" --inventory-allow-mutations)
           else
@@ -448,12 +534,27 @@ jobs:
           fi
           ./scripts/benchmark-qemu.sh "${args[@]}"
 
+      - name: Surface Sentry delivery evidence
+        if: always()
+        run: |
+          if [[ -d "$RUNNER_TEMP/qemu-evidence" ]]; then
+            find "$RUNNER_TEMP/qemu-evidence" -name reporting.log -type f -exec cat {} +
+          fi
+
       - name: Upload guest evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: qemu-evidence-${{ matrix.distro }}
-          path: ${{ env.HOME }}/.cache/build-targets/omg-qemu-benchmark/
+          path: |
+            ${{ runner.temp }}/qemu-evidence/**/*.json
+            ${{ runner.temp }}/qemu-evidence/**/*.jsonl
+            ${{ runner.temp }}/qemu-evidence/**/*.log
+            ${{ runner.temp }}/qemu-evidence/**/*.txt
+            ${{ runner.temp }}/qemu-evidence/**/*.tsv
+            ${{ runner.temp }}/qemu-evidence/**/*.md
+            ${{ runner.temp }}/qemu-evidence/**/*.csv
+          if-no-files-found: error
           retention-days: 30
 
   #########################################################################
@@ -467,23 +568,40 @@ jobs:
     concurrency:
       group: qemu-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'schedule' && 'nightly' || 'interactive' }}-guest-arm-${{ matrix.distro }}
       cancel-in-progress: ${{ github.event_name != 'schedule' }}
-    needs: [build-staged-arm, build-staged-ubuntu-arm]
+    needs: [prepare, build-staged-arm, build-staged-ubuntu-arm]
     if: >-
-      always() &&
-      (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.staged)) &&
-      needs.build-staged-arm.result == 'success' &&
-      needs.build-staged-ubuntu-arm.result == 'success'
+      !cancelled() && needs.prepare.result == 'success' && needs.prepare.outputs.arm64 == 'true' &&
+      (needs.build-staged-arm.result == 'success' || needs.build-staged-arm.result == 'skipped') &&
+      (needs.build-staged-ubuntu-arm.result == 'success' || needs.build-staged-ubuntu-arm.result == 'skipped')
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        distro: [debian, ubuntu, fedora]
+        distro: ${{ fromJSON(needs.prepare.outputs.arm-distros) }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Record evidence provenance
+        env:
+          ARTIFACT_TAG: ${{ needs.prepare.outputs.tag }}
+          STAGED: ${{ needs.prepare.outputs.staged }}
+          DISTRO: ${{ matrix.distro }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/qemu-evidence"
+          jq -n --arg revision "$GITHUB_SHA" --arg tag "$ARTIFACT_TAG" --arg staged "$STAGED" \
+            --arg distro "$DISTRO" --arg arch "$(uname -m)" \
+            '{harness_revision:$revision,artifact_tag:$tag,staged:($staged == "true"),distro:$distro,arch:$arch}' \
+            > "$RUNNER_TEMP/qemu-evidence/provenance.json"
+
+      - name: Configure Sentry reporting
+        env:
+          OMG_SMOKE_SENTRY_DSN: ${{ secrets.OMG_SMOKE_SENTRY_DSN }}
+        run: python3 scripts/ci-smoke-report.py configure
 
       - name: Open KVM device permissions
         # Same passthrough contract as the x64 legs; the in-script KVM
@@ -497,7 +615,7 @@ jobs:
             echo "::error::/dev/kvm is missing on this runner; refusing TCG fallback"
             exit 1
           fi
-          if [[ ! -w /dev/kvm && ! -r /dev/kvm ]]; then
+          if [[ ! -w /dev/kvm || ! -r /dev/kvm ]]; then
             echo "::error::/dev/kvm is not accessible on this runner"
             exit 1
           fi
@@ -510,30 +628,34 @@ jobs:
           name: staged-arm-${{ matrix.distro }}
           path: staged/
 
-      - name: Resolve staged tag
-        id: tag
-        run: |
-          VERSION=$(awk -F'"' '/^version =/ {print $2; exit}' Cargo.toml)
-          tag="v$VERSION"
-          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::bad tag: $tag"; exit 1; }
-          echo "value=$tag" >> "$GITHUB_OUTPUT"
-
       - name: Run disposable ARM guest lifecycle + read benchmarks + inventory rows
         # Match x64 staged coverage, including the selected CLI inventory.
-        if: >-
-          (github.event_name != 'workflow_dispatch' || inputs.distro == 'all' || inputs.distro == matrix.distro) &&
-          (github.event_name != 'workflow_dispatch' || inputs.arch == 'all' || inputs.arch == 'arm64')
         run: |
-          ./scripts/benchmark-qemu.sh --arch aarch64 --distro "${{ matrix.distro }}" --benchmark \
-            --release "${{ steps.tag.outputs.value }}" \
+          ./scripts/benchmark-qemu.sh --arch aarch64 --distro "${{ matrix.distro }}" --benchmark --evidence-dir "$RUNNER_TEMP/qemu-evidence" \
+            --release "${{ needs.prepare.outputs.tag }}" \
             --staged-dir staged --inventory-tiers hermetic,container --inventory-allow-mutations
+
+      - name: Surface Sentry delivery evidence
+        if: always()
+        run: |
+          if [[ -d "$RUNNER_TEMP/qemu-evidence" ]]; then
+            find "$RUNNER_TEMP/qemu-evidence" -name reporting.log -type f -exec cat {} +
+          fi
 
       - name: Upload guest evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: qemu-arm-evidence-${{ matrix.distro }}
-          path: ${{ env.HOME }}/.cache/build-targets/omg-qemu-benchmark/
+          path: |
+            ${{ runner.temp }}/qemu-evidence/**/*.json
+            ${{ runner.temp }}/qemu-evidence/**/*.jsonl
+            ${{ runner.temp }}/qemu-evidence/**/*.log
+            ${{ runner.temp }}/qemu-evidence/**/*.txt
+            ${{ runner.temp }}/qemu-evidence/**/*.tsv
+            ${{ runner.temp }}/qemu-evidence/**/*.md
+            ${{ runner.temp }}/qemu-evidence/**/*.csv
+          if-no-files-found: error
           retention-days: 30
 
   #########################################################################
@@ -549,24 +671,84 @@ jobs:
       issues: write
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    continue-on-error: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ github.sha }}
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: qemu-evidence-*
           path: evidence/
-          merge-multiple: true
+          merge-multiple: false
 
       - name: File or update failure issues
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-          shopt -s nullglob
-          for results in evidence/**/results.json evidence/**/inventory/results.json; do
+          shopt -s nullglob globstar
+          reports=(evidence/**/results.json)
+          (( ${#reports[@]} > 0 )) || { echo "::error::No guest results downloaded"; exit 1; }
+          for results in "${reports[@]}"; do
             ./scripts/qa-file-issue.sh "$results" --run-url "$run_url" --source qemu-matrix
           done
+
+  summary:
+    name: "QEMU matrix result"
+    needs: [prepare, build-staged, build-staged-ubuntu, build-staged-arm, build-staged-ubuntu-arm, guest, guest-arm]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Configure workflow Sentry reporting
+        env:
+          OMG_SMOKE_SENTRY_DSN: ${{ secrets.OMG_SMOKE_SENTRY_DSN }}
+        run: python3 scripts/ci-smoke-report.py configure
+
+      - name: Summarize and require selected guest jobs
+        env:
+          JOB_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          printf '| Job | Result |\n| --- | --- |\n' >> "$GITHUB_STEP_SUMMARY"
+          jq -r 'to_entries[] | "| \(.key) | \(.value.result) |"' <<< "$JOB_RESULTS" >> "$GITHUB_STEP_SUMMARY"
+          jq -e '
+            .prepare.result == "success" and
+            (all(.[]; .result == "success" or .result == "skipped")) and
+            (if .prepare.outputs.x64 == "true" then .guest.result == "success" else .guest.result == "skipped" end) and
+            (if .prepare.outputs.arm64 == "true" then .["guest-arm"].result == "success" else .["guest-arm"].result == "skipped" end)
+          ' <<< "$JOB_RESULTS"
+
+      # Workflow-level fallback covers failed builds, checkout/setup and skipped
+      # guests. distro=ubuntu identifies this coordinator, not a failed guest.
+      - name: Report workflow failure
+        if: always() && failure()
+        env:
+          OMG_SMOKE_ENVIRONMENT: qemu-matrix
+          OMG_SMOKE_RELEASE: ${{ needs.prepare.outputs.tag || 'unknown' }}
+          JOB_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          evidence="$RUNNER_TEMP/qemu-workflow-report/run-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          mkdir -p "$evidence"
+          jq -n --arg revision "$GITHUB_SHA" \
+            --arg url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --argjson jobs "$JOB_RESULTS" \
+            '{revision:$revision,run_url:$url,jobs:($jobs | map_values(.result))}' > "$evidence/context.json"
+          python3 scripts/ci-smoke-report.py status --distro ubuntu \
+            --case-id qemu-matrix-workflow --status failure \
+            --evidence-dir "$evidence"
+
+      - name: Preserve workflow reporting evidence
+        if: always() && failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: qemu-workflow-report
+          path: ${{ runner.temp }}/qemu-workflow-report/
+          retention-days: 30
+          if-no-files-found: warn

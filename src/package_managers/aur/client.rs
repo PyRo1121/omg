@@ -235,6 +235,8 @@ impl std::fmt::Debug for AurClient {
 }
 
 struct MakepkgEnv {
+    // Own the private invocation tree until archives have been sealed.
+    _invocation: tempfile::TempDir,
     makeflags: String,
     pkgdest: PathBuf,
     srcdest: PathBuf,
@@ -242,6 +244,38 @@ struct MakepkgEnv {
     compiler_cache_dirs: Vec<PathBuf>,
     extra_env: Vec<(String, String)>,
     pgp_home: Option<tempfile::TempDir>,
+}
+
+/// Change only the newly created invocation directory, using its open handle.
+/// Children must be created after this succeeds when setup was elevated.
+fn prepare_invocation_directory(
+    path: &Path,
+    owner: Option<(nix::unistd::Uid, nix::unistd::Gid)>,
+) -> Result<()> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+    let directory = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(nix::libc::O_DIRECTORY | nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK)
+        .open(path)?;
+    let metadata = directory.metadata()?;
+    anyhow::ensure!(
+        metadata.is_dir()
+            && metadata.uid() == nix::unistd::geteuid().as_raw()
+            && metadata.mode() & 0o777 == 0o700,
+        "AUR invocation must be a private directory owned by its creator"
+    );
+    if let Some((uid, gid)) = owner {
+        nix::unistd::fchown(&directory, Some(uid), Some(gid))
+            .context("Failed to assign the private AUR invocation to the build user")?;
+        let metadata = directory.metadata()?;
+        anyhow::ensure!(
+            metadata.uid() == uid.as_raw()
+                && metadata.gid() == gid.as_raw()
+                && metadata.mode() & 0o777 == 0o700,
+            "AUR invocation ownership or permissions did not match the build user"
+        );
+    }
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -826,10 +860,7 @@ fn pkgbuild_review_panel(
             &crate::cli::style::sanitize_terminal_text(name),
         ));
         for (number, line) in contents.lines().enumerate() {
-            lines.push(chrome::snippet_line(
-                number + 1,
-                &chrome::truncate_chars(line, PREVIEW_LINE_CHARS),
-            ));
+            lines.push(chrome::snippet_line(number + 1, line));
         }
     }
 
@@ -846,9 +877,10 @@ fn pkgbuild_review_prompt(package: &str) -> String {
 /// privileged install, so approval must cover their bytes (csf_b6e85633),
 /// and the archived `.INSTALL` is byte-checked against the same reviewed
 /// bytes before installation.
-fn declared_install_hook_previews(source: &ReviewedSource) -> Vec<(String, String)> {
+fn declared_install_hook_previews(source: &ReviewedSource) -> Result<Vec<(String, String)>> {
     let mut names: Vec<String> = Vec::new();
-    if let Ok(srcinfo) = source.text(Path::new(".SRCINFO")) {
+    {
+        let srcinfo = source.text(Path::new(".SRCINFO"))?;
         for line in srcinfo.lines() {
             let Some((key, value)) = line.split_once('=') else {
                 continue;
@@ -865,13 +897,31 @@ fn declared_install_hook_previews(source: &ReviewedSource) -> Vec<(String, Strin
     names
         .into_iter()
         .map(|name| {
-            let contents = match source.files.get(Path::new(&name)) {
-                Some(bytes) => pkgbuild_review_text(bytes).unwrap_or_else(|error| {
-                    format!("(install hook could not be rendered for review: {error})")
-                }),
-                None => "(declared in .SRCINFO but absent from the reviewed checkout)".to_owned(),
-            };
-            (name, contents)
+            let bytes = source
+                .files
+                .get(Path::new(&name))
+                .with_context(|| format!("Declared install hook is absent: {name}"))?;
+            anyhow::ensure!(
+                bytes.len() <= MAX_PKGBUILD_REVIEW_BYTES,
+                "Install hook {name} exceeds the review limit"
+            );
+            let text = std::str::from_utf8(bytes)
+                .with_context(|| format!("Install hook {name} is not UTF-8"))?;
+            // Make control/bidi bytes visible instead of silently removing them.
+            let contents = text
+                .chars()
+                .map(|character| {
+                    if character != '\n'
+                        && (character.is_control()
+                            || matches!(character, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'))
+                    {
+                        character.escape_default().to_string()
+                    } else {
+                        character.to_string()
+                    }
+                })
+                .collect::<String>();
+            Ok((name, contents))
         })
         .collect()
 }
@@ -2200,7 +2250,6 @@ impl AurClient {
             pkg_files = Self::find_built_packages(&pkg_dir, &env.pkgdest, &requested_outputs)
                 .await
                 .map_err(|_| AurError::PackageArchiveNotFound(package.clone()))?;
-            self.write_cache_key(&package, &cache_key).await?;
         }
 
         Self::authorize_archives(
@@ -2393,7 +2442,6 @@ impl AurClient {
         let pkg_files = Self::find_built_packages(&pkg_dir, &env.pkgdest, &package_outputs)
             .await
             .map_err(|_| AurError::PackageArchiveNotFound(package.to_string()))?;
-        self.write_cache_key(package_base, &cache_key).await?;
         Self::authorize_archives(
             &pkg_files,
             &reviewed_digest,
@@ -2433,11 +2481,10 @@ impl AurClient {
     }
 
     async fn find_built_packages(
-        pkg_dir: &Path,
+        _pkg_dir: &Path,
         pkgdest: &Path,
         expected_names: &[String],
     ) -> Result<Vec<PathBuf>> {
-        let pkg_dir = pkg_dir.to_path_buf();
         let pkgdest = pkgdest.to_path_buf();
         let expected_names = expected_names.to_vec();
 
@@ -2445,30 +2492,14 @@ impl AurClient {
             let mut packages = Vec::with_capacity(expected_names.len());
             for expected_name in &expected_names {
                 let names = [expected_name.clone()];
-                let package = Self::find_package_in_dir(&pkgdest, &names)
-                    .or_else(|| Self::find_package_in_dir(&pkg_dir, &names))
-                    .with_context(|| {
-                        format!(
-                            "No package archive found for split-package output '{expected_name}'"
-                        )
-                    })?;
+                let package = Self::find_package_in_dir(&pkgdest, &names).with_context(|| {
+                    format!("No package archive found for split-package output '{expected_name}'")
+                })?;
                 packages.push(package);
             }
             Ok(packages)
         })
         .await?
-    }
-
-    /// Find every requested artifact in `path`, or `None` if any is missing.
-    fn find_packages_in_dir_all(path: &Path, artifacts: &[String]) -> Option<Vec<PathBuf>> {
-        let mut packages = Vec::with_capacity(artifacts.len());
-        for artifact in artifacts {
-            packages.push(Self::find_package_in_dir(
-                path,
-                std::slice::from_ref(artifact),
-            )?);
-        }
-        Some(packages)
     }
 
     fn find_package_in_dir(path: &Path, expected_names: &[String]) -> Option<PathBuf> {
@@ -2477,6 +2508,11 @@ impl AurClient {
         let mut best_mtime = std::time::SystemTime::UNIX_EPOCH;
 
         for entry in entries.flatten() {
+            // A recipe can leave a symlink that resolves only on the host.
+            // Never follow it while discovering candidate build outputs.
+            if !entry.file_type().ok().is_some_and(|kind| kind.is_file()) {
+                continue;
+            }
             let filename = entry.file_name().to_string_lossy().into_owned();
             if (filename.ends_with(".pkg.tar.zst") || filename.ends_with(".pkg.tar.xz"))
                 && expected_names.iter().any(|name| {
@@ -2553,6 +2589,7 @@ impl AurClient {
     /// archive's identity, version, package base, architecture, and install hook match the
     /// checkout. A matching cache key alone is not proof: both the key and
     /// archives live in a user-writable directory.
+    #[cfg(test)]
     fn select_cached_artifacts(
         archives: Vec<PathBuf>,
         outputs: &[String],
@@ -2640,15 +2677,10 @@ impl AurClient {
             .collect()
     }
 
-    /// Provenance proof for one cached archive (SEC-R2-01): a cached
-    /// artifact may only be installed when it was demonstrably produced by
-    /// the exact reviewed PKGBUILD. The archive's embedded .PKGINFO must
-    /// match the fetched .SRCINFO (pkgname, pkgbase, pkgver-pkgrel) and its
-    /// embedded .INSTALL hook must be byte-identical to the install script
-    /// the reviewed PKGBUILD declares via `install=` (or absent when no
-    /// install script is declared). Every missing or mismatched proof fails
-    /// closed so the caller falls through to a fresh, reviewed rebuild — a
-    /// poisoned cache is never silently trusted.
+    /// Retained metadata/hook regression checks. These are necessary but
+    /// insufficient to establish provenance of the rest of an archive;
+    /// production therefore never reuses these legacy cached archives.
+    #[cfg(test)]
     fn cached_artifact_provenance_ok(
         archive: &Path,
         pkg_dir: &Path,
@@ -3503,6 +3535,13 @@ impl AurClient {
         package: &str,
     ) -> Result<std::process::ExitStatus> {
         anyhow::ensure!(
+            self.settings.aur.allow_unsafe_builds,
+            "Chroot devtools execute AUR recipe code on the host before isolation. Use bubblewrap, or explicitly enable aur.allow_unsafe_builds to accept host code execution."
+        );
+        crate::cli::modern_ui::print_warning(
+            "AUR chroot devtools will execute recipe code on the host as your user before entering the chroot; private build storage does not isolate that host code.",
+        );
+        anyhow::ensure!(
             self.settings.aur.allow_network,
             "Chroot devtools cannot enforce offline builds; choose bubblewrap or explicitly enable aur.allow_network"
         );
@@ -3686,7 +3725,7 @@ impl AurClient {
             })
             .collect();
         let verbose = crate::cli::modern_ui::is_verbose();
-        let install_hooks = declared_install_hook_previews(&source);
+        let install_hooks = declared_install_hook_previews(&source)?;
         println!(
             "{}",
             pkgbuild_review_panel(
@@ -3837,80 +3876,51 @@ impl AurClient {
             concurrent,
         );
 
-        let pkgdest = self
-            .settings
-            .aur
-            .pkgdest
-            .clone()
-            .unwrap_or_else(|| self.build_dir.join("_pkgdest"));
-        let srcdest = self
-            .settings
-            .aur
-            .srcdest
-            .clone()
-            .unwrap_or_else(|| self.build_dir.join("_srcdest"));
-
-        // Build scratch lives under the user's cache directory (created
-        // 0700, owned by the build user), never under world-writable /tmp:
-        // a predictable /tmp path would let a local attacker pre-plant a
-        // symlink and redirect the build through it.
-        let builddir = paths::cache_dir().join("build").join(
-            pkg_dir
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("pkg"),
+        // No recipe receives a shared writable cache. A failed or concurrent
+        // build must never leave selectable outputs for a different invocation.
+        let invocation_base = paths::cache_dir().join("_aur-invocations");
+        create_dir_as_user_sync(&invocation_base)?;
+        let invocation = tempfile::Builder::new()
+            .prefix("build-")
+            .tempdir_in(&invocation_base)?;
+        let owner = original_user()
+            .map(|name| {
+                let account = nix::unistd::User::from_name(&name)?
+                    .with_context(|| format!("Original user '{name}' has no system account"))?;
+                Ok::<_, anyhow::Error>((account.uid, account.gid))
+            })
+            .transpose()?;
+        prepare_invocation_directory(invocation.path(), owner)?;
+        let invocation_path = invocation.path().canonicalize()?;
+        let checkout = pkg_dir.canonicalize()?;
+        anyhow::ensure!(
+            !invocation_path.starts_with(&checkout) && !checkout.starts_with(&invocation_path),
+            "AUR checkout overlaps private invocation storage"
         );
-
+        let pkgdest = invocation_path.join("packages");
+        let srcdest = invocation_path.join("sources");
+        let builddir = invocation_path
+            .join("build")
+            .join(pkg_dir.file_name().context("Missing AUR checkout name")?);
         create_dir_as_user_sync(&pkgdest)?;
         create_dir_as_user_sync(&srcdest)?;
         create_dir_as_user_sync(&builddir)?;
-        // makepkg runs de-escalated inside this directory; keep it private
-        // regardless of the creating process's umask. Best-effort: a failure
-        // here only widens permissions, and makepkg still runs unprivileged.
+        if self.settings.aur.cache_builds
+            || self.settings.aur.pkgdest.is_some()
+            || self.settings.aur.srcdest.is_some()
+            || self.settings.aur.ccache_dir.is_some()
+            || self.settings.aur.sccache_dir.is_some()
         {
-            use std::os::unix::fs::PermissionsExt;
-            if let Err(error) =
-                std::fs::set_permissions(&builddir, std::fs::Permissions::from_mode(0o700))
-            {
-                tracing::debug!(
-                    "Failed to restrict AUR build directory {}: {error}",
-                    builddir.display()
-                );
-            }
-        }
-
-        if crate::core::is_root()
-            && let Some(build_user) = build_user()
-        {
-            let status = std::process::Command::new("chown")
-                .arg("-R")
-                .arg(&build_user)
-                .arg("--")
-                .arg(builddir.as_os_str())
-                .status();
-            match status {
-                Ok(status) if status.success() => {}
-                Ok(status) => tracing::warn!(
-                    "Failed to chown AUR build directory {} to {build_user}: {status}",
-                    builddir.display()
-                ),
-                Err(error) => tracing::warn!(
-                    "Failed to chown AUR build directory {} to {build_user}: {error}",
-                    builddir.display()
-                ),
-            }
+            tracing::warn!(
+                "AUR builds use private invocation storage; persistent build/source/compiler caches and custom cache destinations are disabled"
+            );
         }
 
         let mut compiler_cache_dirs = Vec::new();
         let mut extra_env = Vec::new();
 
         if self.settings.aur.enable_ccache {
-            let ccache_dir = self
-                .settings
-                .aur
-                .ccache_dir
-                .clone()
-                .unwrap_or_else(|| self.build_dir.join("_ccache"));
+            let ccache_dir = invocation_path.join("ccache");
             create_dir_as_user_sync(&ccache_dir)?;
             let ccache_dir = ccache_dir.canonicalize().with_context(|| {
                 format!(
@@ -3930,12 +3940,7 @@ impl AurClient {
         }
 
         if self.settings.aur.enable_sccache {
-            let sccache_dir = self
-                .settings
-                .aur
-                .sccache_dir
-                .clone()
-                .unwrap_or_else(|| self.build_dir.join("_sccache"));
+            let sccache_dir = invocation_path.join("sccache");
             create_dir_as_user_sync(&sccache_dir)?;
             let sccache_dir = sccache_dir.canonicalize().with_context(|| {
                 format!(
@@ -3954,6 +3959,7 @@ impl AurClient {
         }
 
         Ok(MakepkgEnv {
+            _invocation: invocation,
             makeflags,
             pkgdest,
             srcdest,
@@ -3964,121 +3970,48 @@ impl AurClient {
         })
     }
 
-    fn read_file_or_empty_if_missing(path: &Path) -> Result<Vec<u8>> {
-        match std::fs::read(path) {
-            Ok(bytes) => Ok(bytes),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
-            Err(error) => Err(error.into()),
-        }
-    }
-
-    fn read_text_if_exists(path: &Path) -> Result<Option<String>> {
-        match std::fs::read_to_string(path) {
-            Ok(text) => Ok(Some(text)),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(error) => Err(error.into()),
-        }
-    }
-
     fn cache_key(&self, pkg_dir: &Path, makeflags: &str) -> Result<String> {
-        let pkgbuild = std::fs::read(pkg_dir.join("PKGBUILD"))?;
-        let srcinfo = Self::read_file_or_empty_if_missing(&pkg_dir.join(".SRCINFO"))?;
+        let source = ReviewedSource::capture(pkg_dir)?;
         let makepkg_args = self.makepkg_args().join(" ");
         let build_method = format!("{:?}", self.settings.aur.build_method);
         let mut hasher = Sha256::new();
-        hasher.update(pkgbuild);
-        hasher.update(srcinfo);
-        hasher.update(makeflags.as_bytes());
-        hasher.update(makepkg_args.as_bytes());
-        hasher.update(build_method.as_bytes());
-        hasher.update(self.settings.aur.secure_makepkg.to_string().as_bytes());
+        hasher.update(b"omg-aur-source-v2\0");
+        for value in [
+            source.digest.as_str(),
+            makeflags,
+            makepkg_args.as_str(),
+            build_method.as_str(),
+            if self.settings.aur.secure_makepkg {
+                "true"
+            } else {
+                "false"
+            },
+        ] {
+            hasher.update((value.len() as u64).to_le_bytes());
+            hasher.update(value.as_bytes());
+        }
         Ok(hex::encode(hasher.finalize()))
     }
 
+    #[cfg(test)]
     fn cache_path(&self, package: &str) -> PathBuf {
         self.build_dir
             .join("_buildcache")
             .join(format!("{package}.hash"))
     }
 
-    /// Look up a cached build: the hash file lives under `cache_name` (the
-    /// package base) while the archive search targets the requested output
-    /// artifacts, which may be split-package outputs of that base. Only
-    /// archives validated against the checkout are returned.
+    /// Legacy hash markers bind source text only, not the complete archive.
+    /// Do not promote recipe-writable payloads into trusted cache entries.
+    /// Reuse stays disabled until controller-owned archive provenance exists.
     async fn cached_artifacts(
         &self,
-        cache_name: &str,
-        artifacts: &[String],
-        pkg_dir: &Path,
-        pkgdest: &Path,
-        cache_key: &str,
+        _cache_name: &str,
+        _artifacts: &[String],
+        _pkg_dir: &Path,
+        _pkgdest: &Path,
+        _cache_key: &str,
     ) -> Result<Option<Vec<PathBuf>>> {
-        if !self.settings.aur.cache_builds {
-            return Ok(None);
-        }
-
-        let cache_name = cache_name.to_string();
-        let artifacts = artifacts.to_vec();
-        let pkg_dir = pkg_dir.to_path_buf();
-        let pkgdest = pkgdest.to_path_buf();
-        let cache_key = cache_key.to_string();
-        let cache_path = self.cache_path(&cache_name);
-
-        self.blocking_build_work(move || {
-            let Some(cached) = Self::read_text_if_exists(&cache_path)? else {
-                return Ok(None);
-            };
-            if cached.trim() != cache_key {
-                return Ok(None);
-            }
-
-            Ok(
-                Self::find_packages_in_dir_all(&pkgdest, &artifacts).and_then(|archives| {
-                    Self::select_cached_artifacts(archives, &artifacts, &pkg_dir, &cache_name)
-                }),
-            )
-        })
-        .await
-    }
-
-    async fn write_cache_key(&self, package: &str, cache_key: &str) -> Result<()> {
-        if !self.settings.aur.cache_builds {
-            return Ok(());
-        }
-
-        let cache_path = self.cache_path(package);
-
-        if let Some(parent) = cache_path.parent() {
-            create_dir_as_user(parent).await?;
-        }
-
-        let cache_key = cache_key.to_string();
-        if let Some(user) = original_user() {
-            let mut child = crate::core::privilege::sudo_command()?
-                .args(["-u", &user, "tee"])
-                .arg(&cache_path)
-                .stdin(Stdio::piped())
-                .stdout(Stdio::null())
-                .spawn()?;
-
-            if let Some(mut stdin) = child.stdin.take() {
-                use tokio::io::AsyncWriteExt;
-                stdin.write_all(cache_key.as_bytes()).await?;
-                stdin.write_all(b"\n").await?;
-            }
-
-            let status = child.wait().await?;
-            if !status.success() {
-                anyhow::bail!("Failed to write cache key as user '{user}'");
-            }
-        } else {
-            self.blocking_build_work(move || {
-                std::fs::write(cache_path, cache_key)?;
-                Ok(())
-            })
-            .await?;
-        }
-        Ok(())
+        Ok(None)
     }
 
     /// Install the built package via direct ALPM or elevated OMG transaction.
@@ -4470,6 +4403,32 @@ mod tests {
             error.to_string().contains("must be a regular file"),
             "{error}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn vcs_version_changes_are_authorized_only_for_fresh_outputs() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        std::fs::write(
+            directory.path().join("PKGBUILD"),
+            "pkgname=demo\npkgver() { echo 2; }\n",
+        )?;
+        std::fs::write(
+            directory.path().join(".SRCINFO"),
+            "pkgbase = demo\npkgver = 1\npkgrel = 1\narch = any\npkgname = demo\n",
+        )?;
+        let source = ReviewedSource::capture(directory.path())?;
+        let archive_dir = tempfile::tempdir()?;
+        let archive = archive_dir.path().join("demo-2-1-any.pkg.tar.gz");
+        write_pkg_archive(
+            &archive,
+            "pkgname = demo\npkgbase = demo\npkgver = 2-1\n",
+            None,
+        );
+        let paths = [archive];
+        let outputs = ["demo".to_owned()];
+        assert!(AurClient::authorize_archives(&paths, &source, "demo", &outputs, true).is_ok());
+        assert!(AurClient::authorize_archives(&paths, &source, "demo", &outputs, false).is_err());
         Ok(())
     }
 
@@ -4910,41 +4869,51 @@ mod tests {
         let sensitive_file = temp_dir.path().join("sensitive.txt");
         std::fs::write(&sensitive_file, "secret").unwrap();
 
-        // Try to overwrite it from inside the sandbox
-        // The sandbox mounts / as read-only by default except for specific paths
-        // We need to verify that an arbitrary path is NOT writable
-
-        let status = Command::new("bwrap")
-            .args([
-                "--ro-bind",
-                "/",
-                "/",
-                "--dev",
-                "/dev",
-                "--proc",
-                "/proc",
-                "--tmpfs",
-                "/tmp",
-                "--command",
-                "/bin/sh",
-                "-c",
-                &format!("echo hacked > {}", sensitive_file.display()),
-            ])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .await
-            .unwrap();
-
-        // Should fail because / is read-only
-        assert!(
-            !status.success(),
-            "Sandbox should prevent writing to arbitrary files"
-        );
+        // Keep the fixture visible: a fresh /tmp would hide its parent and
+        // make ENOENT look like a successful read-only-mount regression.
+        // The writable control must execute the same shell and write first.
+        for readonly in [false, true] {
+            std::fs::write(&sensitive_file, "secret").unwrap();
+            let output = Command::new("bwrap")
+                .args([
+                    if readonly { "--ro-bind" } else { "--bind" },
+                    "/",
+                    "/",
+                    "--dev",
+                    "/dev",
+                    "--proc",
+                    "/proc",
+                    "--setenv",
+                    "LC_ALL",
+                    "C",
+                    "--",
+                    "/bin/sh",
+                    "-eu",
+                    "-c",
+                    "cat -- \"$1\"; printf hacked > \"$1\"",
+                    "readonly-fixture",
+                ])
+                .arg(&sensitive_file)
+                .output()
+                .await
+                .unwrap();
+            assert_eq!(output.stdout, b"secret", "fixture must be readable");
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if readonly {
+                assert!(!output.status.success(), "read-only write succeeded");
+                assert!(stderr.contains("Read-only file system"), "{stderr}");
+                assert_eq!(std::fs::read(&sensitive_file).unwrap(), b"secret");
+            } else {
+                assert!(output.status.success(), "writable control failed: {stderr}");
+                assert_eq!(std::fs::read(&sensitive_file).unwrap(), b"hacked");
+            }
+        }
     }
 
     #[tokio::test]
     async fn sandbox_fakeroot_skips_unmappable_real_chown() {
+        use std::os::unix::fs::MetadataExt;
+
         if which::which("bwrap").is_err() || which::which("fakeroot").is_err() {
             return;
         }
@@ -4956,7 +4925,40 @@ mod tests {
         std::fs::create_dir_all(&destination).unwrap();
         std::fs::write(source.join("nested/file"), "payload").unwrap();
 
+        // Production bwrap runs as the invoking build user, not as root.
+        // The CI fixture starts as root, so hand this private tree and only
+        // this child to nobody before bwrap creates its user namespace.
+        let (uid, gid) = if nix::unistd::geteuid().is_root() {
+            let account = nix::unistd::User::from_name("nobody")
+                .unwrap()
+                .expect("root fakeroot regression requires a nobody account");
+            (account.uid.as_raw(), account.gid.as_raw())
+        } else {
+            (
+                nix::unistd::geteuid().as_raw(),
+                nix::unistd::getegid().as_raw(),
+            )
+        };
+        assert_ne!(
+            uid, 0,
+            "fakeroot fixture must run without real root ownership"
+        );
+        if nix::unistd::geteuid().is_root() {
+            for path in [
+                temp.path().to_path_buf(),
+                source.clone(),
+                source.join("nested"),
+                source.join("nested/file"),
+                destination.clone(),
+            ] {
+                std::os::unix::fs::chown(path, Some(uid), Some(gid)).unwrap();
+            }
+        }
+
         let mut command = Command::new("bwrap");
+        if nix::unistd::geteuid().is_root() {
+            command.uid(uid).gid(gid);
+        }
         command.args([
             "--clearenv",
             "--ro-bind",
@@ -4977,19 +4979,45 @@ mod tests {
             SANDBOX_FAKEROOT_ENV.0,
             SANDBOX_FAKEROOT_ENV.1,
             "--",
-            "fakeroot",
             "sh",
+            "-eu",
             "-c",
             concat!(
-                "chown -R 0:0 source && ",
-                "test \"$(stat -c '%u:%g' source/nested/file)\" = 0:0 && ",
-                "cp -a source/. destination/copied && ",
-                "test \"$(stat -c '%u:%g' destination/copied/nested/file)\" = 0:0",
+                "test \"$(id -u)\" != 0; ",
+                "test \"$(cat source/nested/file)\" = payload; ",
+                "printf control > destination/control; ",
+                "owner=$(stat -c '%u:%g' source/nested/file); ",
+                "if chown 0:0 source/nested/file; then ",
+                "echo 'real chown unexpectedly succeeded' >&2; exit 1; fi; ",
+                "test \"$(stat -c '%u:%g' source/nested/file)\" = \"$owner\"; ",
+                "fakeroot sh -eu -c '",
+                "chown -R 0:0 source; ",
+                "test \"$(stat -c '%u:%g' source/nested/file)\" = 0:0; ",
+                "cp -a source/. destination/copied; ",
+                "test \"$(stat -c '%u:%g' destination/copied/nested/file)\" = 0:0'",
             ),
         ]);
 
         let status = command.status().await.unwrap();
         assert!(status.success());
+        assert_eq!(
+            std::fs::read(source.join("nested/file")).unwrap(),
+            b"payload"
+        );
+        assert_eq!(
+            std::fs::read(destination.join("control")).unwrap(),
+            b"control"
+        );
+        assert_eq!(
+            std::fs::metadata(source.join("nested/file")).unwrap().uid(),
+            uid
+        );
+        assert_eq!(
+            std::fs::metadata(destination.join("copied/nested/file"))
+                .unwrap()
+                .uid(),
+            uid
+        );
         assert_eq!(
             std::fs::read_to_string(destination.join("copied/nested/file")).unwrap(),
             "payload"
@@ -5203,7 +5231,7 @@ mod tests {
             files,
             digest: String::new(),
         };
-        let hooks = declared_install_hook_previews(&source);
+        let hooks = declared_install_hook_previews(&source).unwrap();
         assert_eq!(hooks.len(), 1);
         assert_eq!(hooks[0].0, "demo.install");
         assert!(hooks[0].1.contains("echo ok"));
@@ -5732,7 +5760,189 @@ mod tests {
     }
 
     #[test]
-    fn cache_key_allows_missing_srcinfo() {
+    fn cache_key_binds_auxiliary_files() {
+        let client = AurClient::new().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("PKGBUILD"), "pkgname=demo\n").unwrap();
+        std::fs::write(dir.path().join(".SRCINFO"), "pkgbase = demo\n").unwrap();
+        std::fs::write(dir.path().join("fix.patch"), "original").unwrap();
+        let before = client.cache_key(dir.path(), "").unwrap();
+        std::fs::write(dir.path().join("fix.patch"), "modified").unwrap();
+        assert_ne!(before, client.cache_key(dir.path(), "").unwrap());
+    }
+
+    #[tokio::test]
+    async fn makepkg_invocations_isolate_every_writable_cache() {
+        let mut client = AurClient::new().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        client.settings.aur.enable_ccache = true;
+        client.settings.aur.enable_sccache = true;
+        client.settings.aur.pkgdest = Some(dir.path().to_owned());
+        client.settings.aur.srcdest = Some(dir.path().to_owned());
+        client.settings.aur.ccache_dir = Some(dir.path().to_owned());
+        client.settings.aur.sccache_dir = Some(dir.path().to_owned());
+        let first = client.makepkg_env(dir.path()).await.unwrap();
+        let second = client.makepkg_env(dir.path()).await.unwrap();
+        for (left, right) in [
+            (&first.pkgdest, &second.pkgdest),
+            (&first.srcdest, &second.srcdest),
+            (&first.builddir, &second.builddir),
+        ] {
+            assert_ne!(left, right);
+            assert!(!left.starts_with(dir.path()));
+        }
+        for left in &first.compiler_cache_dirs {
+            assert!(!second.compiler_cache_dirs.contains(left));
+            assert!(!left.starts_with(dir.path()));
+        }
+        let old_output = first.pkgdest.clone();
+        drop(first);
+        assert!(!old_output.exists());
+    }
+
+    #[test]
+    fn invocation_ownership_setup_uses_only_private_directory_handles() -> Result<()> {
+        use std::os::unix::fs::MetadataExt;
+        let directory = tempfile::tempdir()?;
+        prepare_invocation_directory(directory.path(), None)?;
+        let metadata = std::fs::metadata(directory.path())?;
+        assert_eq!(metadata.mode() & 0o777, 0o700);
+        let outside = tempfile::tempdir()?;
+        let link = directory.path().join("linked-directory");
+        std::os::unix::fs::symlink(outside.path(), &link)?;
+        assert!(prepare_invocation_directory(&link, None).is_err());
+        if nix::unistd::geteuid().is_root() {
+            let account = nix::unistd::User::from_name("nobody")?
+                .context("root ownership regression needs an unprivileged nobody account")?;
+            prepare_invocation_directory(directory.path(), Some((account.uid, account.gid)))?;
+            let metadata = std::fs::metadata(directory.path())?;
+            assert_eq!(metadata.uid(), account.uid.as_raw());
+            assert_eq!(metadata.gid(), account.gid.as_raw());
+            assert_eq!(metadata.mode() & 0o777, 0o700);
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn chroot_requires_explicit_host_code_consent_before_launch() -> Result<()> {
+        let mut client = AurClient::new()?;
+        client.settings.aur.allow_network = true;
+        client.settings.aur.allow_unsafe_builds = false;
+        let checkout = tempfile::tempdir()?;
+        let env = client.makepkg_env(checkout.path()).await?;
+        let error = client
+            .run_chroot_build(checkout.path(), &env, "demo")
+            .await
+            .expect_err("network consent alone cannot authorize host recipe execution");
+        assert!(error.to_string().contains("aur.allow_unsafe_builds"));
+        Ok(())
+    }
+
+    #[test]
+    fn install_hook_review_fails_closed_and_preserves_long_lines() {
+        let mut source = ReviewedSource {
+            files: std::collections::BTreeMap::from([(
+                PathBuf::from(".SRCINFO"),
+                b"install = demo.install\n".to_vec(),
+            )]),
+            digest: String::new(),
+        };
+        assert!(declared_install_hook_previews(&source).is_err());
+        source.files.insert(
+            PathBuf::from("demo.install"),
+            vec![b'x'; MAX_PKGBUILD_REVIEW_BYTES + 1],
+        );
+        assert!(declared_install_hook_previews(&source).is_err());
+        source
+            .files
+            .insert(PathBuf::from("demo.install"), vec![0xff]);
+        assert!(declared_install_hook_previews(&source).is_err());
+        let hook = format!("{}; touch /root/hidden-payload", " ".repeat(150));
+        source
+            .files
+            .insert(PathBuf::from("demo.install"), hook.as_bytes().to_vec());
+        let hooks = declared_install_hook_previews(&source).unwrap();
+        let panel = pkgbuild_review_panel(
+            "demo",
+            "digest",
+            "pkgname=demo",
+            Path::new("PKGBUILD"),
+            &[],
+            &hooks,
+            false,
+        );
+        assert!(panel.contains("touch /root/hidden-payload"));
+    }
+
+    #[tokio::test]
+    async fn fresh_outputs_never_fall_back_to_checkout_or_other_invocations() {
+        let client = AurClient::new().unwrap();
+        let checkout = tempfile::tempdir().unwrap();
+        let first = client.makepkg_env(checkout.path()).await.unwrap();
+        let second = client.makepkg_env(checkout.path()).await.unwrap();
+        let write_archive = |directory: &Path, name: &str| {
+            let path = directory.join(format!("{name}-1-1-any.pkg.tar.zst"));
+            let encoder = zstd::Encoder::new(File::create(&path).unwrap(), 0).unwrap();
+            let mut archive = tar::Builder::new(encoder);
+            let info = format!("pkgname = {name}\npkgver = 1-1\npkgbase = demo\narch = any\n");
+            let mut header = tar::Header::new_gnu();
+            header.set_size(info.len() as u64);
+            header.set_cksum();
+            archive
+                .append_data(&mut header, ".PKGINFO", info.as_bytes())
+                .unwrap();
+            archive.into_inner().unwrap().finish().unwrap();
+            path
+        };
+        let poison = write_archive(checkout.path(), "demo");
+        write_archive(&first.pkgdest, "demo");
+        let names = ["demo".to_string()];
+        assert!(
+            AurClient::find_built_packages(checkout.path(), &second.pkgdest, &names)
+                .await
+                .is_err()
+        );
+        std::os::unix::fs::symlink(&poison, second.pkgdest.join(poison.file_name().unwrap()))
+            .unwrap();
+        assert!(
+            AurClient::find_built_packages(checkout.path(), &second.pkgdest, &names)
+                .await
+                .is_err()
+        );
+        std::fs::remove_file(second.pkgdest.join(poison.file_name().unwrap())).unwrap();
+        let genuine = write_archive(&second.pkgdest, "demo");
+        assert_eq!(
+            AurClient::find_built_packages(checkout.path(), &second.pkgdest, &names)
+                .await
+                .unwrap(),
+            vec![genuine]
+        );
+        let split = ["demo".to_string(), "libs".to_string()];
+        write_archive(&first.pkgdest, "libs");
+        assert!(
+            AurClient::find_built_packages(checkout.path(), &second.pkgdest, &split)
+                .await
+                .is_err()
+        );
+        write_archive(&second.pkgdest, "libs");
+        assert_eq!(
+            AurClient::find_built_packages(checkout.path(), &second.pkgdest, &split)
+                .await
+                .unwrap()
+                .len(),
+            2
+        );
+        drop(first); // A failed invocation's output tree cannot feed a later build.
+        let later = client.makepkg_env(checkout.path()).await.unwrap();
+        assert!(
+            AurClient::find_built_packages(checkout.path(), &later.pkgdest, &names)
+                .await
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn cache_key_requires_reviewable_srcinfo() {
         let client = AurClient::new().expect("test settings must load");
         let dir = tempfile::tempdir().expect("temp dir");
         let pkg_dir = dir.path().join("mypkg");
@@ -5741,7 +5951,7 @@ mod tests {
 
         client
             .cache_key(&pkg_dir, "")
-            .expect("missing .SRCINFO is allowed");
+            .expect_err("missing .SRCINFO must not produce a source cache identity");
     }
 
     #[test]
@@ -5993,7 +6203,7 @@ mod tests {
                 .cached_artifacts("shared", &outputs, &pkg_dir, dir.path(), "matching-key")
                 .await
                 .unwrap(),
-            Some(vec![app.clone(), libs.clone()]),
+            None,
         );
         assert!(
             AurClient::select_cached_artifacts(

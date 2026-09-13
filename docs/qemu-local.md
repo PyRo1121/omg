@@ -24,6 +24,30 @@ once enabled, PRs) that agents work while you iterate.
 
 ## What to run
 
+The hosted `QEMU Matrix` workflow is also a supported verification route when
+the workstation has no Linux/KVM environment. Push the candidate to a review
+branch, then dispatch that branch with `staged=true`, `distro=all`, and
+`arch=all`. Staged jobs build and run library and binary unit tests from the
+selected commit before booting guests. A published-release run checks the
+published binaries, not uncommitted workstation changes.
+
+The workflow resolves its tag once, records source and artifact provenance,
+and rejects skipped selected guest jobs. Download the per-distro evidence and
+inspect inventory skips as well as the final job result. The main CI sandbox
+lane additionally requires explicit namespace, isolation and root-handoff
+regressions; QEMU lifecycle success is not a substitute for that lane.
+
+Hosted Sentry configuration uses `OMG_SMOKE_SENTRY_DSN` through an environment
+variable and a private runner-temporary file. Guest reporting logs show intake
+acceptance or failure. A separate `qemu-matrix-workflow` fallback reports failed
+builds and other failures before guest reporting can run. Its `ubuntu` distro
+identifies the coordinator, not a failed guest; the accompanying context file
+contains job outcomes, commit and workflow URL. Missing secrets are visible
+notices, and delivery failure never converts failed tests into success.
+
+Uploaded QEMU evidence includes diagnostic file types only. Private guest keys,
+cloud-init configuration and disks retained after failed cleanup are excluded.
+
 Audit pins without booting anything (fast, always works):
 
 ```bash

@@ -2,8 +2,8 @@
 //!
 //! mise supplies `[env]` entries to `mise exec`, tasks, and activated shells
 //! ([`Environments`](https://mise.jdx.dev/environments/)). OMG resolves the
-//! same table natively so `omg run`, task execution, and `omg hook-env` see
-//! identical variables without shelling out to mise.
+//! same table natively for explicit `omg run` and task execution. Automatic
+//! shell hooks only select installed runtimes and never import project env.
 //!
 //! Supported subset (one intentional deviation each, documented below):
 //! - `KEY = "value"` / `KEY = 123` — plain assignments.
@@ -14,18 +14,17 @@
 //! - `KEY = { value = "…", redact = true }` plus top-level
 //!   `redactions = [...]` glob patterns — recorded on [`ResolvedEnv`] so
 //!   output paths can mask secrets.
-//! - `KEY = { required = true }` — fail when unset or empty. In hook
-//!   (per-prompt) context a missing required variable warns and is skipped
-//!   instead of failing every prompt; `run`/task contexts fail closed.
+//! - `KEY = { required = true }` — fail when unset or empty in explicit
+//!   `run`/task contexts. Automatic hooks never load these directives.
 //! - `_.path` — directories prepended to `PATH` (after tool bin dirs),
 //!   relative paths resolving against the declaring file's directory
 //!   (mise `config_root`).
 //! - `_.file` — dotenv, JSON, or TOML files merged into the environment.
 //!   YAML is rejected with an explicit error (no YAML parser vendored).
-//!   Missing files fail closed in strict contexts, warn-and-skip in hooks.
-//! - `_.source` — shell scripts whose *hook* application is a verbatim
-//!   `source` line (the shell evaluates it natively each prompt); `run` and
-//!   task execution evaluate the script via `bash -c … && env -0` snapshots.
+//!   Missing files fail closed in strict contexts; lenient loaders warn and skip.
+//! - `_.source` — shell scripts evaluated by explicit `run` and task
+//!   execution via `bash -c … && env -0` snapshots. Automatic hooks ignore
+//!   all project environment directives.
 //! - `{{env.NAME}}` / `{{config_root}}` templates in TOML string values.
 //!   Full Tera is out of scope: any other `{{…}}` is a hard error rather
 //!   than a silently literal string.
@@ -497,40 +496,35 @@ pub(crate) fn parse_mise_env(document: &toml::Value, config_root: &Path) -> Resu
 
 /// Parse `[env]` from a `mise.toml` file on disk.
 pub(crate) fn parse_mise_env_file(file_path: &Path) -> Result<MiseEnv> {
-    let content = std::fs::read_to_string(file_path)
-        .with_context(|| format!("Failed to read {}", file_path.display()))?;
+    let content = read_bounded_regular_file(file_path)?
+        .with_context(|| format!("Missing config file {}", file_path.display()))?;
     let document: toml::Value = toml::from_str(&content)
         .with_context(|| format!("Failed to parse {}", file_path.display()))?;
     let config_root = file_path.parent().unwrap_or_else(|| Path::new("."));
     parse_mise_env(&document, config_root)
 }
 
-/// Read an env file with a size cap; missing files are `Ok(None)` so the
-/// caller can apply strict/lenient policy.
-///
-/// The file is type-checked before and after opening, and read through the
-/// same bounded handle used for the size check. This closes two holes
-/// reachable from project-controlled `_.file` directives resolved during
-/// completion and automatic shell hooks: special files (FIFOs, devices such
-/// as `/dev/zero`) would hang or stream forever, and a metadata-then-reopen
-/// race could swap a small file for an unbounded one.
-fn read_env_file(path: &Path) -> Result<Option<String>> {
-    // A pre-open type check is what keeps FIFO opens from blocking: opening
-    // a named pipe for read blocks until a writer appears, so it must be
-    // rejected before `File::open`.
-    if let Ok(metadata) = std::fs::symlink_metadata(path) {
-        anyhow::ensure!(
-            !metadata.file_type().is_symlink() && metadata.is_file(),
-            "Env file {} is not a regular file; refusing to load",
-            path.display()
-        );
+/// Read through one bounded, regular-file descriptor. Nonblocking open prevents
+/// FIFO replacement races; no-follow rejects final-component symlinks. Missing
+/// files remain `None` for the caller's strict/lenient policy.
+pub(crate) fn read_bounded_regular_file(path: &Path) -> Result<Option<String>> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(nix::libc::O_NONBLOCK | nix::libc::O_NOFOLLOW);
     }
-
-    let file = match std::fs::File::open(path) {
+    let file = match options.open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => {
-            return Err(error).with_context(|| format!("Failed to read {}", path.display()));
+            return Err(error).with_context(|| {
+                format!(
+                    "Failed to read {} as a regular file (symlinks are not a regular file)",
+                    path.display()
+                )
+            });
         }
     };
     let metadata = file
@@ -565,6 +559,10 @@ fn read_env_file(path: &Path) -> Result<Option<String>> {
     let content = String::from_utf8(buffer)
         .with_context(|| format!("Env file {} is not valid UTF-8", path.display()))?;
     Ok(Some(content))
+}
+
+fn read_env_file(path: &Path) -> Result<Option<String>> {
+    read_bounded_regular_file(path)
 }
 
 /// Parse dotenv content: `KEY=value`, optional `export` prefix, `#`
@@ -1100,6 +1098,29 @@ fn parse_nul_env(output: &[u8]) -> HashMap<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mise_config_reads_are_bounded() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mise.toml");
+        std::fs::write(&path, "#".repeat(1024 * 1024 + 1)).unwrap();
+        assert!(parse_mise_env_file(&path).is_err());
+        std::fs::write(&path, "[env]\nLEGITIMATE = 'preserved'\n").unwrap();
+        assert_eq!(parse_mise_env_file(&path).unwrap().entries.len(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bounded_reader_rejects_fifo_without_a_writer() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pipe.env");
+        nix::unistd::mkfifo(&path, nix::sys::stat::Mode::S_IRUSR).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            tx.send(read_env_file(&path).is_err()).unwrap();
+        });
+        assert!(rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap());
+    }
 
     /// Env-file reads reachable from completion and shell hooks must reject
     /// special files (hang/stream-forever vectors) before opening them.

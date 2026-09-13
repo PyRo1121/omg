@@ -72,7 +72,9 @@ pub(crate) fn load_local_package_metadata(path: &str) -> Result<LocalPackageMeta
             },
         )?,
         installed_size: u64::try_from(package.isize()).unwrap_or(0),
-        license: (!licenses.is_empty()).then(|| licenses.join(" AND ")),
+        license: crate::core::security::policy::combined_license_expression(
+            licenses.iter().map(String::as_str),
+        ),
     })
 }
 
@@ -521,8 +523,10 @@ pub(crate) fn register_configured_syncdbs(
     pacman_config: &crate::core::pacman_conf::PacmanConfig,
 ) -> Result<()> {
     let policy = signature_policy(pacman_config)?;
+    let require_pgp = crate::core::security::policy::SecurityPolicy::load_default()?.require_pgp;
     for repo in &pacman_config.repos {
         let siglevel = repository_siglevel(policy.default, repo.sig_level.as_deref())?;
+        let siglevel = enforce_required_package_signature(siglevel, require_pgp);
         alpm.register_syncdb(repo.name.as_str(), siglevel)
             .with_context(|| {
                 format!(
@@ -966,6 +970,19 @@ struct ParsedSignatureLevel {
     mask: alpm::SigLevel,
 }
 
+#[test]
+fn explicit_pgp_requirement_overrides_optional_and_disabled_package_signatures() {
+    for level in [
+        alpm::SigLevel::NONE,
+        alpm::SigLevel::PACKAGE | alpm::SigLevel::PACKAGE_OPTIONAL,
+    ] {
+        let enforced = enforce_required_package_signature(level, true);
+        assert!(enforced.contains(alpm::SigLevel::PACKAGE));
+        assert!(!enforced.contains(alpm::SigLevel::PACKAGE_OPTIONAL));
+        assert_eq!(enforce_required_package_signature(level, false), level);
+    }
+}
+
 fn set_signature_flags(parsed: &mut ParsedSignatureLevel, flags: alpm::SigLevel) {
     parsed.level.insert(flags);
     parsed.mask.insert(flags);
@@ -1110,11 +1127,24 @@ pub(crate) fn repository_siglevel(
     ))
 }
 
+fn enforce_required_package_signature(mut level: alpm::SigLevel, required: bool) -> alpm::SigLevel {
+    if required {
+        level.insert(alpm::SigLevel::PACKAGE);
+        level.remove(alpm::SigLevel::PACKAGE_OPTIONAL | alpm::SigLevel::USE_DEFAULT);
+    }
+    level
+}
+
 pub(crate) fn configure_signature_policy(
     alpm: &alpm::Alpm,
     config: &crate::core::pacman_conf::PacmanConfig,
 ) -> Result<SignaturePolicy> {
-    let signatures = signature_policy(config)?;
+    let mut signatures = signature_policy(config)?;
+    let require_pgp = crate::core::security::policy::SecurityPolicy::load_default()?.require_pgp;
+    signatures.default = enforce_required_package_signature(signatures.default, require_pgp);
+    signatures.local_file = enforce_required_package_signature(signatures.local_file, require_pgp);
+    signatures.remote_file =
+        enforce_required_package_signature(signatures.remote_file, require_pgp);
     alpm.set_default_siglevel(signatures.default)
         .context("Failed to configure default package signature policy")?;
     alpm.set_local_file_siglevel(signatures.local_file)
@@ -1522,7 +1552,9 @@ fn commit_alpm_transaction(
                 crate::package_managers::parse_version(package.version().as_str())
                     .context("Invalid prepared package version")?,
                 package.origin() != alpm::PackageFrom::SyncDb,
-                package.licenses().iter().next().map(str::to_owned),
+                crate::core::security::policy::combined_license_expression(
+                    package.licenses().iter(),
+                ),
             ))
         })
         .collect::<Result<Vec<_>>>()?;
