@@ -1088,6 +1088,8 @@ OMG_TOOL_ALLOW_PIP_SDISTS="reviewed-cli" omg tool install reviewed-cli
 OMG_TOOL_ALLOW_CARGO_UNLOCKED="reviewed-cli" omg tool install reviewed-cli
 OMG_TOOL_ALLOW_HOST_ENV="npm:@company/private-cli" omg tool install private-cli
 OMG_TOOL_ALLOW_UNVERIFIED="npm:@company/private-cli" omg tool install private-cli
+OMG_TOOL_ALLOW_GO_CGO="reviewed-cli" omg tool install reviewed-cli
+OMG_TOOL_ALLOW_GO_TOOLCHAIN_DOWNLOAD="reviewed-cli" omg tool install reviewed-cli
 ```
 
 OMG prints a `Security override:` warning for every matching exception before
@@ -1120,6 +1122,12 @@ from that package's transitive dependencies too. Its deliberately explicit name
 reflects that risk. OMG first installs with scripts disabled and verifies the
 dependency tree, then runs `npm rebuild` only when this exception is active.
 Review the complete dependency tree before using it.
+
+Go tool builds default to `CGO_ENABLED=0` and `GOTOOLCHAIN=local`. The CGO
+exception permits the selected package to invoke the native C toolchain. The
+toolchain-download exception permits Go to fetch and execute a toolchain that
+is not already installed; Go's checksum database still authenticates official
+downloaded toolchains. Apply only the exception named in OMG's failure message.
 
 These defaults follow the upstream security controls documented by
 [npm](https://docs.npmjs.com/viewing-package-provenance/),

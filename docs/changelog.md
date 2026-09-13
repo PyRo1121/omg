@@ -15,6 +15,8 @@
 - Require Python wheels, Cargo lockfiles, and Go's public checksum database by
   default, with exact package-scoped compatibility overrides documented in the
   CLI reference.
+- Disable CGO and automatic Go toolchain downloads during tool installation by
+  default, with independent package-scoped exceptions.
 - Support private registry workflows through independently scoped environment,
   script/build, lockfile, and signature-verification exceptions.
 - Print every matching package-scoped security exception before starting an

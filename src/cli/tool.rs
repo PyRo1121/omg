@@ -15,6 +15,8 @@ const ALLOW_PIP_SDISTS_ENV: &str = "OMG_TOOL_ALLOW_PIP_SDISTS";
 const ALLOW_CARGO_UNLOCKED_ENV: &str = "OMG_TOOL_ALLOW_CARGO_UNLOCKED";
 const ALLOW_HOST_ENV: &str = "OMG_TOOL_ALLOW_HOST_ENV";
 const ALLOW_UNVERIFIED_ENV: &str = "OMG_TOOL_ALLOW_UNVERIFIED";
+const ALLOW_GO_CGO_ENV: &str = "OMG_TOOL_ALLOW_GO_CGO";
+const ALLOW_GO_TOOLCHAIN_ENV: &str = "OMG_TOOL_ALLOW_GO_TOOLCHAIN_DOWNLOAD";
 
 #[cfg(unix)]
 const TOOL_SYSTEM_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
@@ -42,6 +44,12 @@ fn active_security_overrides(manager: &str, package: &str) -> Vec<&'static str> 
     }
     if manager == "cargo" && package_is_allowed(ALLOW_CARGO_UNLOCKED_ENV, package) {
         active.push(ALLOW_CARGO_UNLOCKED_ENV);
+    }
+    if manager == "go" && package_is_allowed(ALLOW_GO_CGO_ENV, package) {
+        active.push(ALLOW_GO_CGO_ENV);
+    }
+    if manager == "go" && package_is_allowed(ALLOW_GO_TOOLCHAIN_ENV, package) {
+        active.push(ALLOW_GO_TOOLCHAIN_ENV);
     }
     if host_environment_is_allowed(manager, package) {
         active.push(ALLOW_HOST_ENV);
@@ -730,10 +738,18 @@ async fn install_managed(
                         .env("GONOSUMDB", "")
                         .env("GOENV", "off");
                 }
+                if !package_is_allowed(ALLOW_GO_CGO_ENV, pkg) {
+                    command.env("CGO_ENABLED", "0");
+                }
+                if !package_is_allowed(ALLOW_GO_TOOLCHAIN_ENV, pkg) {
+                    command.env("GOTOOLCHAIN", "local");
+                }
                 let status = command.stdout(std::process::Stdio::null()).status()?;
 
                 if !status.success() {
-                    anyhow::bail!("Go install of '{pkg}' failed. Try: go install {target}");
+                    anyhow::bail!(
+                        "Go install of '{pkg}' failed. Reviewed packages may opt into CGO with {ALLOW_GO_CGO_ENV}={pkg} or toolchain downloads with {ALLOW_GO_TOOLCHAIN_ENV}={pkg}"
+                    );
                 }
                 Ok(())
             }
@@ -1228,6 +1244,8 @@ mod tests {
                 (ALLOW_PIP_SDISTS_ENV, Some("reviewed")),
                 (ALLOW_HOST_ENV, Some("npm:reviewed")),
                 (ALLOW_UNVERIFIED_ENV, Some("npm:reviewed")),
+                (ALLOW_GO_CGO_ENV, Some("reviewed")),
+                (ALLOW_GO_TOOLCHAIN_ENV, Some("reviewed")),
             ],
             || {
                 assert_eq!(
@@ -1237,6 +1255,10 @@ mod tests {
                 assert_eq!(
                     active_security_overrides("pip", "reviewed"),
                     vec![ALLOW_PIP_SDISTS_ENV]
+                );
+                assert_eq!(
+                    active_security_overrides("go", "reviewed"),
+                    vec![ALLOW_GO_CGO_ENV, ALLOW_GO_TOOLCHAIN_ENV]
                 );
                 assert!(active_security_overrides("npm", "other").is_empty());
             },
