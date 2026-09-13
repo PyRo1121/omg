@@ -31,6 +31,8 @@
   install or update so persisted overrides cannot weaken policy silently.
 - Persist `.omg-security-receipt.json` with every managed tool so audits can
   inspect the effective source, verification, script/build, and runtime policy.
+- Bind each receipt to the published executable and script targets with
+  streaming SHA-256 hashes and stable relative paths.
 - Resolve and contain-check tool binary entries before activation and again
   while linking, rejecting package symlinks that target host files.
 - Keep the previous managed tool until shared-bin activation completes and

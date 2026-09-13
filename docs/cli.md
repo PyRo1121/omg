@@ -1125,8 +1125,9 @@ silently apply to later releases.
 Every successful managed installation contains
 `.omg-security-receipt.json`. It records the manager and package, public or
 host-configured source policy, every active exception, and the effective npm,
-pip, Cargo, and Go protections. Security tooling can inspect this receipt
-without relying on terminal history.
+pip, Cargo, and Go protections. It also records the SHA-256 digest of every
+published executable or script target using relative paths. Security tooling
+can inspect this receipt without relying on terminal history.
 
 Before activation, OMG resolves every regular file and symlink in the tool's
 `bin` and npm `.bin` directories. An entry whose final target escapes the staged

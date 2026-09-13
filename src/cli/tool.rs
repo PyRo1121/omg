@@ -2,7 +2,10 @@ use crate::cli::{CliContext, LocalCommandRunner, ToolCommands};
 use anyhow::{Context, Result};
 use console::user_attended;
 use dialoguer::{Select, theme::ColorfulTheme};
+use sha2::{Digest as _, Sha256};
+use std::collections::BTreeMap;
 use std::fs;
+use std::io::Read as _;
 #[cfg(unix)]
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
@@ -111,12 +114,14 @@ fn write_security_receipt(staging_dir: &Path, manager: &str, package: &str) -> R
     let go_cgo_disabled = (manager == "go").then(|| !package_is_allowed(ALLOW_GO_CGO_ENV, package));
     let go_local_toolchain_only =
         (manager == "go").then(|| !package_is_allowed(ALLOW_GO_TOOLCHAIN_ENV, package));
+    let executable_hashes = tool_binary_hashes(staging_dir)?;
     let receipt = serde_json::json!({
         "format_version": 1,
         "manager": manager,
         "package": package,
         "source_policy": if host_environment { "host-configured" } else { "pinned-public" },
         "active_overrides": active_security_overrides(manager, package),
+        "executable_sha256": executable_hashes,
         "protections": {
             "isolated_environment": !host_environment,
             "npm_scripts_disabled": npm_scripts_disabled,
@@ -134,6 +139,54 @@ fn write_security_receipt(staging_dir: &Path, manager: &str, package: &str) -> R
         content,
     )
     .context("Write tool security receipt")
+}
+
+fn tool_binary_hashes(install_dir: &Path) -> Result<BTreeMap<String, String>> {
+    let canonical_install = fs::canonicalize(install_dir)?;
+    let is_venv = install_dir.join("pyvenv.cfg").is_file();
+    let mut hashes = BTreeMap::new();
+    for directory in tool_binary_dirs(install_dir) {
+        if !crate::runtimes::common::is_valid_version_dir(&directory) {
+            continue;
+        }
+        for entry in fs::read_dir(directory)? {
+            let path = entry?.path();
+            if is_venv && path.file_name().is_some_and(|name| is_venv_base_tool(name)) {
+                continue;
+            }
+            let metadata = fs::symlink_metadata(&path)?;
+            if !metadata.is_file() && !metadata.is_symlink() {
+                continue;
+            }
+            let target = fs::canonicalize(&path)?;
+            if !target.starts_with(&canonical_install) || !target.is_file() {
+                anyhow::bail!("Cannot hash uncontained tool binary: {}", path.display());
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt as _;
+                if fs::metadata(&target)?.permissions().mode() & 0o111 == 0 {
+                    continue;
+                }
+            }
+            let mut file = fs::File::open(&target)?;
+            let mut hasher = Sha256::new();
+            let mut buffer = [0_u8; 64 * 1024];
+            loop {
+                let read = file.read(&mut buffer)?;
+                if read == 0 {
+                    break;
+                }
+                hasher.update(&buffer[..read]);
+            }
+            let relative = path.strip_prefix(install_dir).unwrap_or(&path);
+            hashes.insert(
+                relative.to_string_lossy().replace('\\', "/"),
+                hex::encode(hasher.finalize()),
+            );
+        }
+    }
+    Ok(hashes)
 }
 
 fn tool_binary_dirs(install_dir: &Path) -> [PathBuf; 2] {
@@ -943,12 +996,12 @@ async fn install_managed(
         return Err(error);
     }
 
-    if let Err(error) = write_security_receipt(&staging_dir, manager, pkg) {
+    if let Err(error) = validate_tool_binary_containment(&staging_dir) {
         pb.finish_and_clear();
         let _ = fs::remove_dir_all(&staging_dir);
         return Err(error);
     }
-    if let Err(error) = validate_tool_binary_containment(&staging_dir) {
+    if let Err(error) = write_security_receipt(&staging_dir, manager, pkg) {
         pb.finish_and_clear();
         let _ = fs::remove_dir_all(&staging_dir);
         return Err(error);
@@ -1530,6 +1583,17 @@ mod tests {
     #[test]
     fn security_receipt_records_effective_policy() {
         let staging = tempfile::tempdir().expect("staging directory");
+        fs::create_dir_all(staging.path().join("bin")).expect("bin directory");
+        fs::write(staging.path().join("bin/tool"), b"verified executable").expect("tool fixture");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            fs::set_permissions(
+                staging.path().join("bin/tool"),
+                fs::Permissions::from_mode(0o755),
+            )
+            .expect("executable fixture");
+        }
         temp_env::with_vars(
             [
                 (ALLOW_GO_CGO_ENV, Some("example.com/tool")),
@@ -1551,6 +1615,10 @@ mod tests {
         assert_eq!(receipt["protections"]["go_checksum_database"], true);
         assert_eq!(receipt["protections"]["go_cgo_disabled"], false);
         assert_eq!(receipt["protections"]["go_local_toolchain_only"], true);
+        assert_eq!(
+            receipt["executable_sha256"]["bin/tool"],
+            hex::encode(Sha256::digest(b"verified executable"))
+        );
     }
 
     #[cfg(unix)]
