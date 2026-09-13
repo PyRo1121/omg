@@ -5,7 +5,8 @@
 # - schedule/dispatch default: published release guests, x86_64 (no build).
 # - pull_request (or dispatch + staged=true): per-distro builds packaged
 #   exactly like the release recipe, tested via --staged-dir.
-# - aarch64 legs are staged-only on ubuntu-24.04-arm runners: the release
+# - aarch64 legs are staged-only; guest runners use OMG_QEMU_ARM_RUNNER
+#   (default ubuntu-24.04-arm) and must pass a native ARM/KVM probe. The release
 #   workflow publishes no aarch64-linux archives, so ARM guests test
 #   arm64-native builds (guest-arm job). Arch has no ARM leg: upstream
 #   publishes no aarch64 cloud image (see scripts/benchmark-qemu.sh).
@@ -328,12 +329,39 @@ jobs:
   # No arch row: there is no aarch64 archlinux container image, matching
   # the missing arch/aarch64 guest pin in scripts/benchmark-qemu.sh.
   #########################################################################
+  arm-runner-health:
+    name: "ARM guest runner KVM health"
+    needs: prepare
+    if: needs.prepare.outputs.arm64 == 'true'
+    runs-on: ${{ vars.OMG_QEMU_ARM_RUNNER || 'ubuntu-24.04-arm' }}
+    timeout-minutes: 5
+    steps:
+      - name: Require native ARM and accessible KVM
+        run: |
+          [[ "$(uname -m)" == aarch64 ]] || { echo "::error::ARM guests require an aarch64 runner"; exit 1; }
+          if [[ ! -c /dev/kvm || ! -r /dev/kvm || ! -w /dev/kvm ]]; then
+            echo "::error::ARM guest runner needs accessible /dev/kvm; configure OMG_QEMU_ARM_RUNNER with a KVM-capable ARM runner label"
+            exit 1
+          fi
+          python3 - <<'PY'
+          import fcntl
+          import os
+          descriptor = os.open('/dev/kvm', os.O_RDWR)
+          try:
+              version = fcntl.ioctl(descriptor, 0xAE00, 0)  # KVM_GET_API_VERSION
+              if version != 12:
+                  raise RuntimeError(f'Unsupported KVM API version: {version}')
+          finally:
+              os.close(descriptor)
+          PY
+          printf 'ARM runner architecture and KVM API verified.\n' >> "$GITHUB_STEP_SUMMARY"
+
   build-staged-arm:
     name: "Staged build arm64 (${{ matrix.distro }})"
     concurrency:
       group: qemu-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'schedule' && 'nightly' || 'interactive' }}-build-staged-arm-${{ matrix.distro }}
       cancel-in-progress: ${{ github.event_name != 'schedule' }}
-    needs: prepare
+    needs: [prepare, arm-runner-health]
     if: needs.prepare.outputs.staged == 'true' && needs.prepare.outputs.arm64 == 'true' && needs.prepare.outputs.build-arm64 != '[]'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 45
@@ -395,7 +423,7 @@ jobs:
 
   build-staged-ubuntu-arm:
     name: "Staged build arm64 (ubuntu)"
-    needs: prepare
+    needs: [prepare, arm-runner-health]
     if: needs.prepare.outputs.staged == 'true' && needs.prepare.outputs.arm64 == 'true' && (github.event_name != 'workflow_dispatch' || inputs.distro == 'all' || inputs.distro == 'ubuntu')
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 45
@@ -577,12 +605,13 @@ jobs:
     concurrency:
       group: qemu-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'schedule' && 'nightly' || 'interactive' }}-guest-arm-${{ matrix.distro }}
       cancel-in-progress: ${{ github.event_name != 'schedule' }}
-    needs: [prepare, build-staged-arm, build-staged-ubuntu-arm]
+    needs: [prepare, arm-runner-health, build-staged-arm, build-staged-ubuntu-arm]
     if: >-
       !cancelled() && needs.prepare.result == 'success' && needs.prepare.outputs.arm64 == 'true' &&
+      needs.arm-runner-health.result == 'success' &&
       (needs.build-staged-arm.result == 'success' || needs.build-staged-arm.result == 'skipped') &&
       (needs.build-staged-ubuntu-arm.result == 'success' || needs.build-staged-ubuntu-arm.result == 'skipped')
-    runs-on: ubuntu-24.04-arm
+    runs-on: ${{ vars.OMG_QEMU_ARM_RUNNER || 'ubuntu-24.04-arm' }}
     timeout-minutes: 90
     strategy:
       fail-fast: false
@@ -706,7 +735,7 @@ jobs:
 
   summary:
     name: "QEMU matrix result"
-    needs: [prepare, build-staged, build-staged-ubuntu, build-staged-arm, build-staged-ubuntu-arm, guest, guest-arm]
+    needs: [prepare, arm-runner-health, build-staged, build-staged-ubuntu, build-staged-arm, build-staged-ubuntu-arm, guest, guest-arm]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -730,6 +759,7 @@ jobs:
           jq -e '
             .prepare.result == "success" and
             (all(.[]; .result == "success" or .result == "skipped")) and
+            (if .prepare.outputs.arm64 == "true" then .["arm-runner-health"].result == "success" else .["arm-runner-health"].result == "skipped" end) and
             (if .prepare.outputs.x64 == "true" then .guest.result == "success" else .guest.result == "skipped" end) and
             (if .prepare.outputs.arm64 == "true" then .["guest-arm"].result == "success" else .["guest-arm"].result == "skipped" end)
           ' <<< "$JOB_RESULTS"

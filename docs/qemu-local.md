@@ -24,6 +24,37 @@ once enabled, PRs) that agents work while you iterate.
 
 ## What to run
 
+### ARM runner configuration
+
+The workflow repository variable `OMG_QEMU_ARM_RUNNER` selects a single runner
+label for both the ARM health job and ARM guests. When unset it defaults to
+`ubuntu-24.04-arm`. The three ARM guest jobs in run `34778845877` lacked
+`/dev/kvm` on that default label; a label does not establish KVM availability.
+Do not configure a replacement label until a matching runner is available.
+
+The selected runner must run native Linux aarch64, provide Docker, Bash,
+Python 3, jq and the existing harness prerequisites, and let its job user open
+`/dev/kvm` read/write with KVM API version 12. Every runner matching the label
+must satisfy this contract: health and guest jobs may land on different
+machines. Use disposable isolated runners suitable for executing PR-controlled
+code with Docker and KVM access.
+
+The rollout plan is to provision and verify the ARM runner, assign its single
+label to `OMG_QEMU_ARM_RUNNER` in repository Actions variables, then dispatch
+a staged ARM run and inspect the health result and all selected guest evidence.
+The health job checks architecture, device access and the KVM API before ARM
+builds begin. It does not change device permissions or enable emulation. ARM
+builds still use the existing hosted CPU runner labels; ARM guest jobs use the
+configured KVM runner label and repeat their own device checks. The summary
+requires both ARM health and selected guests to succeed. Missing, skipped or
+failed selected ARM health cannot produce a passing matrix.
+
+ARM health is independent of x64 jobs. A staged `arch=all` run can therefore
+produce x64 evidence while failing visibly for unavailable ARM capacity. A
+staged `arch=x64` run requests only x64 coverage and skips ARM health and builds.
+
+### Dispatch and evidence
+
 The hosted `QEMU Matrix` workflow is also a supported verification route when
 the workstation has no Linux/KVM environment. Push the candidate to a review
 branch, then dispatch that branch with `staged=true`, `distro=all`, and

@@ -87,14 +87,18 @@ class QemuWorkflowTests(unittest.TestCase):
         for x64, arm in itertools.product([False, True], repeat=2):
             good = {'prepare': {'result': 'success', 'outputs': {'x64': str(x64).lower(), 'arm64': str(arm).lower()}},
                     'build-staged': {'result': 'skipped'},
+                    'arm-runner-health': {'result': 'success' if arm else 'skipped'},
                     'guest': {'result': 'success' if x64 else 'skipped'},
                     'guest-arm': {'result': 'success' if arm else 'skipped'}}
             variants = [(good, True)]
             for job in good:
-                for status in ['failure', 'cancelled'] + (['skipped'] if job == 'prepare' or job == 'guest' and x64 or job == 'guest-arm' and arm else []):
+                for status in ['failure', 'cancelled'] + (['skipped'] if job == 'prepare' or job == 'guest' and x64 or job in ('guest-arm', 'arm-runner-health') and arm else []):
                     changed = json.loads(json.dumps(good))
                     changed[job]['result'] = status
                     variants.append((changed, False))
+            missing_health = json.loads(json.dumps(good))
+            del missing_health['arm-runner-health']
+            variants.append((missing_health, False))
             for values, expected in variants:
                 with self.subTest(values=values), tempfile.TemporaryDirectory() as tmp:
                     result, _ = self.run_script(script, {'JOB_RESULTS': json.dumps(values)}, Path(tmp))
