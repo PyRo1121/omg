@@ -136,6 +136,49 @@ fn write_security_receipt(staging_dir: &Path, manager: &str, package: &str) -> R
     .context("Write tool security receipt")
 }
 
+fn tool_binary_dirs(install_dir: &Path) -> [PathBuf; 2] {
+    [
+        install_dir.join("bin"),
+        install_dir.join("node_modules").join(".bin"),
+    ]
+}
+
+fn validate_tool_binary_containment(install_dir: &Path) -> Result<()> {
+    let canonical_install = fs::canonicalize(install_dir).with_context(|| {
+        format!(
+            "Failed to resolve staged tool directory {}",
+            install_dir.display()
+        )
+    })?;
+    let is_venv = install_dir.join("pyvenv.cfg").is_file();
+    for directory in tool_binary_dirs(install_dir) {
+        if !crate::runtimes::common::is_valid_version_dir(&directory) {
+            continue;
+        }
+        for entry in fs::read_dir(&directory)? {
+            let path = entry?.path();
+            if is_venv && path.file_name().is_some_and(|name| is_venv_base_tool(name)) {
+                continue;
+            }
+            let metadata = fs::symlink_metadata(&path)?;
+            if !metadata.is_file() && !metadata.is_symlink() {
+                continue;
+            }
+            let target = fs::canonicalize(&path).with_context(|| {
+                format!("Tool binary entry cannot be resolved: {}", path.display())
+            })?;
+            if !target.starts_with(&canonical_install) {
+                anyhow::bail!(
+                    "Refusing tool binary entry outside its installation: {} -> {}",
+                    path.display(),
+                    target.display()
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Construct a package-manager command with a minimal environment.
 ///
 /// Package build and lifecycle scripts inherit their manager's environment.
@@ -905,6 +948,11 @@ async fn install_managed(
         let _ = fs::remove_dir_all(&staging_dir);
         return Err(error);
     }
+    if let Err(error) = validate_tool_binary_containment(&staging_dir) {
+        pb.finish_and_clear();
+        let _ = fs::remove_dir_all(&staging_dir);
+        return Err(error);
+    }
 
     // Swap the staged install into place: move the previous install aside,
     // promote the staging directory, then drop the backup. If promotion fails,
@@ -983,8 +1031,8 @@ fn link_binaries(install_dir: &Path, bin_dir: &Path, skip_venv_base_tools: bool)
     // Find binaries in standard locations within the isolated install dir
     // Standard locations: /bin, /node_modules/.bin (npm)
 
-    let mut search_dirs = vec![install_dir.join("bin")];
-    search_dirs.push(install_dir.join("node_modules").join(".bin")); // NPM structure
+    let search_dirs = tool_binary_dirs(install_dir);
+    let canonical_install = fs::canonicalize(install_dir)?;
 
     let mut linked = 0;
 
@@ -998,6 +1046,20 @@ fn link_binaries(install_dir: &Path, bin_dir: &Path, skip_venv_base_tools: bool)
             let path = entry.path();
 
             if path.is_file() {
+                let Some(filename) = path.file_name() else {
+                    continue;
+                };
+                if skip_venv_base_tools && is_venv_base_tool(filename) {
+                    continue;
+                }
+                let target = fs::canonicalize(&path)?;
+                if !target.starts_with(&canonical_install) {
+                    anyhow::bail!(
+                        "Refusing tool binary entry outside its installation: {} -> {}",
+                        path.display(),
+                        target.display()
+                    );
+                }
                 // Check if executable (heuristic)
                 #[cfg(unix)]
                 {
@@ -1009,12 +1071,6 @@ fn link_binaries(install_dir: &Path, bin_dir: &Path, skip_venv_base_tools: bool)
                     }
                 }
 
-                let Some(filename) = path.file_name() else {
-                    continue;
-                };
-                if skip_venv_base_tools && is_venv_base_tool(filename) {
-                    continue;
-                }
                 let dest = bin_dir.join(filename);
 
                 // Remove existing link only if it is one of ours
@@ -1455,6 +1511,18 @@ mod tests {
         assert_eq!(receipt["protections"]["go_checksum_database"], true);
         assert_eq!(receipt["protections"]["go_cgo_disabled"], false);
         assert_eq!(receipt["protections"]["go_local_toolchain_only"], true);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn binary_preflight_rejects_links_outside_the_installation() {
+        let staging = tempfile::tempdir().expect("staging directory");
+        let bin = staging.path().join("bin");
+        fs::create_dir_all(&bin).expect("bin directory");
+        symlink("/etc/hostname", bin.join("escaped")).expect("external link fixture");
+        let error = validate_tool_binary_containment(staging.path())
+            .expect_err("external binary link must fail closed");
+        assert!(error.to_string().contains("outside its installation"));
     }
 
     #[test]

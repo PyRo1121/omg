@@ -1128,6 +1128,10 @@ host-configured source policy, every active exception, and the effective npm,
 pip, Cargo, and Go protections. Security tooling can inspect this receipt
 without relying on terminal history.
 
+Before activation, OMG resolves every regular file and symlink in the tool's
+`bin` and npm `.bin` directories. An entry whose final target escapes the staged
+installation aborts the update, leaving the previous installed version active.
+
 If a corporate TLS proxy or private certificate authority is required, scope
 `OMG_TOOL_ALLOW_HOST_ENV` to the affected package and expose only the necessary
 proxy and certificate variables in that shell. The package's build process can
