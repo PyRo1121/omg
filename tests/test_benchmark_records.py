@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -442,6 +443,58 @@ class BenchmarkAdmissionTests(unittest.TestCase):
         result["exit_codes"] = [False, False]
         self.write_results(result)
         self.assertTrue(self.recorder.validate_results(self.source))
+
+
+class QemuCloudInitTests(unittest.TestCase):
+    def setUp(self) -> None:
+        script = Path(__file__).resolve().parents[1] / "scripts/benchmark-qemu.sh"
+        self.text = script.read_text(encoding="utf-8")
+        self.bash = os.environ.get("OMG_TEST_BASH") or "/bin/bash"
+
+    def test_generated_seed_preserves_hostname_and_pins_host_key(self) -> None:
+        seed = self.text.split("ssh-keygen -q -t ed25519 -N '' -f guest-host-key\n", 1)[1]
+        seed = seed.split("cloud-localds seed.img user-data meta-data", 1)[0]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "client-key.pub").write_text("ssh-ed25519 fixture-client\n")
+            (root / "guest-host-key").write_text("fixture-private-key\n")
+            (root / "guest-host-key.pub").write_text("ssh-ed25519 fixture-host\n")
+            result = subprocess.run(
+                [self.bash, "-euo", "pipefail", "-c", seed],
+                cwd=root, capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("\npreserve_hostname: true\n", (root / "user-data").read_text())
+            self.assertNotIn("local-hostname", (root / "meta-data").read_text())
+            self.assertEqual(
+                (root / "known_hosts").read_text(),
+                "[127.0.0.1]:2222 ssh-ed25519 fixture-host\n",
+            )
+
+    def test_cloud_init_gate_keeps_all_errors_fatal_and_reports_details(self) -> None:
+        gate = next(line for line in self.text.splitlines() if line.startswith("timeout 180 ssh "))
+        remote = shlex.split(gate)[-1]
+        mocks = """
+cloud-init() {
+  [[ "$*" == 'status --wait --long' ]] || return 99
+  printf 'status: done\nrecoverable_errors: fixture-details\n'
+  return "$CLOUD_INIT_STATUS"
+}
+cat() { printf 'guest-os\n'; }
+uname() { printf 'guest-kernel\n'; }
+sudo() { printf 'sudo-ok\n'; }
+"""
+        for status in (0, 1, 2, 124):
+            with self.subTest(status=status):
+                result = subprocess.run(
+                    [self.bash, "-c", mocks + remote],
+                    env=dict(os.environ, CLOUD_INIT_STATUS=str(status)),
+                    capture_output=True, text=True, timeout=10,
+                )
+                self.assertEqual(result.returncode, status, result.stderr)
+                self.assertIn("recoverable_errors: fixture-details", result.stdout)
+                self.assertEqual("sudo-ok" in result.stdout, status == 0)
+                self.assertEqual("guest-os" in result.stdout, status == 0)
 
 
 class HeadlineResolutionTests(unittest.TestCase):

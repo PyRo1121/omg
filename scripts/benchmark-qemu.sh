@@ -292,7 +292,9 @@ if [[ "$initial" == true ]]; then
 ssh-keygen -q -t ed25519 -N '' -f client-key
 ssh-keygen -q -t ed25519 -N '' -f guest-host-key
 {
-  printf '#cloud-config\nusers:\n  - name: bench\n    sudo: "ALL=(ALL) NOPASSWD:ALL"\n    shell: /bin/bash\n    ssh_authorized_keys:\n      - '
+  # Guest identity is the pinned SSH key, not a cosmetic hostname. Avoid
+  # cloud-init's unnecessary hostname operation during early boot setup.
+  printf '#cloud-config\npreserve_hostname: true\nusers:\n  - name: bench\n    sudo: "ALL=(ALL) NOPASSWD:ALL"\n    shell: /bin/bash\n    ssh_authorized_keys:\n      - '
   cat client-key.pub
   printf 'ssh_pwauth: false\ndisable_root: true\nssh_keys:\n  ed25519_private: |\n'
   sed 's/^/    /' guest-host-key
@@ -300,7 +302,7 @@ ssh-keygen -q -t ed25519 -N '' -f guest-host-key
   cat guest-host-key.pub
 } > user-data
 chmod 600 user-data
-printf 'instance-id: omg-qemu-fresh\nlocal-hostname: omg-qa\n' > meta-data
+printf 'instance-id: omg-qemu-fresh\n' > meta-data
 printf '[127.0.0.1]:2222 ' > known_hosts
 cat guest-host-key.pub >> known_hosts
 cloud-localds seed.img user-data meta-data
@@ -328,7 +330,9 @@ wait_ssh() {
   return 1
 }
 wait_ssh
-timeout 180 ssh "${opts[@]}" bench@127.0.0.1 'cloud-init status --wait && cat /etc/os-release && uname -r && sudo -n true'
+# Exit 2 means recoverable initialization errors, not a clean boot. Keep all
+# nonzero statuses fatal, but include the detailed errors in boot.log.
+timeout 180 ssh "${opts[@]}" bench@127.0.0.1 'cloud-init status --wait --long && cat /etc/os-release && uname -r && sudo -n true'
 if [[ "$initial" == false ]]; then exit 0; fi
 ssh "${opts[@]}" bench@127.0.0.1 "sudo -n systemctl enable '$2'"
 before=$(ssh "${opts[@]}" bench@127.0.0.1 cat /proc/sys/kernel/random/boot_id)
