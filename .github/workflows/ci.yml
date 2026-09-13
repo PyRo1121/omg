@@ -437,6 +437,11 @@ jobs:
               # A successful namespace probe prevents a denied bwrap startup
               # from masquerading as the read-only-root rejection test passing.
               bwrap --ro-bind / / --unshare-pid --proc /proc -- /bin/true
+              # Create the user namespace with the existing container-root
+              # permissions, then map the payload to nobody and drop its caps.
+              # This does not require relaxing host unprivileged-userns policy.
+              bwrap --unshare-user --uid "$(id -u nobody)" --gid "$(id -g nobody)" \
+                --cap-drop ALL --ro-bind / / --proc /proc -- /usr/bin/id
               /fixture/omg-lib-tests --include-ignored --list > /tmp/tests.list
               failed=0
               for case in cancelling_logged_sandbox_build_terminates_descendants \

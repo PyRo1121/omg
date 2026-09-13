@@ -4910,53 +4910,47 @@ mod tests {
 
     #[tokio::test]
     async fn sandbox_fakeroot_skips_unmappable_real_chown() {
-        use std::os::unix::fs::MetadataExt;
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
         if which::which("bwrap").is_err() || which::which("fakeroot").is_err() {
             return;
         }
 
-        let temp = tempfile::tempdir().unwrap();
+        let temp = tempfile::Builder::new()
+            .permissions(std::fs::Permissions::from_mode(0o700))
+            .tempdir()
+            .unwrap();
         let source = temp.path().join("source");
         let destination = temp.path().join("destination");
         std::fs::create_dir_all(source.join("nested")).unwrap();
         std::fs::create_dir_all(&destination).unwrap();
         std::fs::write(source.join("nested/file"), "payload").unwrap();
 
-        // Production bwrap runs as the invoking build user, not as root.
-        // The CI fixture starts as root, so hand this private tree and only
-        // this child to nobody before bwrap creates its user namespace.
-        let (uid, gid) = if nix::unistd::geteuid().is_root() {
+        let host_uid = nix::unistd::geteuid().as_raw();
+        let host_gid = nix::unistd::getegid().as_raw();
+        // CI already permits container-root namespace setup. Mapping that
+        // creator to a nonzero sandbox UID keeps namespace root unmapped,
+        // without requiring the host to permit unprivileged userns setup.
+        // Drop all payload capabilities and prove real chown still fails.
+        // This models the confined payload, not the host policy governing
+        // whether an unprivileged caller may launch bubblewrap itself.
+        let (uid, gid) = if host_uid == 0 {
             let account = nix::unistd::User::from_name("nobody")
                 .unwrap()
                 .expect("root fakeroot regression requires a nobody account");
             (account.uid.as_raw(), account.gid.as_raw())
         } else {
-            (
-                nix::unistd::geteuid().as_raw(),
-                nix::unistd::getegid().as_raw(),
-            )
+            (host_uid, host_gid)
         };
-        assert_ne!(
-            uid, 0,
-            "fakeroot fixture must run without real root ownership"
-        );
-        if nix::unistd::geteuid().is_root() {
-            for path in [
-                temp.path().to_path_buf(),
-                source.clone(),
-                source.join("nested"),
-                source.join("nested/file"),
-                destination.clone(),
-            ] {
-                std::os::unix::fs::chown(path, Some(uid), Some(gid)).unwrap();
-            }
-        }
-
+        assert_ne!(uid, 0, "fakeroot payload must have a nonzero namespace UID");
         let mut command = Command::new("bwrap");
-        if nix::unistd::geteuid().is_root() {
-            command.uid(uid).gid(gid);
-        }
+        command
+            .arg("--unshare-user")
+            .arg("--uid")
+            .arg(uid.to_string())
+            .arg("--gid")
+            .arg(gid.to_string())
+            .args(["--cap-drop", "ALL"]);
         command.args([
             "--clearenv",
             "--ro-bind",
@@ -4982,6 +4976,13 @@ mod tests {
             "-c",
             concat!(
                 "test \"$(id -u)\" != 0; ",
+                "test \"$(id -g)\" != 0; ",
+                "grep -Eq \"^CapEff:[[:space:]]+0+$\" /proc/self/status; ",
+                "grep -Eq \"^CapPrm:[[:space:]]+0+$\" /proc/self/status; ",
+                "cat /proc/self/uid_map; ",
+                "awk -v uid=\"$(id -u)\" ",
+                "'NR == 1 { if ($1 != uid || $3 != 1) exit 1 } ",
+                "END { if (NR != 1) exit 1 }' /proc/self/uid_map; ",
                 "test \"$(cat source/nested/file)\" = payload; ",
                 "printf control > destination/control; ",
                 "owner=$(stat -c '%u:%g' source/nested/file); ",
@@ -5006,16 +5007,13 @@ mod tests {
             std::fs::read(destination.join("control")).unwrap(),
             b"control"
         );
-        assert_eq!(
-            std::fs::metadata(source.join("nested/file")).unwrap().uid(),
-            uid
-        );
-        assert_eq!(
-            std::fs::metadata(destination.join("copied/nested/file"))
-                .unwrap()
-                .uid(),
-            uid
-        );
+        for path in [
+            source.join("nested/file"),
+            destination.join("copied/nested/file"),
+        ] {
+            let metadata = std::fs::metadata(path).unwrap();
+            assert_eq!((metadata.uid(), metadata.gid()), (host_uid, host_gid));
+        }
         assert_eq!(
             std::fs::read_to_string(destination.join("copied/nested/file")).unwrap(),
             "payload"
