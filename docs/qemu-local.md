@@ -42,7 +42,10 @@ code with Docker and KVM access.
 The rollout plan is to provision and verify the ARM runner, assign its single
 label to `OMG_QEMU_ARM_RUNNER` in repository Actions variables, then manually
 dispatch a staged ARM run and inspect the health result and all selected guest
-evidence. Pull-request runs never select this configurable runner.
+evidence. The checked-in pull-request selection excludes this configurable
+runner. This editable workflow condition is not a runner authorization boundary:
+before registering self-hosted capacity, restrict which workflows and actors may
+use it through runner policy. A pull request can change workflow conditions.
 The health job checks architecture, device access and the KVM API before ARM
 builds begin. It does not change device permissions or enable emulation. ARM
 builds still use the existing hosted CPU runner labels; ARM guest jobs use the
