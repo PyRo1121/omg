@@ -1090,6 +1090,10 @@ OMG_TOOL_ALLOW_HOST_ENV="npm:@company/private-cli" omg tool install private-cli
 OMG_TOOL_ALLOW_UNVERIFIED="npm:@company/private-cli" omg tool install private-cli
 ```
 
+OMG prints a `Security override:` warning for every matching exception before
+the package manager starts. Treat an unexpected warning as a reason to stop and
+remove the variable from the current shell.
+
 `OMG_TOOL_ALLOW_HOST_ENV` accepts exact `manager:package` entries such as
 `npm:@company/private-cli`, `cargo:private-cli`, `pip:private-cli`, or
 `go:example.com/company/private-cli`. It restores the full host environment, so

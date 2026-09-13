@@ -15,6 +15,8 @@
   CLI reference.
 - Support private registry workflows through independently scoped environment,
   script/build, lockfile, and signature-verification exceptions.
+- Print every matching package-scoped security exception before starting an
+  install or update so persisted overrides cannot weaken policy silently.
 
 All notable changes to OMG are documented here.
 

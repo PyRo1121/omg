@@ -32,6 +32,26 @@ fn host_environment_is_allowed(manager: &str, package: &str) -> bool {
     package_is_allowed(ALLOW_HOST_ENV, &format!("{manager}:{package}"))
 }
 
+fn active_security_overrides(manager: &str, package: &str) -> Vec<&'static str> {
+    let mut active = Vec::new();
+    if manager == "npm" && package_is_allowed(ALLOW_NPM_SCRIPTS_ENV, package) {
+        active.push(ALLOW_NPM_SCRIPTS_ENV);
+    }
+    if manager == "pip" && package_is_allowed(ALLOW_PIP_SDISTS_ENV, package) {
+        active.push(ALLOW_PIP_SDISTS_ENV);
+    }
+    if manager == "cargo" && package_is_allowed(ALLOW_CARGO_UNLOCKED_ENV, package) {
+        active.push(ALLOW_CARGO_UNLOCKED_ENV);
+    }
+    if host_environment_is_allowed(manager, package) {
+        active.push(ALLOW_HOST_ENV);
+    }
+    if package_is_allowed(ALLOW_UNVERIFIED_ENV, &format!("{manager}:{package}")) {
+        active.push(ALLOW_UNVERIFIED_ENV);
+    }
+    active
+}
+
 /// Construct a package-manager command with a minimal environment.
 ///
 /// Package build and lifecycle scripts inherit their manager's environment.
@@ -544,6 +564,13 @@ async fn install_managed(
         // Pacman installs globally, breaks isolation pattern but is preferred for OS tools
         // We just delegate and return
         return crate::cli::packages::install(&[pkg.to_string()], false, false, false).await;
+    }
+
+    for variable in active_security_overrides(manager, pkg) {
+        eprintln!(
+            "{} {variable} weakens install security for {manager}:{pkg}",
+            style::warning("Security override:")
+        );
     }
 
     // Stage the new version in a hidden sibling directory so a failed install
@@ -1178,6 +1205,29 @@ mod tests {
             assert!(!host_environment_is_allowed("cargo", "private-cli"));
             assert!(!host_environment_is_allowed("npm", "other"));
         });
+    }
+
+    #[test]
+    fn active_overrides_report_only_the_matching_manager_and_package() {
+        temp_env::with_vars(
+            [
+                (ALLOW_NPM_SCRIPTS_ENV, Some("reviewed")),
+                (ALLOW_PIP_SDISTS_ENV, Some("reviewed")),
+                (ALLOW_HOST_ENV, Some("npm:reviewed")),
+                (ALLOW_UNVERIFIED_ENV, Some("npm:reviewed")),
+            ],
+            || {
+                assert_eq!(
+                    active_security_overrides("npm", "reviewed"),
+                    vec![ALLOW_NPM_SCRIPTS_ENV, ALLOW_HOST_ENV, ALLOW_UNVERIFIED_ENV]
+                );
+                assert_eq!(
+                    active_security_overrides("pip", "reviewed"),
+                    vec![ALLOW_PIP_SDISTS_ENV]
+                );
+                assert!(active_security_overrides("npm", "other").is_empty());
+            },
+        );
     }
 
     #[test]
