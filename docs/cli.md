@@ -1079,6 +1079,12 @@ lifecycle scripts are disabled and registry signatures/provenance are audited;
 pip accepts wheels only; Cargo requires the published lockfile; and Go uses the
 public module proxy and checksum database.
 
+Registry-backed managers accept registry package names only. npm GitHub
+shorthands, Git URLs, tarball URLs, and local package paths are rejected so a
+package name cannot silently select a less verified source. Go module paths are
+accepted because they are authenticated through the configured module proxy and
+checksum database.
+
 Some legitimate tools or private registries need a narrower policy. Exceptions
 are comma-separated exact package names and apply only to the current command:
 

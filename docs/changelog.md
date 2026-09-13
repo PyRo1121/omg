@@ -8,6 +8,9 @@
   credentials and package-manager configuration.
 - Replace the caller-controlled executable search path with root-controlled
   system directories during Linux tool installations.
+- Apply manager-specific package grammar so npm GitHub shorthands, local paths,
+  Git sources, and other alternate-source specifications cannot cross the
+  registry-only tool-install boundary.
 - Disable npm lifecycle scripts by default and verify registry signatures and
   provenance before activating an installed tool.
 - When npm scripts are explicitly approved, install inertly and verify the

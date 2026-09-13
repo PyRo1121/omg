@@ -34,6 +34,43 @@ fn host_environment_is_allowed(manager: &str, package: &str) -> bool {
     package_is_allowed(ALLOW_HOST_ENV, &format!("{manager}:{package}"))
 }
 
+fn validate_managed_package(manager: &str, package: &str) -> Result<()> {
+    crate::core::security::validate_package_name(package)?;
+    let registry_name = |value: &str| {
+        !value.is_empty()
+            && value
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || "-_.+".contains(character))
+    };
+    let valid = match manager {
+        "npm" => {
+            package
+                .strip_prefix('@')
+                .and_then(|value| value.split_once('/'))
+                .is_some_and(|(scope, name)| registry_name(scope) && registry_name(name))
+                || (!package.contains('/') && !package.contains('@') && registry_name(package))
+        }
+        "cargo" | "pip" | "pacman" => {
+            !package.contains('/') && !package.contains('@') && registry_name(package)
+        }
+        "go" => {
+            let (module, version) = package
+                .rsplit_once('@')
+                .map_or((package, None), |(module, version)| (module, Some(version)));
+            module.split('/').all(registry_name)
+                && version
+                    .is_none_or(|version| crate::core::security::validate_version(version).is_ok())
+        }
+        _ => false,
+    };
+    if !valid {
+        anyhow::bail!(
+            "Invalid {manager} registry package '{package}': paths, URLs, Git shorthands, and alternate sources are not accepted by omg tool"
+        );
+    }
+    Ok(())
+}
+
 fn active_security_overrides(manager: &str, package: &str) -> Vec<&'static str> {
     let mut active = Vec::new();
     if manager == "npm" && package_is_allowed(ALLOW_NPM_SCRIPTS_ENV, package) {
@@ -546,6 +583,7 @@ async fn install_managed(
     bin_dir: &Path,
 ) -> Result<()> {
     crate::core::security::validate_package_name(install_name)?;
+    validate_managed_package(manager, pkg)?;
     // Keep storage flat and keyed by the user-facing registry name. Package
     // identifiers such as Go module paths are installer inputs, not paths.
     let install_dir = tools_dir.join(manager).join(install_name);
@@ -1225,6 +1263,32 @@ mod tests {
                 assert!(!package_is_allowed(ALLOW_NPM_SCRIPTS_ENV, "tool"));
             },
         );
+    }
+
+    #[test]
+    fn managed_package_grammar_rejects_alternate_sources() {
+        for (manager, package) in [
+            ("npm", "owner/repository"),
+            ("npm", "@scope/name/extra"),
+            ("pip", "relative/package"),
+            ("cargo", "relative/crate"),
+        ] {
+            assert!(
+                validate_managed_package(manager, package).is_err(),
+                "{manager} accepted {package}"
+            );
+        }
+        for (manager, package) in [
+            ("npm", "eslint"),
+            ("npm", "@angular/cli"),
+            ("pip", "yt-dlp"),
+            ("cargo", "cargo-audit"),
+            ("go", "github.com/rakyll/hey"),
+            ("go", "github.com/rakyll/hey@v0.1.4"),
+        ] {
+            validate_managed_package(manager, package)
+                .unwrap_or_else(|error| panic!("{manager} rejected {package}: {error}"));
+        }
     }
 
     #[test]
