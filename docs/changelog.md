@@ -29,6 +29,8 @@
   script/build, lockfile, and signature-verification exceptions.
 - Print every matching package-scoped security exception before starting an
   install or update so persisted overrides cannot weaken policy silently.
+- Persist `.omg-security-receipt.json` with every managed tool so audits can
+  inspect the effective source, verification, script/build, and runtime policy.
 
 All notable changes to OMG are documented here.
 

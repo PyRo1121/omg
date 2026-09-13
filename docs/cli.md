@@ -1122,6 +1122,12 @@ containing the minimum necessary credential. Multiple approvals can be listed
 with commas. Avoid persistent shell-profile exports so an approval does not
 silently apply to later releases.
 
+Every successful managed installation contains
+`.omg-security-receipt.json`. It records the manager and package, public or
+host-configured source policy, every active exception, and the effective npm,
+pip, Cargo, and Go protections. Security tooling can inspect this receipt
+without relying on terminal history.
+
 If a corporate TLS proxy or private certificate authority is required, scope
 `OMG_TOOL_ALLOW_HOST_ENV` to the affected package and expose only the necessary
 proxy and certificate variables in that shell. The package's build process can

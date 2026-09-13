@@ -97,6 +97,45 @@ fn active_security_overrides(manager: &str, package: &str) -> Vec<&'static str> 
     active
 }
 
+fn write_security_receipt(staging_dir: &Path, manager: &str, package: &str) -> Result<()> {
+    let host_environment = host_environment_is_allowed(manager, package);
+    let unverified = package_is_allowed(ALLOW_UNVERIFIED_ENV, &format!("{manager}:{package}"));
+    let npm_scripts_disabled =
+        (manager == "npm").then(|| !package_is_allowed(ALLOW_NPM_SCRIPTS_ENV, package));
+    let npm_signatures_verified = (manager == "npm").then_some(!unverified);
+    let pip_binary_only =
+        (manager == "pip").then(|| !package_is_allowed(ALLOW_PIP_SDISTS_ENV, package));
+    let cargo_locked =
+        (manager == "cargo").then(|| !package_is_allowed(ALLOW_CARGO_UNLOCKED_ENV, package));
+    let go_checksum_database = (manager == "go").then_some(!host_environment);
+    let go_cgo_disabled = (manager == "go").then(|| !package_is_allowed(ALLOW_GO_CGO_ENV, package));
+    let go_local_toolchain_only =
+        (manager == "go").then(|| !package_is_allowed(ALLOW_GO_TOOLCHAIN_ENV, package));
+    let receipt = serde_json::json!({
+        "format_version": 1,
+        "manager": manager,
+        "package": package,
+        "source_policy": if host_environment { "host-configured" } else { "pinned-public" },
+        "active_overrides": active_security_overrides(manager, package),
+        "protections": {
+            "isolated_environment": !host_environment,
+            "npm_scripts_disabled": npm_scripts_disabled,
+            "npm_signatures_verified": npm_signatures_verified,
+            "pip_binary_only": pip_binary_only,
+            "cargo_locked": cargo_locked,
+            "go_checksum_database": go_checksum_database,
+            "go_cgo_disabled": go_cgo_disabled,
+            "go_local_toolchain_only": go_local_toolchain_only,
+        }
+    });
+    let content = serde_json::to_vec_pretty(&receipt).context("Serialize tool security receipt")?;
+    crate::core::safe_ops::atomic_write_file_sync(
+        staging_dir.join(".omg-security-receipt.json"),
+        content,
+    )
+    .context("Write tool security receipt")
+}
+
 /// Construct a package-manager command with a minimal environment.
 ///
 /// Package build and lifecycle scripts inherit their manager's environment.
@@ -861,6 +900,12 @@ async fn install_managed(
         return Err(error);
     }
 
+    if let Err(error) = write_security_receipt(&staging_dir, manager, pkg) {
+        pb.finish_and_clear();
+        let _ = fs::remove_dir_all(&staging_dir);
+        return Err(error);
+    }
+
     // Swap the staged install into place: move the previous install aside,
     // promote the staging directory, then drop the backup. If promotion fails,
     // the previous install is restored.
@@ -1384,6 +1429,32 @@ mod tests {
                 assert!(active_security_overrides("npm", "other").is_empty());
             },
         );
+    }
+
+    #[test]
+    fn security_receipt_records_effective_policy() {
+        let staging = tempfile::tempdir().expect("staging directory");
+        temp_env::with_vars(
+            [
+                (ALLOW_GO_CGO_ENV, Some("example.com/tool")),
+                (ALLOW_GO_TOOLCHAIN_ENV, None),
+                (ALLOW_HOST_ENV, None),
+            ],
+            || {
+                write_security_receipt(staging.path(), "go", "example.com/tool")
+                    .expect("security receipt");
+            },
+        );
+        let receipt: serde_json::Value = serde_json::from_slice(
+            &fs::read(staging.path().join(".omg-security-receipt.json"))
+                .expect("read security receipt"),
+        )
+        .expect("parse security receipt");
+        assert_eq!(receipt["manager"], "go");
+        assert_eq!(receipt["source_policy"], "pinned-public");
+        assert_eq!(receipt["protections"]["go_checksum_database"], true);
+        assert_eq!(receipt["protections"]["go_cgo_disabled"], false);
+        assert_eq!(receipt["protections"]["go_local_toolchain_only"], true);
     }
 
     #[test]
