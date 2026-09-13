@@ -601,9 +601,9 @@ async fn install_managed(
                 if !allow_host_environment {
                     command.arg("--registry=https://registry.npmjs.org/");
                 }
-                if !allow_scripts {
-                    command.arg("--ignore-scripts");
-                }
+                // Download and materialize the tree without executing it. An
+                // approved script phase happens only after signature checks.
+                command.arg("--ignore-scripts");
                 let status = command
                     .args(["--", pkg])
                     .stdout(std::process::Stdio::null())
@@ -629,6 +629,19 @@ async fn install_managed(
                     if !signature_status.success() {
                         anyhow::bail!(
                             "NPM signature/provenance verification failed for '{pkg}'; refusing to activate it. A trusted private registry without signature support can be scoped with {ALLOW_UNVERIFIED_ENV}=npm:{pkg}"
+                        );
+                    }
+                }
+                if allow_scripts {
+                    let rebuild_status =
+                        secured_manager_command("npm", &staging_dir, manager, pkg)?
+                            .args(["rebuild", "--prefix", install_path])
+                            .stdout(std::process::Stdio::null())
+                            .stderr(std::process::Stdio::inherit())
+                            .status()?;
+                    if !rebuild_status.success() {
+                        anyhow::bail!(
+                            "NPM lifecycle-script rebuild failed for '{pkg}'; refusing to activate it"
                         );
                     }
                 }

@@ -10,6 +10,8 @@
   system directories during Linux tool installations.
 - Disable npm lifecycle scripts by default and verify registry signatures and
   provenance before activating an installed tool.
+- When npm scripts are explicitly approved, install inertly and verify the
+  dependency tree before running the lifecycle-script rebuild phase.
 - Require Python wheels, Cargo lockfiles, and Go's public checksum database by
   default, with exact package-scoped compatibility overrides documented in the
   CLI reference.

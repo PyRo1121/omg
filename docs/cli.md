@@ -1117,7 +1117,9 @@ scripts; set each exception independently when it is actually required.
 The npm script exception is scoped to the requested package installation, but
 npm versions without a dependency-level allowlist can execute lifecycle scripts
 from that package's transitive dependencies too. Its deliberately explicit name
-reflects that risk. Review the complete dependency tree before using it.
+reflects that risk. OMG first installs with scripts disabled and verifies the
+dependency tree, then runs `npm rebuild` only when this exception is active.
+Review the complete dependency tree before using it.
 
 These defaults follow the upstream security controls documented by
 [npm](https://docs.npmjs.com/viewing-package-provenance/),
