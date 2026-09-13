@@ -461,6 +461,7 @@ pub fn execute_transaction(
     kind: TransactionKind,
     handle: Option<&mut alpm::Alpm>,
 ) -> Result<()> {
+    validate_aur_artifact_handoffs(kind, &packages)?;
     let staged = if matches!(
         kind,
         TransactionKind::Install | TransactionKind::InstallAurArtifact
@@ -474,6 +475,13 @@ pub fn execute_transaction(
     let packages = staged
         .as_ref()
         .map_or(packages, |inputs| inputs.targets.clone());
+    if kind == TransactionKind::InstallAurArtifact {
+        for package in &packages {
+            crate::package_managers::aur::artifact_inspector::inspect_archive(
+                std::path::Path::new(package),
+            )?;
+        }
+    }
     let pacman_config = crate::core::pacman_conf::PacmanConfig::parse(paths::pacman_conf_path())
         .context("Failed to load transaction options from pacman.conf")?;
 
@@ -515,6 +523,20 @@ pub fn execute_transaction(
     commit_alpm_transaction(tx_guard.0, &main_task, kind, &pacman_config.hold_pkg)
         .map_err(|error| question_refusal_error(&refusals).unwrap_or(error))?;
 
+    Ok(())
+}
+
+fn validate_aur_artifact_handoffs(kind: TransactionKind, packages: &[String]) -> Result<()> {
+    if kind == TransactionKind::InstallAurArtifact {
+        // Linux sealing prevents mutation after review and closes the privileged
+        // check/use race: https://man7.org/linux/man-pages/man2/memfd_create.2.html
+        anyhow::ensure!(
+            packages
+                .iter()
+                .all(|package| crate::core::security::artifact::is_handoff(package)),
+            "AUR artifacts must arrive through an immutable sealed handoff"
+        );
+    }
     Ok(())
 }
 
@@ -1731,7 +1753,8 @@ mod tests {
         is_keyring_related_error, local_package_siglevel, package_base_name,
         provider_selection_message, question_refusal_error, reclaim_stale_database_lock,
         register_configured_syncdbs, repository_siglevel, setup_alpm_callbacks, signature_policy,
-        transaction_flags, transaction_overall_percent, validate_transaction_targets,
+        transaction_flags, transaction_overall_percent, validate_aur_artifact_handoffs,
+        validate_transaction_targets,
     };
     use crate::core::paths;
 
@@ -2243,5 +2266,30 @@ mod tests {
         assert!(super::progress_event_is_due(&mut last, "foo", 6));
         assert!(super::progress_event_is_due(&mut last, "bar", 7));
         assert_eq!(last.0, "bar");
+    }
+
+    #[test]
+    fn aur_transactions_require_sealed_handoff_targets() {
+        assert!(
+            validate_aur_artifact_handoffs(
+                TransactionKind::InstallAurArtifact,
+                &["/tmp/package.pkg.tar.zst".to_owned()]
+            )
+            .is_err()
+        );
+        assert!(
+            validate_aur_artifact_handoffs(
+                TransactionKind::InstallAurArtifact,
+                &["/__omg_archive/sealed-descriptor".to_owned()]
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_aur_artifact_handoffs(
+                TransactionKind::Install,
+                &["/tmp/package.pkg.tar.zst".to_owned()]
+            )
+            .is_ok()
+        );
     }
 }

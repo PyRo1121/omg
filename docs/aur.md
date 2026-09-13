@@ -13,6 +13,26 @@ OMG treats AUR packages as first-class citizens, with no distinction between off
 - **Parallel source downloads** for multi-source packages
 - **Smart dependency resolution** that skips unnecessary API calls
 - **Real-time progress tracking** for downloads and installations
+- **Offline Bubblewrap builds** with a cleared environment and private home
+- **Sealed artifact handoff** between review, build, and privileged installation
+- **Static archive inspection** before the package database is changed
+
+## Security model
+
+Run OMG as your regular user. Do not use `sudo omg`. OMG requests sudo only when a validated package transaction must change the system package database. Direct root execution remains compatible for now but is deprecated, and AUR builds are always refused when OMG starts as root.
+
+Arch's packaging documentation states that a PKGBUILD is directly sourced and executed by `makepkg`, while a package-specific install script can run before or after installation, upgrade, and removal. OMG therefore treats both the recipe and its output archive as executable input. See the [PKGBUILD format and execution model](https://man.archlinux.org/man/PKGBUILD.5) and [install-script lifecycle](https://man.archlinux.org/man/PKGBUILD.5#INSTALL/UPGRADE/REMOVE_SCRIPTING).
+
+The default AUR path uses four gates:
+
+1. Sources are fetched without executing the PKGBUILD.
+2. The complete source tree is reviewed, hashed, and rechecked before an offline Bubblewrap build. Bubblewrap itself is a policy-building tool, so OMG supplies the filesystem, network, session, and privilege restrictions described by its [upstream security model](https://github.com/containers/bubblewrap/blob/main/README.md#sandbox-security).
+3. Every output is parsed without extraction. OMG rejects traversal, duplicate paths, special device/FIFO/socket entries, escaping links, inconsistent `.PKGINFO`/`.BUILDINFO`, undeclared or changed `.INSTALL` hooks, and malformed metadata.
+4. The accepted bytes are copied into a sealed Linux memfd. The root transaction accepts only that handoff and reinspects the staged bytes. Linux documents file seals as protection against shared-memory modification and TOCTOU races in [`memfd_create(2)`](https://man7.org/linux/man-pages/man2/memfd_create.2.html).
+
+An archive containing `.INSTALL`, setuid/setgid files, or file capabilities requires a separate attended confirmation. `--yes` does not answer this prompt, and unattended execution fails before that archive's installation transaction requests sudo. Linux explains the authority carried by these capability mechanisms in [`capabilities(7)`](https://man7.org/linux/man-pages/man7/capabilities.7.html).
+
+Each accepted archive records its source-manifest SHA-256, archive SHA-256, inspection-policy version, package identity, hook hash, privileged-file count, and approval outcome in OMG's bounded audit chain. These hashes are correlation and tamper-detection evidence; they do not turn an untrusted AUR recipe into a trusted publisher signature. Arch documents publisher-controlled source verification through `validpgpkeys` and full fingerprints in the [PKGBUILD integrity fields](https://man.archlinux.org/man/PKGBUILD.5#INTEGRITY).
 
 ## Performance Features
 
@@ -67,15 +87,16 @@ build_concurrency = 4
 # Require interactive PKGBUILD review before building (default: true)
 review_pkgbuild = true
 
-# Reuse build outputs when the PKGBUILD hash matches (default: true)
-cache_builds = true
+# Never expose host networking to package build code (default: false)
+allow_network = false
+
+# Native builds require this explicit unsafe compatibility opt-in (default: false)
+allow_unsafe_builds = false
 ```
 
 Review is fail-closed: with review enabled and no interactive terminal,
 both single-package and parallel builds bail before cloning or building.
-In CI or other non-interactive sessions that accept unreviewed AUR code,
-set `review_pkgbuild = false`. The `--review` flag forces review for one
-invocation.
+The `--review` flag forces review for one invocation. Disabling review does not disable archive inspection, sealed handoff, or exceptional-privilege rejection.
 
 ## Usage Examples
 
@@ -111,8 +132,9 @@ When you run `omg install <aur-package>`:
 5. **Parse PKGBUILD** using cached regex patterns
 6. **Download sources in parallel** via tokio async runtime
 7. **Build package** with makepkg
-8. **Install with pacman** using maintained sudo session
-9. **Cleanup** build artifacts (unless `keep_build = true`)
+8. **Inspect and seal outputs** without extracting them to the host
+9. **Approve exceptional privileges** when a hook, capability, or set-ID file exists
+10. **Install through the constrained root transaction** using maintained sudo credentials
 
 ## Troubleshooting
 

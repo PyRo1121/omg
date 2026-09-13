@@ -65,11 +65,42 @@ pub fn system_command(program: &str) -> anyhow::Result<std::process::Command> {
     for name in PRIVILEGED_ENV_SCRUB {
         command.env_remove(name);
     }
+    for name in dangerous_prefixed_env_names() {
+        command.env_remove(name);
+    }
     Ok(command)
 }
 
 pub fn sudo_command() -> anyhow::Result<tokio::process::Command> {
     Ok(system_command("sudo")?.into())
+}
+
+/// Effective identity of the account that initiated an elevated process.
+///
+/// Numeric `SUDO_UID` is intentionally ignored: permissive sudoers `SETENV`
+/// rules can preserve caller-selected numeric values. `sudo` and `doas`
+/// establish an invoking user name; resolving that name through the system
+/// account database gives ownership checks and audit records one consistent
+/// identity source.
+pub fn invoking_uid() -> anyhow::Result<u32> {
+    let effective_uid = rustix::process::geteuid().as_raw();
+    if effective_uid != 0 {
+        return Ok(effective_uid);
+    }
+    let valid_user = |user: &String| {
+        !user.is_empty() && !user.starts_with('-') && !user.chars().any(char::is_control)
+    };
+    let Some(user) = std::env::var("SUDO_USER")
+        .ok()
+        .filter(valid_user)
+        .or_else(|| std::env::var("DOAS_USER").ok().filter(valid_user))
+    else {
+        return Ok(0);
+    };
+    let account = nix::unistd::User::from_name(&user)
+        .with_context(|| format!("Failed to resolve invoking account '{user}'"))?
+        .with_context(|| format!("Invoking account '{user}' does not exist"))?;
+    Ok(account.uid.as_raw())
 }
 
 #[cfg(target_os = "linux")]
@@ -159,6 +190,9 @@ fn elevation_executable() -> anyhow::Result<std::path::PathBuf> {
 const PRIVILEGED_ENV_SCRUB: &[&str] = &[
     // Package-manager configuration can define root-executed transaction hooks.
     "APT_CONFIG",
+    "DPKG_ROOT",
+    "DPKG_ADMINDIR",
+    "RPM_CONFIGDIR",
     "OMG_PACMAN_CONF",
     "OMG_PACMAN_ROOT",
     "OMG_PACMAN_DB_DIR",
@@ -244,6 +278,21 @@ fn scrub_privileged_env(command: &mut tokio::process::Command) {
     for name in PRIVILEGED_ENV_SCRUB {
         command.env_remove(name);
     }
+    for name in dangerous_prefixed_env_names() {
+        command.env_remove(name);
+    }
+}
+
+/// DNF repository files may interpolate arbitrary `DNF_VAR_*` names. Remove
+/// every inherited instance because an exact-name denylist cannot cover them.
+fn dangerous_prefixed_env_names() -> Vec<std::ffi::OsString> {
+    std::env::vars_os()
+        .filter_map(|(name, _)| {
+            name.to_str()
+                .is_some_and(|name| name.starts_with("DNF_VAR_"))
+                .then_some(name)
+        })
+        .collect()
 }
 ///
 /// Elevation marker traveling through argv.
@@ -1102,6 +1151,23 @@ mod tests {
             result.status.success(),
             "isolated environment regression failed: {}",
             String::from_utf8_lossy(&result.stderr)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn system_command_removes_dynamic_dnf_repository_variables() {
+        temp_env::with_var(
+            "DNF_VAR_OMG_MIRROR",
+            Some("https://attacker.invalid"),
+            || {
+                let command = super::system_command("printenv").unwrap();
+                assert!(
+                    command
+                        .get_envs()
+                        .any(|(name, value)| { name == "DNF_VAR_OMG_MIRROR" && value.is_none() })
+                );
+            },
         );
     }
 

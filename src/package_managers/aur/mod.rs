@@ -3,6 +3,8 @@
 //! This module provides the `AurClient` for searching, building, and installing
 //! packages from the Arch User Repository.
 
+mod approval;
+pub(crate) mod artifact_inspector;
 mod client;
 mod error;
 mod parallel_build;

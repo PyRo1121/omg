@@ -532,18 +532,21 @@ super::common::impl_runtime_common!(PhpManager);
 /// foreign distro fails here and the install is removed.
 fn smoke_php(version_dir: &Path) -> Result<()> {
     let php = version_dir.join("bin/php");
-    let output = std::process::Command::new(&php)
+    let mut command = std::process::Command::new(&php);
+    super::common::harden_untrusted_runtime_command(&mut command, version_dir);
+    let output = command
         .arg("-v")
         .output()
         .with_context(|| format!("Failed to run smoke test: {}", php.display()))?;
     if output.status.success() {
         return Ok(());
     }
-    let detail: String = String::from_utf8_lossy(&output.stderr)
-        .trim()
-        .chars()
-        .take(300)
-        .collect();
+    let detail: String =
+        crate::cli::style::sanitize_terminal_text(&String::from_utf8_lossy(&output.stderr))
+            .trim()
+            .chars()
+            .take(300)
+            .collect();
     anyhow::bail!(
         "PHP smoke test (`php -v`) failed with status {}: {}{}",
         output.status,

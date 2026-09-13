@@ -1985,6 +1985,15 @@ fn run_maintainer_script_with_timeout(
 
     let mut command = Command::new(script);
     command
+        // Maintainer scripts are package-controlled code. Do not expose the
+        // caller's credentials, agent sockets, proxy secrets, or language
+        // injection variables to them merely because omg was invoked from a
+        // privileged administrative shell.
+        .env_clear()
+        .env("PATH", "/usr/sbin:/usr/bin:/sbin:/bin")
+        .env("HOME", "/root")
+        .env("LANG", "C.UTF-8")
+        .env("LC_ALL", "C.UTF-8")
         .arg(arg)
         .env("DPKG_ROOT", "")
         .env("DPKG_ADMINDIR", "/var/lib/dpkg")

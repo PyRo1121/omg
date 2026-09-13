@@ -443,10 +443,9 @@ impl DnfPackageManager {
             .output()
             .context("Failed to execute dnf repoquery --userinstalled")?;
         if !output.status.success() {
-            anyhow::bail!(
-                "dnf repoquery --userinstalled failed: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            );
+            let stderr =
+                crate::cli::style::sanitize_terminal_text(&String::from_utf8_lossy(&output.stderr));
+            anyhow::bail!("dnf repoquery --userinstalled failed: {}", stderr.trim());
         }
         Self::parse_user_installed_names(&output.stdout)
     }
@@ -1236,6 +1235,9 @@ impl PackageManager for DnfPackageManager {
                 "System updates do not accept package operands"
             );
             crate::core::security::validate_package_names(packages)?;
+            if kind == TransactionType::Install {
+                reject_unsealed_local_rpm_targets(packages)?;
+            }
             let mut args = vec![action.to_owned(), "-y".to_owned()];
             args.extend_from_slice(packages);
             self.recorded_mutation(kind, args, history).await
@@ -1295,6 +1297,7 @@ impl PackageManager for DnfPackageManager {
         let packages = packages.to_vec();
         Box::pin(async move {
             crate::core::security::validate_package_names(&packages)?;
+            reject_unsealed_local_rpm_targets(&packages)?;
 
             let mut args = vec!["install".to_owned(), "-y".to_owned()];
             args.extend(packages);
@@ -1452,9 +1455,40 @@ impl PackageManager for DnfPackageManager {
     }
 }
 
+/// DNF accepts local RPM filenames as install operands. OMG does not yet seal
+/// RPM inputs across sudo re-exec the way it does Arch and Debian archives, so
+/// accepting one here would bypass the local-archive consent and immutable
+/// handoff boundary.
+fn reject_unsealed_local_rpm_targets(packages: &[String]) -> Result<()> {
+    for package in packages {
+        let lower = package.to_ascii_lowercase();
+        anyhow::ensure!(
+            !lower.ends_with(".rpm") && !package.contains('/') && !package.contains('\\'),
+            "Local RPM installation is not supported securely yet: '{package}'. Install repository packages by name; local RPM support requires a sealed archive handoff"
+        );
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_rpm_operands_are_refused_until_they_can_be_sealed() {
+        for target in [
+            "package.rpm",
+            "./package.rpm",
+            "/tmp/package.rpm",
+            "dir/package",
+        ] {
+            assert!(
+                reject_unsealed_local_rpm_targets(&[target.to_owned()]).is_err(),
+                "accepted local DNF operand {target:?}"
+            );
+        }
+        assert!(reject_unsealed_local_rpm_targets(&["package-name.x86_64".to_owned()]).is_ok());
+    }
 
     #[test]
     fn installed_sizes_preserve_builds_architectures_epochs_and_large_values() {

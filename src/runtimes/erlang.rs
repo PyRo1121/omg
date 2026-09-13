@@ -455,7 +455,9 @@ fn require_staged_install_script(script: &Path) -> Result<()> {
 /// travels as argv (never interpolated) and runs under `sh` so a missing
 /// executable bit on the script itself cannot break the install.
 fn run_install_script(version_dir: &Path) -> Result<()> {
-    let status = std::process::Command::new("sh")
+    let mut command = std::process::Command::new("sh");
+    super::common::harden_untrusted_runtime_command(&mut command, version_dir);
+    let status = command
         .arg("Install")
         .arg("-minimal")
         .arg(version_dir)
@@ -482,7 +484,9 @@ fn run_install_script(version_dir: &Path) -> Result<()> {
 /// installer runs before falling back to a source build).
 fn smoke_erl(version_dir: &Path) -> Result<()> {
     let erl = version_dir.join("bin/erl");
-    let status = std::process::Command::new(&erl)
+    let mut command = std::process::Command::new(&erl);
+    super::common::harden_untrusted_runtime_command(&mut command, version_dir);
+    let status = command
         .arg("-noshell")
         .arg("-eval")
         .arg("halt().")

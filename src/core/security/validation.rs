@@ -243,15 +243,7 @@ fn validate_local_archive_file(path: &str, supported: bool) -> anyhow::Result<st
         canonical.display()
     );
 
-    let effective_uid = rustix::process::geteuid().as_raw();
-    let invoking_uid = if effective_uid == 0 {
-        std::env::var("SUDO_UID")
-            .ok()
-            .and_then(|value| value.parse::<u32>().ok())
-            .unwrap_or(0)
-    } else {
-        effective_uid
-    };
+    let invoking_uid = crate::core::privilege::invoking_uid()?;
     let owner_allowed = |uid| uid == 0 || uid == invoking_uid;
     anyhow::ensure!(
         owner_allowed(metadata.uid()),

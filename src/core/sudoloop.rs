@@ -79,9 +79,12 @@ impl SudoLoop {
                         tracing::debug!("Sudoloop: credentials refreshed");
                     }
                     Ok(output) => {
+                        let stderr = crate::cli::style::sanitize_terminal_text(
+                            &String::from_utf8_lossy(&output.stderr),
+                        );
                         tracing::warn!(
                             "Sudoloop: failed to refresh credentials: {}",
-                            String::from_utf8_lossy(&output.stderr)
+                            stderr.trim()
                         );
                         // Continue anyway - user might have NOPASSWD configured
                     }

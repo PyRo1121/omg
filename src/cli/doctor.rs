@@ -789,8 +789,10 @@ pub fn enable_turbo_mode() -> Result<()> {
         true
     };
     if cleanup_done {
+        let setcap = crate::core::privilege::trusted_program("setcap")?;
         let remove = crate::core::privilege::system_command("sudo")?
-            .arg("setcap")
+            .arg("--")
+            .arg(setcap)
             .arg("-r")
             .arg(&exe)
             .status();

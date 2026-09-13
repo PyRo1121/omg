@@ -25,8 +25,10 @@ use super::error::AurError;
 use super::parallel_build::BuildJob;
 use super::utils::{
     build_user, create_dir_as_user, create_dir_as_user_sync, has_word_boundary_match, is_symlink,
-    original_user, original_user_home, remove_dir_as_user, validate_build_dir,
+    original_user, original_user_home, remove_dir_as_user, sudo_as_user_program,
+    validate_build_dir,
 };
+use super::{approval, artifact_inspector};
 
 use super::super::aur_deps::{check_dependencies_for_outputs, dependency_name};
 use super::super::aur_index::AurIndex;
@@ -175,10 +177,12 @@ fn create_scoped_pgp_home(
         .args(valid_keys)
         .output()
         .context("Failed to export AUR PGP keys")?;
+    let export_stderr =
+        crate::cli::style::sanitize_terminal_text(&String::from_utf8_lossy(&exported.stderr));
     anyhow::ensure!(
         exported.status.success() && !exported.stdout.is_empty(),
         "Failed to export AUR PGP keys: {}",
-        String::from_utf8_lossy(&exported.stderr).trim()
+        export_stderr.trim()
     );
     let key_bundle = build_keyring.path().join("trusted-keys.pgp");
     std::fs::write(&key_bundle, &exported.stdout).context("Failed to stage AUR PGP keys")?;
@@ -191,10 +195,12 @@ fn create_scoped_pgp_home(
         .arg(&key_bundle)
         .output()
         .context("Failed to initialize package-scoped AUR PGP keyring")?;
+    let import_stderr =
+        crate::cli::style::sanitize_terminal_text(&String::from_utf8_lossy(&imported.stderr));
     anyhow::ensure!(
         imported.status.success(),
         "Failed to initialize package-scoped AUR PGP keyring: {}",
-        String::from_utf8_lossy(&imported.stderr).trim()
+        import_stderr.trim()
     );
     for key_id in valid_keys {
         anyhow::ensure!(
@@ -1791,7 +1797,9 @@ impl AurClient {
         match clone {
             Ok(output) if output.status.success() => {}
             Ok(output) => {
-                let stderr = String::from_utf8_lossy(&output.stderr);
+                let stderr = crate::cli::style::sanitize_terminal_text(&String::from_utf8_lossy(
+                    &output.stderr,
+                ));
                 anyhow::bail!(
                     "Failed to clone AUR history for '{base}': {}",
                     stderr.trim()
@@ -1814,10 +1822,9 @@ impl AurClient {
             .await
             .context("Failed to list AUR repository history")?;
         if !shas.status.success() {
-            anyhow::bail!(
-                "Failed to list AUR history for '{base}': {}",
-                String::from_utf8_lossy(&shas.stderr).trim()
-            );
+            let stderr =
+                crate::cli::style::sanitize_terminal_text(&String::from_utf8_lossy(&shas.stderr));
+            anyhow::bail!("Failed to list AUR history for '{base}': {}", stderr.trim());
         }
         let sha_list = String::from_utf8_lossy(&shas.stdout);
         let mut matched_sha: Option<String> = None;
@@ -1980,8 +1987,10 @@ impl AurClient {
         }
 
         if !console::user_attended() {
+            let true_program = crate::core::privilege::trusted_program("true")?;
             let status = crate::core::privilege::sudo_command()?
-                .args(["-n", "true"])
+                .args(["-n", "--"])
+                .arg(true_program)
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
@@ -2642,6 +2651,8 @@ impl AurClient {
             .zip(outputs)
             .map(|(path, output)| {
                 let snapshot = ArchiveSnapshot::capture(path)?;
+                let inspection = artifact_inspector::inspect_archive(&snapshot.path())?;
+                snapshot.verify_sha256(&inspection.archive_sha256)?;
                 let identity = Self::cached_archive_identity(Path::new(&snapshot.handoff()))?
                     .context("Archive lacks package identity")?;
                 anyhow::ensure!(
@@ -2649,6 +2660,12 @@ impl AurClient {
                         && identity.base == base
                         && (identity.version == expected_version || dynamic_version),
                     "AUR archive identity/version differs from reviewed source: {output}"
+                );
+                anyhow::ensure!(
+                    inspection.package_name == identity.name
+                        && inspection.package_base == identity.base
+                        && inspection.package_version == identity.version,
+                    "AUR inspection identity differs from package metadata: {output}"
                 );
                 let architecture = identity
                     .architecture
@@ -2667,6 +2684,14 @@ impl AurClient {
                     identity.install_script.as_deref() == expected_hook,
                     "AUR archive contains an undeclared or changed installation hook: {output}"
                 );
+                crate::core::security::audit::record_operation(
+                    "aur_inspection",
+                    &[
+                        format!("source_manifest_sha256={}", source.digest),
+                        inspection.audit_summary(),
+                    ],
+                    "succeeded",
+                )?;
                 Ok(snapshot)
             })
             .collect()
@@ -3130,16 +3155,13 @@ impl AurClient {
             let home = original_user_home()?;
             let dest_str = dest.to_string_lossy();
 
-            let mut cmd = crate::core::privilege::sudo_command()?;
-            cmd.args(["-u", &user]);
+            let mut cmd = sudo_as_user_program(&user, "git")?;
 
             if let Some(ref home_path) = home {
-                cmd.arg("-H");
                 cmd.env("HOME", home_path);
             }
 
             cmd.args([
-                "git",
                 "clone",
                 "--depth=1",
                 "--filter=blob:none",
@@ -4021,6 +4043,40 @@ impl AurClient {
             anyhow::bail!("AUR build produced no package archives to install");
         }
 
+        let inspections = pkg_paths
+            .iter()
+            .map(|snapshot| artifact_inspector::inspect_archive(&snapshot.path()))
+            .collect::<Result<Vec<_>>>()?;
+        if let Some(prompt) = approval::exception_prompt(&inspections)? {
+            let evidence = inspections
+                .iter()
+                .flat_map(artifact_inspector::ArtifactInspection::audit_details)
+                .collect::<Vec<_>>();
+            if !console::user_attended() {
+                crate::core::security::audit::record_operation(
+                    "aur_privilege_approval",
+                    &evidence,
+                    "rejected_unattended",
+                )?;
+                anyhow::bail!(
+                    "AUR archive requests an install hook, setuid/setgid mode, or file capability; attended approval is required"
+                );
+            }
+            if !confirm_prompt(prompt, false).await? {
+                crate::core::security::audit::record_operation(
+                    "aur_privilege_approval",
+                    &evidence,
+                    "rejected",
+                )?;
+                anyhow::bail!("AUR exceptional privilege request was not approved");
+            }
+            crate::core::security::audit::record_operation(
+                "aur_privilege_approval",
+                &evidence,
+                "approved",
+            )?;
+        }
+
         // Serialize database mutations across all concurrent builds.
         let _install_guard = INSTALL_LOCK.lock().await;
 
@@ -4063,15 +4119,16 @@ impl AurClient {
             .context("Cannot clean AUR cache: a build or another cleanup may be active")?;
         if self.build_dir.exists() {
             if let Some(user) = original_user() {
-                let build_dir_str = self.build_dir.to_string_lossy();
-                let status = crate::core::privilege::system_command("sudo")?
-                    .args(["-u", &user, "rm", "-rf", "--", build_dir_str.as_ref()])
+                let status = sudo_as_user_program(&user, "rm")?
+                    .args(["-rf", "--"])
+                    .arg(&self.build_dir)
                     .status()?;
                 if !status.success() {
                     anyhow::bail!("Failed to clean directory as user '{user}'");
                 }
-                let status = crate::core::privilege::system_command("sudo")?
-                    .args(["-u", &user, "mkdir", "-p", "--", build_dir_str.as_ref()])
+                let status = sudo_as_user_program(&user, "mkdir")?
+                    .args(["-p", "--"])
+                    .arg(&self.build_dir)
                     .status()?;
                 if !status.success() {
                     anyhow::bail!("Failed to recreate directory as user '{user}'");
