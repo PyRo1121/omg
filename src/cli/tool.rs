@@ -954,25 +954,25 @@ async fn install_managed(
         return Err(error);
     }
 
-    // Swap the staged install into place: move the previous install aside,
-    // promote the staging directory, then drop the backup. If promotion fails,
-    // the previous install is restored.
+    // Keep the backup until shared-bin activation also succeeds. Directory
+    // promotion and command linking are one logical transaction.
+    let mut backup_dir = None;
     if has_previous_install {
-        let backup_dir = tools_dir.join(manager).join(format!(
+        let backup = tools_dir.join(manager).join(format!(
             ".{install_name}.backup-{}",
             unique_install_suffix()
         ));
-        fs::rename(&install_dir, &backup_dir).with_context(|| {
+        fs::rename(&install_dir, &backup).with_context(|| {
             format!("Failed to move previous install of '{install_name}' aside")
         })?;
         if let Err(error) = fs::rename(&staging_dir, &install_dir) {
-            let _ = fs::rename(&backup_dir, &install_dir);
+            let _ = fs::rename(&backup, &install_dir);
             let _ = fs::remove_dir_all(&staging_dir);
             pb.finish_and_clear();
             return Err(error)
                 .with_context(|| format!("Failed to promote staged install of '{install_name}'"));
         }
-        let _ = fs::remove_dir_all(&backup_dir);
+        backup_dir = Some(backup);
     } else if let Err(error) = fs::rename(&staging_dir, &install_dir) {
         let _ = fs::remove_dir_all(&staging_dir);
         pb.finish_and_clear();
@@ -989,7 +989,32 @@ async fn install_managed(
     // the shared bin dir where they would shadow system Python/pip.
     // https://peps.python.org/pep-0405/
     let is_venv = install_dir.join("pyvenv.cfg").is_file();
-    link_binaries(&install_dir, bin_dir, is_venv)?;
+    if let Err(error) = link_binaries(&install_dir, bin_dir, is_venv) {
+        let failed_dir = tools_dir.join(manager).join(format!(
+            ".{install_name}.failed-{}",
+            unique_install_suffix()
+        ));
+        fs::rename(&install_dir, &failed_dir)
+            .context("Managed tool activation failed and rollback could not move it aside")?;
+        if let Some(backup) = &backup_dir {
+            fs::rename(backup, &install_dir).context(
+                "Managed tool activation failed and the previous version could not be restored",
+            )?;
+            cleanup_broken_managed_links(bin_dir, &install_dir)?;
+            let previous_is_venv = install_dir.join("pyvenv.cfg").is_file();
+            let _ = link_binaries(&install_dir, bin_dir, previous_is_venv);
+        } else {
+            cleanup_broken_managed_links(bin_dir, &install_dir)?;
+        }
+        let _ = fs::remove_dir_all(&failed_dir);
+        return Err(error).context("Failed to activate managed tool; previous version restored");
+    }
+    cleanup_broken_managed_links(bin_dir, &install_dir)?;
+    if let Some(backup) = backup_dir {
+        if let Err(error) = fs::remove_dir_all(&backup) {
+            tracing::warn!(path = %backup.display(), %error, "failed to remove previous tool backup");
+        }
+    }
 
     Ok(())
 }
@@ -1023,6 +1048,21 @@ fn is_managed_link(dest: &Path, install_dir: &Path) -> bool {
         // replaced and installs of a colliding name fail loudly below.
         !dest.exists()
     }
+}
+
+fn cleanup_broken_managed_links(bin_dir: &Path, install_dir: &Path) -> Result<()> {
+    #[cfg(unix)]
+    if let Ok(entries) = fs::read_dir(bin_dir) {
+        for entry in entries {
+            let path = entry?.path();
+            if is_managed_link(&path, install_dir) && !path.exists() {
+                fs::remove_file(path)?;
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = (bin_dir, install_dir);
+    Ok(())
 }
 
 fn link_binaries(install_dir: &Path, bin_dir: &Path, skip_venv_base_tools: bool) -> Result<()> {
@@ -1523,6 +1563,22 @@ mod tests {
         let error = validate_tool_binary_containment(staging.path())
             .expect_err("external binary link must fail closed");
         assert!(error.to_string().contains("outside its installation"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rollback_cleanup_removes_only_broken_links_owned_by_the_tool() {
+        let temp = tempfile::tempdir().expect("temp directory");
+        let install = temp.path().join("tools/npm/example");
+        let bin = temp.path().join("bin");
+        fs::create_dir_all(&bin).expect("bin directory");
+        symlink(install.join("bin/new-only"), bin.join("new-only")).expect("managed broken link");
+        symlink("/missing/foreign", bin.join("foreign")).expect("foreign broken link");
+
+        cleanup_broken_managed_links(&bin, &install).expect("cleanup");
+
+        assert!(fs::symlink_metadata(bin.join("new-only")).is_err());
+        assert!(fs::symlink_metadata(bin.join("foreign")).is_ok());
     }
 
     #[test]

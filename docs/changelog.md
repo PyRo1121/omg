@@ -33,6 +33,8 @@
   inspect the effective source, verification, script/build, and runtime policy.
 - Resolve and contain-check tool binary entries before activation and again
   while linking, rejecting package symlinks that target host files.
+- Keep the previous managed tool until shared-bin activation completes and
+  restore its directory and command links when activation fails.
 
 All notable changes to OMG are documented here.
 
