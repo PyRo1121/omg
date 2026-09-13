@@ -527,11 +527,23 @@ fn acquire_usage_lock(lock_path: &Path) -> Result<std::fs::File> {
         name,
         flags | OFlags::CREATE,
         Mode::RUSR | Mode::WUSR,
-    )
-    .with_context(|| {
+    );
+    #[cfg(target_os = "macos")]
+    let lock = lock.or_else(|error| {
+        if error == rustix::io::Errno::NOENT {
+            // macOS can report ENOENT from concurrent O_CREAT opens even
+            // though another creator has installed the regular lock file.
+            // Open that existing entry once, without CREATE: never recreate
+            // a missing target or retry a removed directory. Keep the same
+            // parent fd, NOFOLLOW and all post-open ownership/type checks.
+            return openat(&directory, name, flags, Mode::empty());
+        }
+        Err(error)
+    });
+    let lock = lock.with_context(|| {
         // Keep the original errno and record descriptor-relative state only
         // on failure. This distinguishes a removed parent from a platform
-        // open/create failure without retrying or changing the lock target.
+        // open/create failure without changing the lock target.
         let parent_state = directory
             .metadata()
             .map(|entry| (entry.dev(), entry.ino(), entry.nlink()));
