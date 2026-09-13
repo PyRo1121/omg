@@ -20,7 +20,7 @@ use std::pin::Pin;
 use anyhow::{Context, Result};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 use crate::core::{Package, PackageSource, is_root};
 use crate::package_managers::PackageManager;
@@ -48,14 +48,14 @@ pub struct DnfPackageManager {
     rpm_db_path: PathBuf,
     /// Path to yum repository configuration (used by the `dnf` CLI)
     repos_dir: PathBuf,
-    /// Complete RPM inventory bound to the observed database and WAL identities.
+    /// Complete RPM inventory bound to database/WAL identity and SQLite commits.
     /// Install reasons belong to DNF's separate state and are queried on demand.
     installed_cache: Arc<RwLock<Option<InstalledSnapshot>>>,
 }
 
 #[derive(Debug)]
 struct InstalledSnapshot {
-    identity: RpmDatabaseIdentity,
+    observation: RpmDatabaseObservation,
     packages: HashMap<String, Vec<InstalledPackage>>,
 }
 
@@ -106,6 +106,49 @@ impl RpmDatabaseIdentity {
         // An absent WAL is valid; an unreadable one must not validate a hit.
         let wal = RpmFileIdentity::read(Path::new(&wal_path)).ok()?;
         Some(Self { database, wal })
+    }
+}
+
+/// SQLite's data_version is connection-local. Keep the same read-only observer
+/// alive for the snapshot instead of comparing values from fresh connections.
+/// Each PRAGMA finishes its own read; no transaction is retained between calls.
+#[derive(Debug, Clone)]
+struct RpmDatabaseObservation {
+    identity: RpmDatabaseIdentity,
+    connection: Arc<Mutex<Connection>>,
+    data_version: i64,
+}
+
+impl RpmDatabaseObservation {
+    fn read(path: &Path) -> Option<Self> {
+        let identity = RpmDatabaseIdentity::read(path)?;
+        let connection =
+            Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY).ok()?;
+        let data_version = connection
+            .query_row("PRAGMA data_version", [], |row| row.get(0))
+            .ok()?;
+        // Reject replacement while opening the observer.
+        if RpmDatabaseIdentity::read(path) != Some(identity) {
+            return None;
+        }
+        Some(Self {
+            identity,
+            connection: Arc::new(Mutex::new(connection)),
+            data_version,
+        })
+    }
+
+    fn is_current(&self, path: &Path) -> bool {
+        if RpmDatabaseIdentity::read(path) != Some(self.identity) {
+            return false;
+        }
+        let Ok(connection) = self.connection.lock() else {
+            return false;
+        };
+        connection
+            .query_row("PRAGMA data_version", [], |row| row.get::<_, i64>(0))
+            .is_ok_and(|version| version == self.data_version)
+            && RpmDatabaseIdentity::read(path) == Some(self.identity)
     }
 }
 
@@ -241,24 +284,23 @@ impl DnfPackageManager {
     }
 
     fn cached_installed_packages(&self) -> Option<Vec<InstalledPackage>> {
-        let identity = RpmDatabaseIdentity::read(&self.rpm_db_path)?;
         self.cache_read()
             .as_ref()
-            .filter(|snapshot| snapshot.identity == identity)
+            .filter(|snapshot| snapshot.observation.is_current(&self.rpm_db_path))
             .map(|snapshot| snapshot.packages.values().flatten().cloned().collect())
     }
 
     fn publish_installed_packages(
         &self,
         packages: &[InstalledPackage],
-        observed_identity: Option<RpmDatabaseIdentity>,
+        observed_identity: Option<RpmDatabaseObservation>,
     ) {
         // Never label an old read with a newer generation, or cache a CLI
         // fallback whose actual database was not observed. Empty inventories
         // are valid snapshots too.
         let snapshot = observed_identity
-            .filter(|identity| Some(*identity) == RpmDatabaseIdentity::read(&self.rpm_db_path))
-            .map(|identity| {
+            .filter(|observation| observation.is_current(&self.rpm_db_path))
+            .map(|observation| {
                 let mut grouped: HashMap<String, Vec<InstalledPackage>> = HashMap::new();
                 for package in packages {
                     grouped
@@ -267,7 +309,7 @@ impl DnfPackageManager {
                         .push(package.clone());
                 }
                 InstalledSnapshot {
-                    identity,
+                    observation,
                     packages: grouped,
                 }
             });
@@ -323,10 +365,10 @@ impl DnfPackageManager {
     #[cfg(feature = "fedora")]
     fn read_rpm_database(
         db_path: &Path,
-    ) -> Result<(Vec<InstalledPackage>, Option<RpmDatabaseIdentity>)> {
+    ) -> Result<(Vec<InstalledPackage>, Option<RpmDatabaseObservation>)> {
         // Try SQLite first (Fedora 33+, RHEL 9+) - 50-100x faster
         if db_path.exists() {
-            let identity = RpmDatabaseIdentity::read(db_path);
+            let identity = RpmDatabaseObservation::read(db_path);
             match Self::read_rpm_sqlite(db_path) {
                 Ok(packages) => return Ok((packages, identity)),
                 Err(e) => {
@@ -1390,13 +1432,11 @@ impl PackageManager for DnfPackageManager {
         let manager = self.cache_handle();
         Box::pin(async move {
             tokio::task::spawn_blocking(move || {
-                let cached = RpmDatabaseIdentity::read(&manager.rpm_db_path).and_then(|identity| {
-                    manager
-                        .cache_read()
-                        .as_ref()
-                        .filter(|snapshot| snapshot.identity == identity)
-                        .map(|snapshot| snapshot.packages.contains_key(&package))
-                });
+                let cached = manager
+                    .cache_read()
+                    .as_ref()
+                    .filter(|snapshot| snapshot.observation.is_current(&manager.rpm_db_path))
+                    .map(|snapshot| snapshot.packages.contains_key(&package));
                 if let Some(installed) = cached {
                     return Ok(installed);
                 }
@@ -1999,6 +2039,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn installed_inventory_observes_commits_when_file_metadata_matches() -> Result<()> {
+        for journal_mode in ["DELETE", "WAL"] {
+            let blob = include_bytes!("../../tests/data/fedora-publicsuffix.rpmhdr");
+            let directory = write_packages_db(&[blob.as_slice()]);
+            let mut manager = DnfPackageManager::new();
+            manager.rpm_db_path = directory.path().join("rpmdb.sqlite");
+            let database = Connection::open(&manager.rpm_db_path)?;
+            database.pragma_update(None, "journal_mode", journal_mode)?;
+            assert_eq!(manager.list_installed().await?.len(), 1);
+            database.execute("DELETE FROM Packages", [])?;
+
+            // Model a filesystem whose timestamp granularity cannot distinguish
+            // the commit: force the cached stat fingerprint to equal the current
+            // one without altering the cached inventory or SQLite observer.
+            manager
+                .cache_write()
+                .as_mut()
+                .expect("cached inventory")
+                .observation
+                .identity =
+                RpmDatabaseIdentity::read(&manager.rpm_db_path).expect("database identity");
+            assert!(
+                !manager.is_installed("publicsuffix-list-dafsa").await?,
+                "{journal_mode}"
+            );
+            assert!(manager.list_installed().await?.is_empty(), "{journal_mode}");
+
+            // The observer must not leave a read transaction blocking checkpoint.
+            let busy: i64 =
+                database.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| row.get(0))?;
+            assert_eq!(busy, 0, "{journal_mode}");
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn installed_inventory_observes_wal_only_removal() -> Result<()> {
         let blob = include_bytes!("../../tests/data/fedora-publicsuffix.rpmhdr");
         let directory = write_packages_db(&[blob.as_slice()]);
@@ -2074,11 +2150,15 @@ mod tests {
         let directory = write_packages_db(&[blob.as_slice()]);
         let mut manager = DnfPackageManager::new();
         manager.rpm_db_path = directory.path().join("rpmdb.sqlite");
-        let observed = RpmDatabaseIdentity::read(&manager.rpm_db_path);
+        let mut observed = RpmDatabaseObservation::read(&manager.rpm_db_path);
         let packages = DnfPackageManager::read_rpm_sqlite(&manager.rpm_db_path)?;
         let database = Connection::open(&manager.rpm_db_path)?;
         database.execute("DELETE FROM Packages", [])?;
 
+        // Even if metadata fails to reveal a commit between the inventory read
+        // and publication, the original observer must reject the old inventory.
+        observed.as_mut().expect("database observer").identity =
+            RpmDatabaseIdentity::read(&manager.rpm_db_path).expect("database identity");
         manager.publish_installed_packages(&packages, observed);
         assert!(manager.cached_installed_packages().is_none());
         manager.publish_installed_packages(&packages, None);
@@ -2107,7 +2187,7 @@ mod tests {
         let directory = write_packages_db(&[]);
         let mut manager = DnfPackageManager::new();
         manager.rpm_db_path = directory.path().join("rpmdb.sqlite");
-        let identity = RpmDatabaseIdentity::read(&manager.rpm_db_path);
+        let identity = RpmDatabaseObservation::read(&manager.rpm_db_path);
         let packages: Vec<_> = ["1.fc42.x86_64", "1.fc42.i686"]
             .into_iter()
             .map(|release| InstalledPackage {
@@ -2119,7 +2199,7 @@ mod tests {
             })
             .collect();
 
-        manager.publish_installed_packages(&packages, identity);
+        manager.publish_installed_packages(&packages, identity.clone());
         manager.publish_installed_packages(&packages, identity);
 
         let cached = manager
@@ -2143,7 +2223,7 @@ mod tests {
         let directory = write_packages_db(&[]);
         let mut manager = DnfPackageManager::new();
         manager.rpm_db_path = directory.path().join("rpmdb.sqlite");
-        let identity = RpmDatabaseIdentity::read(&manager.rpm_db_path);
+        let identity = RpmDatabaseObservation::read(&manager.rpm_db_path);
         manager.publish_installed_packages(
             &[InstalledPackage {
                 name: "glibc".to_string(),
@@ -2152,7 +2232,7 @@ mod tests {
                 summary: "C library".to_string(),
                 reason: InstallReason::Dependency,
             }],
-            identity,
+            identity.clone(),
         );
         manager.publish_installed_packages(
             &[InstalledPackage {

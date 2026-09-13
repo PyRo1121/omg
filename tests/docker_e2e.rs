@@ -177,12 +177,10 @@ fn test_docker_update_check() {
     require_docker_tests();
     assert!(ensure_docker_image(), "Docker image not ready");
 
-    // The unprivileged parent delegates catalog refresh through sudo using
-    // its pinned /proc/PID/exe inode. Linux's PTRACE_MODE_READ_FSCREDS check
-    // requires SYS_PTRACE for the root child to cross the parent's UID;
-    // Docker drops that capability by default. Grant it only to this fixture.
-    let (success, stdout, _stderr) =
-        run_in_docker_with_options(&["--cap-add=SYS_PTRACE"], &["omg", "update", "--check"]);
+    // Dockerfile.arch-e2e installs a root-owned executable under root-controlled
+    // ancestors, then runs as testuser. Self-elevation must work in plain Docker
+    // without granting SYS_PTRACE or weakening protection for writable installs.
+    let (success, stdout, _stderr) = run_in_docker(&["omg", "update", "--check"]);
 
     assert!(success, "Update check should succeed");
     // Contract: arch::update check_only path prints a phase header announcing

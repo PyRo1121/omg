@@ -31,7 +31,7 @@ GUEST_FILES = {
     "index-update.txt", "search.txt", "omg-info.txt", "native-info.txt",
     "local-package.sha256", "local-consent.txt", "system-audit-verify.txt",
     "installed-after.txt", "repository-hashes.txt", "guest-metadata.txt",
-    "inventory-setup.txt", "container-engine.txt",
+    "inventory-setup.txt", "container-engine.txt", "rust-toolchain.txt",
 }
 BENCH_FILES = {
     "summary.json", "preflight.json", "os-release", "boot-id.txt", "cpuinfo.txt",

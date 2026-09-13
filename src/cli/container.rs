@@ -80,8 +80,7 @@ async fn resolve_installer_digest(url: &str) -> Result<String> {
     use crate::core::http::BoundedResponseExt;
     use sha2::Digest as _;
 
-    let response = crate::core::http::shared_client()
-        .get(url)
+    let response = installer_digest_request(url)
         .send()
         .await
         .with_context(|| format!("Failed to fetch {url} for digest pinning"))?;
@@ -102,6 +101,17 @@ async fn resolve_installer_digest(url: &str) -> Result<String> {
         let _ = write!(digest, "{byte:02x}");
     }
     Ok(digest)
+}
+
+fn installer_digest_request(url: &str) -> reqwest::RequestBuilder {
+    // Include archived releases: a project's pinned Go version need not be
+    // one of the currently supported releases returned by the default feed.
+    let metadata_url = if url.starts_with("https://go.dev/dl/") {
+        "https://go.dev/dl/?mode=json&include=all"
+    } else {
+        url
+    };
+    crate::core::http::shared_client().get(metadata_url)
 }
 
 /// Look up one Go tarball digest in go.dev's release metadata JSON.
@@ -693,5 +703,24 @@ mod tests {
             error.to_string().contains("no matching release file"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn go_digest_request_fetches_release_metadata_instead_of_the_tarball() {
+        let go_url = "https://go.dev/dl/go1.22.5.linux-amd64.tar.gz";
+        let request = installer_digest_request(go_url)
+            .build()
+            .expect("Go request");
+        assert_eq!(
+            request.url().as_str(),
+            "https://go.dev/dl/?mode=json&include=all"
+        );
+        assert_eq!(request.method(), reqwest::Method::GET);
+
+        let script_url = "https://sh.rustup.rs";
+        let request = installer_digest_request(script_url)
+            .build()
+            .expect("script request");
+        assert_eq!(request.url().as_str(), "https://sh.rustup.rs/");
     }
 }

@@ -43,6 +43,7 @@ class AllowlistTests(unittest.TestCase):
     def test_known_diagnostics_preserve_report_hierarchy(self):
         for path in ("provenance.json", "run-fixture/results.json", "run-fixture/guest-check.log",
                      "run-fixture/reporting-status.json",
+                     "run-fixture/guest/evidence/rust-toolchain.txt",
                      "run-fixture/guest/serial.log", "run-fixture/guest/evidence/audit-directory-after.txt",
                      "run-fixture/guest/evidence/benchmarks/summary.json",
                      "run-fixture/guest/evidence/benchmarks/info.commands.json",

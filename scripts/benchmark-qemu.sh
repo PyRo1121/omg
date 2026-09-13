@@ -463,6 +463,12 @@ if [[ -n "$inventory_tiers" ]]; then
     debian|ubuntu) sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git make curl python3 ;;
     fedora) sudo -n dnf install -y git make curl python3 podman ;;
   esac > evidence/inventory-setup.txt 2>&1 || exit 120
+  # The hermetic `new` row exercises the missing-toolchain refusal. A guest
+  # with Cargo installed is a different fixture, not a product failure.
+  if command -v cargo > evidence/rust-toolchain.txt; then
+    printf 'Inventory fixture requires Cargo to be absent for the new row\n' >&2
+    exit 120
+  fi
   if [[ "$distro" == fedora ]]; then
     command -v podman > evidence/container-engine.txt || exit 120
     podman --version >> evidence/container-engine.txt || exit 120

@@ -123,7 +123,7 @@ metrics	["metrics"]	read	1	pass	-	hermetic	hermetic:pass	-	tempdir-drop
 self-update	["self-update","--help"]	help-boundary	0	pass	-	hermetic	hermetic:pass	-	tempdir-drop
 init	["init","--defaults","--skip-shell","--skip-daemon"]	isolated-write	0	pass	-	hermetic	hermetic:pass	-	tempdir-drop
 completions-install	["completions","bash"]	isolated-write	0	pass	-	hermetic	hermetic:pass	-	tempdir-drop
-runtime-python-install	["use","python","3.12.14"]	isolated-write	0	pass	-	hermetic	hermetic:pass	-	tempdir-drop
+runtime-python-install	["use","python","3.12.14"]	isolated-write	0	pass	-	container	arch:pass,debian:pass,ubuntu:pass,fedora:pass	-	tempdir-drop
 outdated-json	["--json","outdated"]	read	0	pass	-	hermetic	hermetic:pass	json-stdout	tempdir-drop
 search-quiet	["--quiet","search","firefox"]	read	0	pass	-	hermetic	hermetic:pass	-	tempdir-drop
 status-verbose	["--verbose","status"]	read	0	pass	-	hermetic	hermetic:pass	-	tempdir-drop
