@@ -16,6 +16,7 @@ OMG treats AUR packages as first-class citizens, with no distinction between off
 - **Offline Bubblewrap builds** with a cleared environment and private home
 - **Sealed artifact handoff** between review, build, and privileged installation
 - **Static archive inspection** before the package database is changed
+- **Independent exact rebuilds** for packages that integrate with privileged system surfaces
 
 ## Security model
 
@@ -23,12 +24,13 @@ Run OMG as your regular user. Do not use `sudo omg`. OMG requests sudo only when
 
 Arch's packaging documentation states that a PKGBUILD is directly sourced and executed by `makepkg`, while a package-specific install script can run before or after installation, upgrade, and removal. OMG therefore treats both the recipe and its output archive as executable input. See the [PKGBUILD format and execution model](https://man.archlinux.org/man/PKGBUILD.5) and [install-script lifecycle](https://man.archlinux.org/man/PKGBUILD.5#INSTALL/UPGRADE/REMOVE_SCRIPTING).
 
-The default AUR path uses four gates:
+The default AUR path uses five gates:
 
 1. Sources are fetched without executing the PKGBUILD.
 2. The complete source tree is reviewed, hashed, and rechecked before an offline Bubblewrap build. Bubblewrap itself is a policy-building tool, so OMG supplies the filesystem, network, session, and privilege restrictions described by its [upstream security model](https://github.com/containers/bubblewrap/blob/main/README.md#sandbox-security).
 3. Every output is parsed without extraction. OMG rejects traversal, duplicate paths, special device/FIFO/socket entries, escaping links, inconsistent `.PKGINFO`/`.BUILDINFO`, undeclared or changed `.INSTALL` hooks, and malformed metadata.
-4. The accepted bytes are copied into a sealed Linux memfd. The root transaction accepts only that handoff and reinspects the staged bytes. Linux documents file seals as protection against shared-memory modification and TOCTOU races in [`memfd_create(2)`](https://man7.org/linux/man-pages/man2/memfd_create.2.html).
+4. Archives containing install hooks, privilege-bearing files, systemd units, kernel modules, package-manager hooks, privileged service integration, or `/etc` payloads are rebuilt in a second private invocation. Both builds receive the same source-derived [`SOURCE_DATE_EPOCH`](https://reproducible-builds.org/specs/source-date-epoch/), which [makepkg uses to unify source/package timestamps and package metadata](https://man.archlinux.org/man/makepkg.8#REPRODUCIBILITY), and every output must match byte-for-byte. This follows the Reproducible Builds guidance to perform independent builds and [compare their results](https://reproducible-builds.org/docs/plans/). Ordinary packages keep the single-build path. Successful comparisons are cached only in process memory and are keyed by the reviewed source, build policy, build environment, and exact output hashes.
+5. The accepted bytes are copied into a sealed Linux memfd. The root transaction accepts only that handoff and reinspects the staged bytes. Linux documents file seals as protection against shared-memory modification and TOCTOU races in [`memfd_create(2)`](https://man7.org/linux/man-pages/man2/memfd_create.2.html).
 
 An archive containing `.INSTALL`, setuid/setgid files, or file capabilities requires a separate attended confirmation. `--yes` does not answer this prompt, and unattended execution fails before that archive's installation transaction requests sudo. Linux explains the authority carried by these capability mechanisms in [`capabilities(7)`](https://man7.org/linux/man-pages/man7/capabilities.7.html).
 

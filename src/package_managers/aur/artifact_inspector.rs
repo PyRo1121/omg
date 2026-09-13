@@ -7,7 +7,7 @@
 //! Package identity is cross-checked against Arch's documented BUILDINFO
 //! fields: https://man.archlinux.org/man/BUILDINFO.5
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::fs::File;
 use std::io::{BufReader, Read, Seek};
 use std::path::{Component, Path};
@@ -22,7 +22,7 @@ const MAX_PATH_BYTES: usize = 4_096;
 const MAX_METADATA_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_PRIVILEGED_FILES: usize = 256;
 
-pub(crate) const INSPECTION_POLICY_VERSION: u32 = 1;
+pub(crate) const INSPECTION_POLICY_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct PrivilegedFile {
@@ -43,6 +43,7 @@ pub(crate) struct ArtifactInspection {
     pub executable_files: Vec<String>,
     pub privileged_files: Vec<PrivilegedFile>,
     pub install_hook: Option<String>,
+    pub paired_build_reasons: Vec<String>,
 }
 
 impl ArtifactInspection {
@@ -50,16 +51,21 @@ impl ArtifactInspection {
         self.install_hook.is_some() || !self.privileged_files.is_empty()
     }
 
+    pub(crate) fn requires_paired_build(&self) -> bool {
+        !self.paired_build_reasons.is_empty()
+    }
+
     pub(crate) fn audit_summary(&self) -> String {
         format!(
-            "{} {} archive_sha256={} policy={} members={} hook={} privileged_files={}",
+            "{} {} archive_sha256={} policy={} members={} hook={} privileged_files={} paired_build_reasons={}",
             self.package_name,
             self.package_version,
             self.archive_sha256,
             self.policy_version,
             self.member_count,
             self.install_hook.as_deref().unwrap_or("none"),
-            self.privileged_files.len()
+            self.privileged_files.len(),
+            self.paired_build_reasons.join(",")
         )
     }
 
@@ -207,6 +213,7 @@ pub(crate) fn inspect_archive(path: &Path) -> Result<ArtifactInspection> {
     let mut declared_bytes = 0_u64;
     let mut executable_files = Vec::new();
     let mut privileged_files = Vec::new();
+    let mut paired_build_reasons = BTreeSet::new();
     let mut install_hook = None;
     let mut pkginfo = None;
     let mut buildinfo = None;
@@ -237,6 +244,41 @@ pub(crate) fn inspect_archive(path: &Path) -> Result<ArtifactInspection> {
             seen.insert(member.clone()),
             "duplicate normalized path in AUR archive: {member}"
         );
+        if member.starts_with("etc/") {
+            paired_build_reasons.insert("system-configuration".to_owned());
+        }
+        // These package locations are consumed by privileged system managers
+        // or execute during later root-owned transactions:
+        // https://man.archlinux.org/man/alpm-hooks.5
+        // https://man.archlinux.org/man/systemd.generator.7
+        // https://man.archlinux.org/man/tmpfiles.d.5
+        // https://man.archlinux.org/man/sysusers.d.5
+        if member.starts_with("usr/lib/systemd/") || member.starts_with("etc/systemd/") {
+            paired_build_reasons.insert("systemd-unit".to_owned());
+        }
+        if member.starts_with("usr/lib/modules/") || member.starts_with("lib/modules/") {
+            paired_build_reasons.insert("kernel-module".to_owned());
+        }
+        if member.starts_with("usr/share/libalpm/hooks/")
+            || member.starts_with("usr/share/libalpm/scripts/")
+        {
+            paired_build_reasons.insert("package-manager-hook".to_owned());
+        }
+        if member.starts_with("usr/lib/udev/rules.d/")
+            || member.starts_with("usr/lib/tmpfiles.d/")
+            || member.starts_with("usr/lib/sysusers.d/")
+            || member.starts_with("usr/lib/modules-load.d/")
+            || member.starts_with("usr/share/polkit-1/")
+            || member.starts_with("usr/share/dbus-1/system-services/")
+            || member.starts_with("usr/share/dbus-1/system.d/")
+            || member.starts_with("usr/lib/kernel/install.d/")
+            || member.starts_with("usr/lib/initcpio/")
+            || member.starts_with("usr/share/mkinitcpio/")
+            || member.starts_with("usr/lib/dracut/")
+            || member.starts_with("usr/lib/NetworkManager/dispatcher.d/")
+        {
+            paired_build_reasons.insert("privileged-system-integration".to_owned());
+        }
 
         let kind = entry.header().entry_type();
         anyhow::ensure!(
@@ -278,6 +320,7 @@ pub(crate) fn inspect_archive(path: &Path) -> Result<ArtifactInspection> {
                 mode,
                 capability,
             });
+            paired_build_reasons.insert("privilege-bearing-file".to_owned());
         }
 
         if matches!(
@@ -310,7 +353,10 @@ pub(crate) fn inspect_archive(path: &Path) -> Result<ArtifactInspection> {
                     buildinfo = Some(parse_buildinfo(content)?);
                 }
                 ".MTREE" => mtree_seen = true,
-                ".INSTALL" => install_hook = Some(hex::encode(Sha256::digest(&bytes))),
+                ".INSTALL" => {
+                    install_hook = Some(hex::encode(Sha256::digest(&bytes)));
+                    paired_build_reasons.insert("install-hook".to_owned());
+                }
                 _ => unreachable!(),
             }
         }
@@ -343,6 +389,7 @@ pub(crate) fn inspect_archive(path: &Path) -> Result<ArtifactInspection> {
         executable_files,
         privileged_files,
         install_hook,
+        paired_build_reasons: paired_build_reasons.into_iter().collect(),
     })
 }
 
@@ -444,6 +491,7 @@ mod tests {
             executable_files: Vec::new(),
             privileged_files: Vec::new(),
             install_hook: None,
+            paired_build_reasons: Vec::new(),
         };
         assert!(!ordinary.requires_exception());
 
@@ -454,6 +502,7 @@ mod tests {
             capability: None,
         });
         assert!(privileged.requires_exception());
+        assert!(privileged.requires_paired_build());
         assert!(
             privileged
                 .audit_details()
@@ -474,6 +523,32 @@ mod tests {
         assert_eq!(inspection.privileged_files.len(), 1);
         assert_eq!(inspection.privileged_files[0].path, "usr/bin/demo");
         assert!(inspection.requires_exception());
+        assert!(inspection.requires_paired_build());
+        Ok(())
+    }
+
+    #[test]
+    fn inspector_requires_paired_build_for_system_integration_payloads() -> Result<()> {
+        for (path, reason) in [
+            ("etc/demo.conf", "system-configuration"),
+            ("usr/lib/systemd/system/demo.service", "systemd-unit"),
+            ("usr/lib/modules/6.0/extra/demo.ko", "kernel-module"),
+            ("usr/share/libalpm/hooks/demo.hook", "package-manager-hook"),
+            (
+                "usr/lib/udev/rules.d/50-demo.rules",
+                "privileged-system-integration",
+            ),
+        ] {
+            let archive = fixture_archive(|builder| append_file(builder, path, b"payload", 0o644))?;
+            let inspection = inspect_archive(archive.path())?;
+            assert!(inspection.requires_paired_build());
+            assert!(
+                inspection
+                    .paired_build_reasons
+                    .iter()
+                    .any(|item| item == reason)
+            );
+        }
         Ok(())
     }
 

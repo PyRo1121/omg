@@ -472,12 +472,26 @@ jobs:
                 links_cannot_escape_the_archive_root \
                 buildinfo_requires_one_complete_identity \
                 inspector_classifies_install_hook_and_setuid_file \
-                inspector_rejects_special_files_and_duplicate_paths; do
+                inspector_rejects_special_files_and_duplicate_paths \
+                inspector_requires_paired_build_for_system_integration_payloads; do
                 test_name="package_managers::aur::artifact_inspector::tests::$case"
                 if ! grep -Fx "$test_name: test" /tmp/tests.list; then
                   echo "MISSING $case"; failed=1; continue
                 fi
                 echo "RUN $case (AUR archive inspection)"
+                if /fixture/omg-lib-tests --exact "$test_name" --include-ignored --nocapture; then
+                  echo "PASS $case"
+                else
+                  echo "FAIL $case"; failed=1
+                fi
+              done
+              for case in paired_output_verification_is_order_independent_and_exact \
+                reproducible_epoch_is_stable_and_rejects_invalid_digests; do
+                test_name="package_managers::aur::client::tests::$case"
+                if ! grep -Fx "$test_name: test" /tmp/tests.list; then
+                  echo "MISSING $case"; failed=1; continue
+                fi
+                echo "RUN $case (AUR paired-build verification)"
                 if /fixture/omg-lib-tests --exact "$test_name" --include-ignored --nocapture; then
                   echo "PASS $case"
                 else

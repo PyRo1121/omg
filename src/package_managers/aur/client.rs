@@ -1,12 +1,12 @@
 //! AUR (Arch User Repository) client with build support
 
 use ahash::AHashSet;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs::File;
 use std::io::{BufReader, Read, Seek};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use alpm_types::Version;
@@ -58,6 +58,7 @@ const AUR_SEARCH_MAX_BYTES: usize = 100;
 /// ALPM database. Builds stay parallel; installs are applied one at a time.
 static INSTALL_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static REVIEW_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static PAIRED_BUILD_CACHE: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 const MAX_PKGBUILD_REVIEW_BYTES: usize = 1024 * 1024;
 const SANDBOX_FAKEROOT_ENV: (&str, &str) = ("FAKEROOTDONTTRYCHOWN", "1");
 const MAX_PKGINFO_BYTES: u64 = 128 * 1024;
@@ -250,6 +251,30 @@ struct MakepkgEnv {
     compiler_cache_dirs: Vec<PathBuf>,
     extra_env: Vec<(String, String)>,
     pgp_home: Option<tempfile::TempDir>,
+}
+
+fn reproducible_source_epoch(source_digest: &str) -> Result<String> {
+    let prefix = source_digest
+        .get(..16)
+        .context("Reviewed AUR source digest is truncated")?;
+    let value = u64::from_str_radix(prefix, 16).context("Reviewed AUR source digest is invalid")?;
+    // SOURCE_DATE_EPOCH is the reproducible-build ecosystem's standard input
+    // for timestamps that would otherwise vary between builds. Deriving it
+    // solely from the reviewed source preserves that invariant without trusting
+    // repository-controlled Git metadata.
+    // https://reproducible-builds.org/specs/source-date-epoch/
+    // Arch makepkg unifies source/package mtimes and package metadata when this
+    // variable is set: https://man.archlinux.org/man/makepkg.8#REPRODUCIBILITY
+    Ok((946_684_800_u64 + value % 1_577_923_200).to_string())
+}
+
+fn set_reproducible_source_epoch(env: &mut MakepkgEnv, source: &ReviewedSource) -> Result<()> {
+    env.extra_env.retain(|(key, _)| key != "SOURCE_DATE_EPOCH");
+    env.extra_env.push((
+        "SOURCE_DATE_EPOCH".to_owned(),
+        reproducible_source_epoch(&source.digest)?,
+    ));
+    Ok(())
 }
 
 /// Change only the newly created invocation directory, using its open handle.
@@ -1890,6 +1915,7 @@ impl AurClient {
         // independent of the user's day-to-day review preference.
         let pkgbuild_path = pkg_dir.join("PKGBUILD");
         let reviewed_digest = Self::review_pkgbuild(package, &pkgbuild_path).await?;
+        set_reproducible_source_epoch(&mut env, &reviewed_digest)?;
         env.pgp_home = Self::fetch_missing_pgp_keys(&pkgbuild_path).await?;
         println!(
             "  {} Building {package} {version} from history...",
@@ -1920,13 +1946,17 @@ impl AurClient {
         };
 
         crate::cli::modern_ui::print_info(&format!("Installing {package} {version}"));
-        let archives = Self::authorize_archives(
-            &[archive],
-            &reviewed_digest,
-            &base,
-            &[package.to_owned()],
-            false,
-        )?;
+        let archives = self
+            .authorize_with_paired_build(
+                &[archive],
+                &reviewed_digest,
+                &base,
+                &[package.to_owned()],
+                false,
+                &pkg_dir,
+                &env,
+            )
+            .await?;
         Self::install_built_packages(&archives, sudoloop.as_ref()).await?;
         crate::cli::modern_ui::print_success(&format!("Installed {package} {version}"));
         // Use async cleanup on success and report failures. The owner also
@@ -2154,6 +2184,7 @@ impl AurClient {
         let pgp_home = Self::fetch_missing_pgp_keys(&pkgbuild_path).await?;
 
         let mut env = self.makepkg_env(&pkg_dir).await?;
+        set_reproducible_source_epoch(&mut env, &reviewed_digest)?;
         env.pgp_home = pgp_home;
 
         let dependency_plan = self
@@ -2259,13 +2290,16 @@ impl AurClient {
                 .map_err(|_| AurError::PackageArchiveNotFound(package.clone()))?;
         }
 
-        Self::authorize_archives(
+        self.authorize_with_paired_build(
             &pkg_files,
             &reviewed_digest,
             &package,
             &requested_outputs,
             fresh,
+            &pkg_dir,
+            &env,
         )
+        .await
     }
 
     fn build_only<'a>(
@@ -2410,6 +2444,7 @@ impl AurClient {
         let _package_build_guard = package_lock.lock().await;
         let _package_build_file_guard = self.acquire_package_base_file_lock(package_base).await?;
         let mut env = self.makepkg_env(&pkg_dir).await?;
+        set_reproducible_source_epoch(&mut env, &reviewed_digest)?;
         env.pgp_home = pgp_home;
         let cache_key = self.cache_key(&pkg_dir, &env.makeflags)?;
         if let Some(archives) = Self::cached_artifacts(
@@ -2419,13 +2454,17 @@ impl AurClient {
             &env.pkgdest,
             &cache_key,
         ) {
-            return Self::authorize_archives(
-                &archives,
-                &reviewed_digest,
-                package_base,
-                &package_outputs,
-                false,
-            );
+            return self
+                .authorize_with_paired_build(
+                    &archives,
+                    &reviewed_digest,
+                    package_base,
+                    &package_outputs,
+                    false,
+                    &pkg_dir,
+                    &env,
+                )
+                .await;
         }
 
         reviewed_digest.verify(&pkg_dir)?;
@@ -2446,13 +2485,16 @@ impl AurClient {
         let pkg_files = Self::find_built_packages(&pkg_dir, &env.pkgdest, &package_outputs)
             .await
             .map_err(|_| AurError::PackageArchiveNotFound(package.to_string()))?;
-        Self::authorize_archives(
+        self.authorize_with_paired_build(
             &pkg_files,
             &reviewed_digest,
             package_base,
             &package_outputs,
             true,
+            &pkg_dir,
+            &env,
         )
+        .await
     }
 
     /// Resolve an AUR name (output or base) to its package base via one RPC
@@ -2695,6 +2737,167 @@ impl AurClient {
                 Ok(snapshot)
             })
             .collect()
+    }
+
+    fn paired_build_cache_key(
+        &self,
+        source: &ReviewedSource,
+        env: &MakepkgEnv,
+        inspections: &[artifact_inspector::ArtifactInspection],
+    ) -> String {
+        let mut ordered = inspections.iter().collect::<Vec<_>>();
+        ordered.sort_by(|left, right| left.package_name.cmp(&right.package_name));
+        let method = format!("{:?}", self.settings.aur.build_method);
+        let makepkg_args = self.makepkg_args().join("\0");
+        let mut build_environment = env.extra_env.clone();
+        build_environment.sort();
+        let mut hash = Sha256::new();
+        hash.update(b"omg-aur-paired-build-v1\0");
+        for value in [
+            source.digest.as_str(),
+            env.makeflags.as_str(),
+            method.as_str(),
+            makepkg_args.as_str(),
+            if self.settings.aur.secure_makepkg {
+                "secure-makepkg"
+            } else {
+                "standard-makepkg"
+            },
+            if self.settings.aur.allow_network {
+                "network-enabled"
+            } else {
+                "network-disabled"
+            },
+        ] {
+            hash.update((value.len() as u64).to_le_bytes());
+            hash.update(value.as_bytes());
+        }
+        for (key, value) in build_environment {
+            hash.update((key.len() as u64).to_le_bytes());
+            hash.update(key.as_bytes());
+            hash.update((value.len() as u64).to_le_bytes());
+            hash.update(value.as_bytes());
+        }
+        for inspection in ordered {
+            for value in [
+                inspection.package_name.as_str(),
+                inspection.package_version.as_str(),
+                inspection.archive_sha256.as_str(),
+            ] {
+                hash.update((value.len() as u64).to_le_bytes());
+                hash.update(value.as_bytes());
+            }
+            hash.update(inspection.policy_version.to_le_bytes());
+        }
+        hex::encode(hash.finalize())
+    }
+
+    fn verify_paired_outputs(
+        primary: &[artifact_inspector::ArtifactInspection],
+        secondary: &[artifact_inspector::ArtifactInspection],
+    ) -> Result<()> {
+        let canonical = |items: &[artifact_inspector::ArtifactInspection]| {
+            let mut values = items
+                .iter()
+                .map(|item| {
+                    (
+                        item.package_name.clone(),
+                        item.package_version.clone(),
+                        item.archive_sha256.clone(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            values.sort_unstable();
+            values
+        };
+        anyhow::ensure!(
+            canonical(primary) == canonical(secondary),
+            "High-risk AUR package did not reproduce byte-for-byte in an independent build"
+        );
+        Ok(())
+    }
+
+    async fn authorize_with_paired_build(
+        &self,
+        paths: &[PathBuf],
+        source: &ReviewedSource,
+        base: &str,
+        outputs: &[String],
+        fresh: bool,
+        pkg_dir: &Path,
+        primary_env: &MakepkgEnv,
+    ) -> Result<Vec<ArchiveSnapshot>> {
+        let primary = Self::authorize_archives(paths, source, base, outputs, fresh)?;
+        let primary_inspections = primary
+            .iter()
+            .map(|archive| artifact_inspector::inspect_archive(&archive.path()))
+            .collect::<Result<Vec<_>>>()?;
+        if !primary_inspections
+            .iter()
+            .any(artifact_inspector::ArtifactInspection::requires_paired_build)
+        {
+            return Ok(primary);
+        }
+
+        let cache_key = self.paired_build_cache_key(source, primary_env, &primary_inspections);
+        let cache = PAIRED_BUILD_CACHE.get_or_init(|| Mutex::new(HashSet::new()));
+        if cache
+            .lock()
+            .map_err(|_| anyhow::anyhow!("AUR paired-build cache lock was poisoned"))?
+            .contains(&cache_key)
+        {
+            crate::core::security::audit::record_operation(
+                "aur_paired_build",
+                &[
+                    format!("cache_key={cache_key}"),
+                    "result=verified-cache".to_owned(),
+                ],
+                "succeeded",
+            )?;
+            return Ok(primary);
+        }
+
+        crate::cli::modern_ui::print_info(&format!(
+            "Rebuilding high-risk AUR package {base} independently for exact comparison"
+        ));
+        source.verify(pkg_dir)?;
+        let mut secondary_env = self.makepkg_env(pkg_dir).await?;
+        set_reproducible_source_epoch(&mut secondary_env, source)?;
+        secondary_env.pgp_home = Self::fetch_missing_pgp_keys(&pkg_dir.join("PKGBUILD")).await?;
+        let status = self.run_build(pkg_dir, &secondary_env, base).await?;
+        anyhow::ensure!(
+            status.success(),
+            "Independent verification build failed for high-risk AUR package {base}"
+        );
+        let secondary_paths = Self::find_built_packages(pkg_dir, &secondary_env.pkgdest, outputs)
+            .await
+            .map_err(|_| AurError::PackageArchiveNotFound(base.to_owned()))?;
+        let secondary = Self::authorize_archives(&secondary_paths, source, base, outputs, fresh)?;
+        let secondary_inspections = secondary
+            .iter()
+            .map(|archive| artifact_inspector::inspect_archive(&archive.path()))
+            .collect::<Result<Vec<_>>>()?;
+
+        // Reproducible Builds recommends rebuilding independently and comparing
+        // the outputs; accepting only identical archive hashes makes the check
+        // cover metadata, hooks, modes, and payload bytes together.
+        // https://reproducible-builds.org/docs/plans/
+        Self::verify_paired_outputs(&primary_inspections, &secondary_inspections)?;
+        cache
+            .lock()
+            .map_err(|_| anyhow::anyhow!("AUR paired-build cache lock was poisoned"))?
+            .insert(cache_key.clone());
+        crate::core::security::audit::record_operation(
+            "aur_paired_build",
+            &[
+                format!("source_manifest_sha256={}", source.digest),
+                format!("cache_key={cache_key}"),
+                format!("outputs={}", outputs.join(",")),
+                "result=exact-match".to_owned(),
+            ],
+            "succeeded",
+        )?;
+        Ok(primary)
     }
 
     /// Retained metadata/hook regression checks. These are necessary but
@@ -7204,5 +7407,44 @@ mod tests {
         assert_eq!(dependency_name("fast_float>=7.0"), "fast_float");
         assert_eq!(dependency_name("foo<2.0"), "foo");
         assert_eq!(dependency_name("bar=1.2.3"), "bar");
+    }
+
+    fn paired_fixture(name: &str, digest: &str) -> artifact_inspector::ArtifactInspection {
+        artifact_inspector::ArtifactInspection {
+            policy_version: artifact_inspector::INSPECTION_POLICY_VERSION,
+            archive_sha256: digest.to_owned(),
+            package_name: name.to_owned(),
+            package_version: "1.0-1".to_owned(),
+            package_base: "demo".to_owned(),
+            architecture: "x86_64".to_owned(),
+            member_count: 4,
+            executable_files: Vec::new(),
+            privileged_files: Vec::new(),
+            install_hook: None,
+            paired_build_reasons: vec!["system-configuration".to_owned()],
+        }
+    }
+
+    #[test]
+    fn paired_output_verification_is_order_independent_and_exact() {
+        let first = vec![paired_fixture("app", "aa"), paired_fixture("libs", "bb")];
+        let reversed = vec![paired_fixture("libs", "bb"), paired_fixture("app", "aa")];
+        AurClient::verify_paired_outputs(&first, &reversed).expect("same exact outputs");
+
+        let changed = vec![paired_fixture("app", "aa"), paired_fixture("libs", "cc")];
+        let error = AurClient::verify_paired_outputs(&first, &changed)
+            .expect_err("one changed byte hash must reject the pair");
+        assert!(error.to_string().contains("byte-for-byte"));
+    }
+
+    #[test]
+    fn reproducible_epoch_is_stable_and_rejects_invalid_digests() {
+        let digest = "0123456789abcdef".repeat(4);
+        let first = reproducible_source_epoch(&digest).expect("valid source digest");
+        let second = reproducible_source_epoch(&digest).expect("same source digest");
+        assert_eq!(first, second);
+        assert!(first.parse::<u64>().is_ok());
+        assert!(reproducible_source_epoch("short").is_err());
+        assert!(reproducible_source_epoch("not-a-valid-hash!").is_err());
     }
 }
