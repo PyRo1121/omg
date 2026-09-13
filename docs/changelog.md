@@ -6,6 +6,8 @@
 
 - Isolate npm, Cargo, pip, and Go tool installations from ambient environment
   credentials and package-manager configuration.
+- Replace the caller-controlled executable search path with root-controlled
+  system directories during Linux tool installations.
 - Disable npm lifecycle scripts by default and verify registry signatures and
   provenance before activating an installed tool.
 - Require Python wheels, Cargo lockfiles, and Go's public checksum database by

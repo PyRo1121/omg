@@ -1073,6 +1073,7 @@ OMG includes a curated registry of 60+ popular developer tools across categories
 OMG treats package installation as execution of untrusted publisher content.
 For npm, Cargo, pip, and Go tools it uses an isolated home and configuration,
 does not pass ambient registry, Git, SSH, cloud, or CI environment credentials,
+uses a fixed system executable path to prevent project-local helper injection,
 and keeps the previous working tool until the replacement passes its checks. npm
 lifecycle scripts are disabled and registry signatures/provenance are audited;
 pip accepts wheels only; Cargo requires the published lockfile; and Go uses the

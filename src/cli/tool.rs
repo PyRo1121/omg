@@ -16,6 +16,9 @@ const ALLOW_CARGO_UNLOCKED_ENV: &str = "OMG_TOOL_ALLOW_CARGO_UNLOCKED";
 const ALLOW_HOST_ENV: &str = "OMG_TOOL_ALLOW_HOST_ENV";
 const ALLOW_UNVERIFIED_ENV: &str = "OMG_TOOL_ALLOW_UNVERIFIED";
 
+#[cfg(unix)]
+const TOOL_SYSTEM_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+
 fn package_is_allowed(variable: &str, package: &str) -> bool {
     std::env::var(variable).is_ok_and(|value| {
         value
@@ -56,7 +59,16 @@ fn secured_manager_command(
     }
 
     command.env_clear();
-    for variable in ["PATH", "SystemRoot", "WINDIR", "PATHEXT"] {
+    #[cfg(unix)]
+    command.env("PATH", TOOL_SYSTEM_PATH);
+    #[cfg(windows)]
+    if let Some(path) = std::env::var_os("PATH") {
+        // Windows development builds need the discovered manager and its
+        // runtime on PATH. Production OMG package installs run on Unix, where
+        // the fixed root-controlled path above is enforced.
+        command.env("PATH", path);
+    }
+    for variable in ["SystemRoot", "WINDIR", "PATHEXT"] {
         if let Some(value) = std::env::var_os(variable) {
             command.env(variable, value);
         }
@@ -1184,6 +1196,11 @@ mod tests {
         assert!(!variables.contains_key(std::ffi::OsStr::new("NPM_TOKEN")));
         assert!(!variables.contains_key(std::ffi::OsStr::new("SSH_AUTH_SOCK")));
         assert!(!variables.contains_key(std::ffi::OsStr::new("AWS_SECRET_ACCESS_KEY")));
+        #[cfg(unix)]
+        assert_eq!(
+            variables.get(std::ffi::OsStr::new("PATH")),
+            Some(&std::ffi::OsString::from(TOOL_SYSTEM_PATH))
+        );
     }
 
     /// Tool installs may only swap their own package's links. Other packages,
