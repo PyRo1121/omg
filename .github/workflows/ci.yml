@@ -457,6 +457,27 @@ jobs:
                   echo "FAIL $case"; failed=1
                 fi
               done
+              case=elevated_state_roundtrip_preserves_caller_files
+              test_name="core::usage::tests::$case"
+              if ! grep -Fx "$test_name: test" /tmp/tests.list; then
+                echo "MISSING $case"; failed=1
+              else
+                echo "RUN $case (isolated system state and caller files)"
+                # This mount and caller tree live only in this disposable
+                # container. No host state or credentials are mounted here.
+                mount -t tmpfs -o nosuid,nodev,noexec,mode=755 tmpfs /var/lib
+                printf isolated > /var/lib/.omg-state-isolation-fixture
+                caller=$(mktemp -d /tmp/omg-state-caller.XXXXXX)
+                printf caller-history-sentinel > "$caller/history-target"
+                ln -s history-target "$caller/history.json"
+                printf caller-usage-sentinel > "$caller/usage.json"
+                chown -hR nobody: "$caller"
+                if OMG_DATA_DIR="$caller" /fixture/omg-lib-tests --exact "$test_name" --include-ignored --nocapture; then
+                  echo "PASS $case"
+                else
+                  echo "FAIL $case"; failed=1
+                fi
+              fi
               exit "$failed"
             ' 2>&1 | tee "$RUNNER_TEMP/sandbox-evidence/tests.log"
 
