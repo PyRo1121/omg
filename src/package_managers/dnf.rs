@@ -121,14 +121,18 @@ struct RpmDatabaseObservation {
 
 impl RpmDatabaseObservation {
     fn read(path: &Path) -> Option<Self> {
-        let identity = RpmDatabaseIdentity::read(path)?;
+        let before_open = RpmDatabaseIdentity::read(path)?;
         let connection =
             Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY).ok()?;
         let data_version = connection
             .query_row("PRAGMA data_version", [], |row| row.get(0))
             .ok()?;
-        // Reject replacement while opening the observer.
-        if RpmDatabaseIdentity::read(path) != Some(identity) {
+        // The first read of a WAL database can create its empty WAL file,
+        // even through a read-only connection. Capture that initialized WAL
+        // identity while still rejecting replacement of the main database.
+        // Concurrent commits remain covered by data_version at publication.
+        let identity = RpmDatabaseIdentity::read(path)?;
+        if identity.database != before_open.database {
             return None;
         }
         Some(Self {
@@ -2048,6 +2052,10 @@ mod tests {
             let database = Connection::open(&manager.rpm_db_path)?;
             database.pragma_update(None, "journal_mode", journal_mode)?;
             assert_eq!(manager.list_installed().await?.len(), 1);
+            assert!(
+                manager.cached_installed_packages().is_some(),
+                "first inventory read must initialize a cache in {journal_mode} mode"
+            );
             database.execute("DELETE FROM Packages", [])?;
 
             // Model a filesystem whose timestamp granularity cannot distinguish
