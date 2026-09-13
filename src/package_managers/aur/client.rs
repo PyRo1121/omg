@@ -2212,15 +2212,13 @@ impl AurClient {
 
         let cache_key = self.cache_key(&pkg_dir, &env.makeflags)?;
 
-        let cached = self
-            .cached_artifacts(
-                &package,
-                &requested_outputs,
-                &pkg_dir,
-                &env.pkgdest,
-                &cache_key,
-            )
-            .await?;
+        let cached = self.cached_artifacts(
+            &package,
+            &requested_outputs,
+            &pkg_dir,
+            &env.pkgdest,
+            &cache_key,
+        );
         let mut pkg_files = match cached {
             Some(archives) => {
                 crate::cli::modern_ui::print_info(&format!("Using cached build for {package}"));
@@ -2405,16 +2403,13 @@ impl AurClient {
         let mut env = self.makepkg_env(&pkg_dir).await?;
         env.pgp_home = pgp_home;
         let cache_key = self.cache_key(&pkg_dir, &env.makeflags)?;
-        if let Some(archives) = self
-            .cached_artifacts(
-                package_base,
-                &package_outputs,
-                &pkg_dir,
-                &env.pkgdest,
-                &cache_key,
-            )
-            .await?
-        {
+        if let Some(archives) = self.cached_artifacts(
+            package_base,
+            &package_outputs,
+            &pkg_dir,
+            &env.pkgdest,
+            &cache_key,
+        ) {
             return Self::authorize_archives(
                 &archives,
                 &reviewed_digest,
@@ -3880,8 +3875,12 @@ impl AurClient {
         // build must never leave selectable outputs for a different invocation.
         let invocation_base = paths::cache_dir().join("_aur-invocations");
         create_dir_as_user_sync(&invocation_base)?;
+        use std::os::unix::fs::PermissionsExt;
+        // tempfile's directory default follows the process umask. Request
+        // private permissions at creation, before any ownership handoff.
         let invocation = tempfile::Builder::new()
             .prefix("build-")
+            .permissions(std::fs::Permissions::from_mode(0o700))
             .tempdir_in(&invocation_base)?;
         let owner = original_user()
             .map(|name| {
@@ -4003,15 +4002,15 @@ impl AurClient {
     /// Legacy hash markers bind source text only, not the complete archive.
     /// Do not promote recipe-writable payloads into trusted cache entries.
     /// Reuse stays disabled until controller-owned archive provenance exists.
-    async fn cached_artifacts(
+    fn cached_artifacts(
         &self,
         _cache_name: &str,
         _artifacts: &[String],
         _pkg_dir: &Path,
         _pkgdest: &Path,
         _cache_key: &str,
-    ) -> Result<Option<Vec<PathBuf>>> {
-        Ok(None)
+    ) -> Option<Vec<PathBuf>> {
+        None
     }
 
     /// Install the built package via direct ALPM or elevated OMG transaction.
@@ -5802,12 +5801,16 @@ mod tests {
 
     #[test]
     fn invocation_ownership_setup_uses_only_private_directory_handles() -> Result<()> {
-        use std::os::unix::fs::MetadataExt;
-        let directory = tempfile::tempdir()?;
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let directory = tempfile::Builder::new()
+            .permissions(std::fs::Permissions::from_mode(0o700))
+            .tempdir()?;
         prepare_invocation_directory(directory.path(), None)?;
         let metadata = std::fs::metadata(directory.path())?;
         assert_eq!(metadata.mode() & 0o777, 0o700);
         let outside = tempfile::tempdir()?;
+        std::fs::set_permissions(outside.path(), std::fs::Permissions::from_mode(0o755))?;
+        assert!(prepare_invocation_directory(outside.path(), None).is_err());
         let link = directory.path().join("linked-directory");
         std::os::unix::fs::symlink(outside.path(), &link)?;
         assert!(prepare_invocation_directory(&link, None).is_err());
@@ -6162,8 +6165,8 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn cached_artifacts_requires_all_split_outputs_to_match_the_checkout() {
+    #[test]
+    fn cached_artifacts_requires_all_split_outputs_to_match_the_checkout() {
         let dir = tempfile::tempdir().expect("temp dir");
         let pkg_dir = provenance_pkg_dir(
             dir.path(),
@@ -6199,10 +6202,7 @@ mod tests {
         let outputs = ["app".to_string(), "libs".to_string()];
 
         assert_eq!(
-            client
-                .cached_artifacts("shared", &outputs, &pkg_dir, dir.path(), "matching-key")
-                .await
-                .unwrap(),
+            client.cached_artifacts("shared", &outputs, &pkg_dir, dir.path(), "matching-key"),
             None,
         );
         assert!(
@@ -6224,8 +6224,6 @@ mod tests {
         assert!(
             client
                 .cached_artifacts("shared", &outputs, &pkg_dir, dir.path(), "matching-key")
-                .await
-                .unwrap()
                 .is_none(),
             "a missing split output must reject the whole cached build",
         );
@@ -6233,8 +6231,6 @@ mod tests {
         assert!(
             client
                 .cached_artifacts("shared", &outputs, &pkg_dir, dir.path(), "matching-key")
-                .await
-                .unwrap()
                 .is_none(),
             "a matching hash and filename must not hide one poisoned split output",
         );

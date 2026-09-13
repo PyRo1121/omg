@@ -690,14 +690,15 @@ pub(crate) fn load_env_file(directive: &EnvFileDirective) -> Result<Option<Vec<(
 
 /// How strictly to treat missing inputs.
 ///
-/// Hooks run on every prompt: a deleted `.env` or an unset required variable
-/// must warn and skip, never fail the prompt (and reset `PATH`). `run` and
-/// task execution fail closed instead.
+/// Explicit `run` and task execution fail closed. Automatic hooks no longer
+/// resolve project environments; tests retain the legacy lenient mode as a
+/// comparison for required-input handling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Strictness {
     /// Fail closed on missing files and unmet `required` entries.
     Strict,
     /// Warn once and skip missing files and unmet `required` entries.
+    #[cfg(test)]
     Lenient,
 }
 
@@ -959,9 +960,8 @@ fn merge_chain(accumulated: &mut ResolvedEnv, next: ResolvedEnv) {
 
 /// Load and resolve `[env]` from `start` and its ancestors.
 ///
-/// `base` is the process environment snapshot. In [`Strictness::Lenient`]
-/// mode missing files and unmet `required` entries warn once and skip;
-/// [`Strictness::Strict`] fails closed.
+/// `base` is the process environment snapshot. Production callers use
+/// [`Strictness::Strict`] and fail closed on missing required inputs.
 pub(crate) fn load_mise_env_chain(
     start: &Path,
     base: &HashMap<String, String>,

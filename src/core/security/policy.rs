@@ -978,6 +978,11 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn forged_elevation_policy_handoff_is_rejected() {
+        if crate::config::Settings::rerun_config_test_unprivileged(
+            "core::security::policy::tests::forged_elevation_policy_handoff_is_rejected",
+        ) {
+            return;
+        }
         let temp = tempfile::TempDir::new().expect("temp dir");
         temp_env::with_var("OMG_CONFIG_DIR", Some(temp.path()), || {
             let strict = SecurityPolicy {

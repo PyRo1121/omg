@@ -904,6 +904,11 @@ mod tests {
     #[serial_test::serial]
     #[test]
     fn opt_out_verdict_tracks_config_file_and_env() {
+        if crate::config::Settings::rerun_config_test_unprivileged(
+            "core::telemetry::tests::opt_out_verdict_tracks_config_file_and_env",
+        ) {
+            return;
+        }
         let dir = tempfile::TempDir::new().expect("isolated config dir");
         let config = dir.path().join("config.toml");
         let dir_str = dir.path().to_string_lossy().into_owned();

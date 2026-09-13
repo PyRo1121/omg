@@ -563,9 +563,8 @@ fn with_usage_lock(mutate: impl FnOnce()) {
 /// writer.
 fn update_locked<T>(path: &Path, f: impl FnOnce(&mut UsageStats) -> T) -> Result<T> {
     let lock_path = path.with_extension("lock");
-    let lock = lock_file_at(&lock_path).ok_or_else(|| {
-        anyhow::anyhow!("Failed to acquire usage stats lock {}", lock_path.display())
-    })?;
+    let lock = acquire_usage_lock(&lock_path)
+        .with_context(|| format!("Failed to acquire usage stats lock {}", lock_path.display()))?;
     let _lock_guard = lock;
     let mut stats = UsageStats::load_from(path)?;
     let out = f(&mut stats);
@@ -1137,5 +1136,24 @@ mod tests {
         let stats = UsageStats::load_from(&path).expect("final stats must be valid");
         assert_eq!(stats.total_commands, (WRITERS - 1) as u64);
         assert_eq!(stats.last_sync, 42);
+    }
+
+    #[test]
+    fn mandatory_usage_update_preserves_lock_failure_cause_without_mutating() {
+        let directory = lock_fixture_tempdir();
+        let path = directory.path().join("usage.json");
+        let lock_path = path.with_extension("lock");
+        std::fs::write(&lock_path, b"unchanged").unwrap();
+        std::fs::hard_link(&lock_path, directory.path().join("lock-alias")).unwrap();
+        let mut mutated = false;
+
+        let error = update_locked(&path, |_| mutated = true)
+            .expect_err("a hardlinked lock must reject the update");
+
+        assert!(!mutated, "lock failure must prevent the mutation");
+        assert!(!path.exists(), "lock failure must not write usage stats");
+        assert!(error.to_string().contains(&lock_path.display().to_string()));
+        assert!(format!("{error:#}").contains("Usage lock must have exactly one link"));
+        assert_eq!(std::fs::read(&lock_path).unwrap(), b"unchanged");
     }
 }

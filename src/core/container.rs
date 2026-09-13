@@ -8,7 +8,6 @@
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::fs;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
@@ -697,7 +696,7 @@ fn ensure_dockerignore_file(ignore_path: &Path, create: bool) -> Result<()> {
         return Ok(());
     }
 
-    let mut output = existing.clone();
+    let mut output = existing;
     if !output.is_empty() && !output.ends_with('\n') {
         output.push('\n');
     }
@@ -945,6 +944,7 @@ pub fn dev_container_config(project_dir: &Path) -> ContainerConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn dev_container_config_sanitizes_project_directory_name() {

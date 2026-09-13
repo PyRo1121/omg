@@ -385,12 +385,18 @@ mod tests {
         let file = directory.path().join("owned");
         std::fs::write(&file, b"data").unwrap();
         let uid = rustix::process::getuid().as_raw();
+        let gid = rustix::process::getgid().as_raw();
 
-        fchown_path_no_follow(&file, Some(uid), Some(uid)).expect("fchown regular file");
+        fchown_path_no_follow(&file, Some(uid), Some(gid)).expect("fchown regular file");
         assert_eq!(
             std::fs::metadata(&file).unwrap().uid(),
             uid,
             "ownership must be preserved on the exact node"
+        );
+        assert_eq!(
+            std::fs::metadata(&file).unwrap().gid(),
+            gid,
+            "group ownership must match the caller's group"
         );
     }
 
