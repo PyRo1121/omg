@@ -8,10 +8,10 @@
 [![Docs](https://img.shields.io/badge/docs-getomg.xyz%2Fdocs-purple)](https://getomg.xyz/docs)
 [![Rust 1.95+](https://img.shields.io/badge/rust-1.95%2B-orange.svg)](rust-toolchain.toml)
 
-**Your stack. One vocabulary.**
+**Packages and runtimes. One workflow. Built-in security checks.**
 
 *Packages. Runtime versions. Project tasks. Declarative environment records.*  
-*One high-performance Rust CLI for the work between writing code and running it.*
+*A Rust CLI for managing your development stack, with verification and controlled privilege elevation built into installation.*
 
 [Website](https://getomg.xyz) · [Documentation](https://getomg.xyz/docs) · [Quickstart](docs/quickstart.md) · [Installation](docs/installation.md) · [CLI Reference](docs/cli.md) · [Architecture](docs/architecture.md) · [Security Model](docs/security.md) · [Report Issue](https://github.com/PyRo1121/omg/issues)
 
@@ -26,25 +26,47 @@
 
 ## Why OMG?
 
-Modern development environments are fragmented into half a dozen specialized utilities, each with bespoke syntax, conflicting configuration files, and sluggish shell shims. 
+OMG brings system packages, language runtimes, and project tasks into one CLI. Use the same commands across supported platforms while keeping access to their native package tools.
 
-OMG consolidates this entire developer workflow into a single, cohesive interface while delegating execution to native platform backends and official toolchains:
+| What you need | OMG workflow |
+| :--- | :--- |
+| **System packages** | `omg search` · `omg install` · `omg update` · `omg why` |
+| **Language runtimes** | `omg use <runtime> [version]` · `omg which <runtime>` |
+| **Project tasks** | `omg run <dev\|test\|build\|lint>` resolves the project runner |
+| **Environment records** | `omg env capture` creates `omg.lock`; `omg env check` reports drift on supported backends |
+| **AUR build controls** | Source review, offline Bubblewrap builds by default, archive inspection, and sealed artifact handoff |
+| **Shell status** | Prompt counters read atomic status snapshots without starting the daemon or querying the package manager |
 
-| Capability | The Fragmented Toolchain | OMG Unified Workflow |
-| :--- | :--- | :--- |
-| **System Packages** | `pacman` / `apt` / `dnf` / `brew` / `yay` | `omg search` · `omg install` · `omg update` · `omg why` |
-| **Language Runtimes** | `nvm` + `pyenv` + `rustup` + `gvm` + `rbenv` | `omg use <node\|python\|rust\|go\|deno> [version]` |
-| **Version Detection** | Separate shims reading `.nvmrc`, `pyproject.toml`, `go.mod` | Auto-detects 18+ configuration & version formats |
-| **Project Tasks** | `npm run` vs `pnpm` vs `cargo` vs `make` vs `poetry` | `omg run <dev\|test\|build\|lint>` (auto-resolves runner) |
-| **Environment Parity** | Manual READMEs, ad-hoc Dockerfiles, hidden drift | `omg env capture` (generates `omg.lock`) · `omg env check` |
-| **AUR Community Safety** | Ad-hoc AUR helpers blindly compiling scripts | Mandatory PKGBUILD review + isolated Bubblewrap builds |
-| **Shell Prompt Vital Signs** | Spawning slow subshells (`pacman -Qu`) causing lag | Microsecond prompt status (`omg uc`) via atomic binary snapshots |
+## Security Built Into Installation
+
+The upcoming release expands protection across downloads, builds, filesystem writes, and privileged package transactions. The hardening work is tracked in [PR #399](https://github.com/PyRo1121/omg/pull/399). This section describes the current development branch; check the [release notes](https://github.com/PyRo1121/omg/releases) for what is included in your installed version.
+
+| Boundary | Protection |
+| :--- | :--- |
+| **Downloads and signing trust** | Runtime installers verify supported checksums or signatures and reject missing required integrity evidence. Swift signature verification restricts downloaded keyrings to explicitly allowed signing fingerprints. |
+| **AUR source and build** | Review is enabled by default, source manifests are rechecked before execution, and Bubblewrap builds use an isolated home, a cleared environment, and no build network by default. |
+| **AUR output** | Bounded archive inspection checks paths, metadata, links, and privileged contents before installation. Install hooks, capabilities, and setuid/setgid files require explicit attended approval. |
+| **High-risk AUR packages** | Selected packages with privileged or system-integration contents require matching outputs from a second private build. Approval is bound to the inspected archive hashes. |
+| **Privilege and filesystem handoffs** | Privileged subprocesses use trusted executable paths and scrub dangerous environment settings. Sealed AUR archives, ownership checks, anchored file operations, and exact-destination installer replacement protect installation boundaries. |
+| **Verification and evidence** | Regression tests exercise security boundaries. CI, release smoke tests, and QEMU guest runs check supported platform behavior and retain bounded failure evidence. Release smoke verifies downloaded archive provenance before execution. |
+
+Run OMG as your regular user; it requests elevation for package mutations. Direct root startup is deprecated, and AUR builds refuse root execution. Runtime smoke checks clear inherited environment settings; that cleanup alone is not a filesystem or network sandbox.
+
+These controls reduce specific risks; they do not establish that community code is benign or that every backend supports the same operations. Matching builds are evidence of reproducibility, not a safety verdict. Read the [AUR security workflow and opt-ins](docs/aur.md), [security model](docs/security.md), and [verification workflows](https://github.com/PyRo1121/omg/actions).
 
 ---
 
-## 30-Second Quickstart (Zero-Risk Tour)
+## Quickstart
 
-You can explore OMG immediately on an existing repository without modifying system packages or elevated permissions:
+Start with repository queries and a package preview:
+
+```bash
+omg search ripgrep
+omg info ripgrep
+omg install --dry-run ripgrep
+```
+
+Then use OMG in a project you trust. Runtime selection may download and install a toolchain in your user directory, and project tasks execute project code. Environment capture writes an `omg.lock` record:
 
 ```bash
 # 1. Switch or auto-detect a project runtime (e.g. Node 22, Python 3.12, Rust stable)
@@ -58,12 +80,6 @@ omg run build
 omg env capture
 omg env check
 
-# 4. Search platform package repositories safely
-omg search ripgrep
-omg info ripgrep
-
-# 5. Preview package actions without touching your system
-omg install --dry-run ripgrep
 ```
 
 ---
@@ -83,7 +99,7 @@ curl --proto '=https' --tlsv1.2 -fsSL https://getomg.xyz/install.sh -o omg-insta
 # 2. Inspect script contents
 less omg-install.sh
 
-# 3. Execute with explicit hermetic flags
+# 3. Install without telemetry or automatic shell edits
 OMG_NO_TELEMETRY=1 OMG_SKIP_SHELL=1 bash omg-install.sh
 
 # 4. Export to PATH and verify
@@ -117,6 +133,9 @@ cargo build --release --locked --no-default-features --features arch,pgp,license
 # Debian / Ubuntu
 cargo build --release --locked --no-default-features --features debian,pgp,license
 
+# Fedora
+cargo build --release --locked --no-default-features --features fedora,pgp,license
+
 # macOS (Apple Silicon)
 cargo build --release --locked --no-default-features --features macos,pgp,license
 ```
@@ -127,52 +146,26 @@ cargo build --release --locked --no-default-features --features macos,pgp,licens
 
 ## System Architecture
 
-OMG is designed around a dual-component architecture: an ergonomic, high-speed CLI front-end communicating over a Unix domain socket with an optional background daemon (`omgd`), with zero-overhead direct fallback paths:
+The CLI works directly with the selected package backend and runtime managers. On Arch, the optional `omgd` daemon keeps package indexes warm; prompt counters read a status snapshot directly.
 
-```
-┌───────────────────────────────────────────────────────────────────────────┐
-│                                 USER / SHELL                              │
-│                                       │                                   │
-│                  ┌────────────────────┴────────────────────┐              │
-│                  ▼                                         ▼              │
-│           ┌──────────────┐                        ┌──────────────────┐    │
-│           │   omg CLI    │                        │ Shell Prompt     │    │
-│           │  (Front-End) │                        │ (ec/tc/oc/uc)    │    │
-│           └──────┬───────┘                        └────────┬─────────┘    │
-│                  │                                         │              │
-│                  │ Length-delimited Unix Socket (bitcode)  │ Direct read  │
-│                  ▼                                         ▼              │
-│     ┌───────────────────────────────────────────────────────────────┐     │
-│     │                         omgd (Daemon)                         │     │
-│     │  ┌─────────────────────────┐     ┌─────────────────────────┐  │     │
-│     │  │ In-Memory LRU Cache     │     │ Nucleo Fuzzy Matcher    │  │     │
-│     │  │ (moka concurrent engine)│     │ (Package/AUR indexing)  │  │     │
-│     │  └─────────────────────────┘     └─────────────────────────┘  │     │
-│     │  ┌─────────────────────────┐     ┌─────────────────────────┐  │     │
-│     │  │ Atomic State Snapshot   │     │ Hash-Chained Audit Log  │  │     │
-│     │  │ (~/.local/share/omg)    │     │ (SHA-256 verification)  │  │     │
-│     │  └─────────────────────────┘     └─────────────────────────┘  │     │
-│     └────────────────────────────────┬──────────────────────────────┘     │
-│                                      │                                    │
-│          ┌───────────────────────────┼───────────────────────────┐        │
-│          ▼                           ▼                           ▼        │
-│   ┌──────────────┐            ┌──────────────┐            ┌─────────────┐ │
-│   │ Native ALPM  │            │  Native APT  │            │   Polyglot  │ │
-│   │ C FFI (Arch) │            │ (Debian/Ubu) │            │   Runtimes  │ │
-│   └──────┬───────┘            └──────┬───────┘            └──────┬──────┘ │
-│          │                           │                           │        │
-│          ▼                           ▼                           ▼        │
-│   ┌──────────────┐            ┌──────────────┐            ┌─────────────┐ │
-│   │ Official Pac │            │ dpkg / APT   │            │ 14 Isolated │ │
-│   │ + AUR Engine │            │ Repositories │            │ Toolchains  │ │
-│   └──────────────┘            └──────────────┘            └─────────────┘ │
-└───────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    User[User and shell] --> CLI[omg CLI]
+    User --> Prompt[Prompt counters]
+    Prompt --> Snapshot[Atomic status snapshot]
+    CLI <--> Daemon[Optional omgd daemon on Arch]
+    Daemon --> Snapshot
+    CLI --> Arch[Arch: libalpm and AUR]
+    CLI --> Debian[Debian and Ubuntu: APT backends]
+    CLI --> Fedora[Fedora: DNF and RPM]
+    CLI --> Mac[macOS: Homebrew]
+    CLI --> Runtimes[Runtime managers and developer tools]
 ```
 
-- **Zero-Subprocess ALPM Integration**: On Arch Linux, OMG links directly to `libalpm` via C FFI bindings, querying local and sync databases within process memory.
-- **In-Memory Caching & Fuzzy Indexing**: `omgd` leverages `moka` for thread-safe in-memory caching and `nucleo` for instant search ranking.
-- **Microsecond Shell Prompts**: Fast prompt counters (`omg uc`, `omg tc`) read directly from an atomic binary status snapshot (`omg.status`) on disk, completely bypassing async runtime initialization.
-- **Resilient Direct Fallback**: Non-Arch platforms and standalone CLI invocations operate seamlessly via direct execution even if `omgd` is not running.
+- **Native Arch queries:** OMG reads local and sync package databases through `libalpm`.
+- **Cached search:** The daemon uses `moka` for caching and `nucleo` for fuzzy matching.
+- **Direct operation:** Package commands do not require the daemon to be running.
+- **Backend-specific behavior:** Supported mutations, audit operations, and environment records vary by backend; see the matrix below.
 
 ---
 
@@ -202,7 +195,7 @@ omg update
 ```
 
 ### 2. Polyglot Runtime Management
-Isolate and switch runtime toolchains per project or globally with zero external shell dependencies. 
+Install and switch runtime versions per project or globally. Download and build prerequisites vary by runtime.
 
 OMG manages **14 native runtimes**: `node`, `python`, `go`, `rust`, `ruby`, `java`, `bun`, `deno`, `pi`, `zig`, `dotnet`, `erlang`, `php`, and `swift` (plus 54 registry developer tools).
 
@@ -248,7 +241,7 @@ omg run test -- --nocapture
 ```
 
 ### 4. Declarative Environment Locking (`omg.lock`)
-Eliminate "works on my machine" issues across developer workstations and CI pipelines:
+Record package and runtime versions and detect drift across developer workstations and CI pipelines. Environment fingerprinting requires an Arch or Debian package backend; Fedora currently refuses these operations explicitly:
 
 ```bash
 # Snapshot active system packages and project runtime versions
@@ -278,9 +271,9 @@ omg daemon-status
 
 ### 7. Supply Chain Security & Auditability
 - **CycloneDX 1.5 SBOM**: Generate comprehensive package inventories via `omg audit sbom`.
-- **AUR PKGBUILD Review**: Prompts for mandatory code review before building community packages.
+- **AUR Source and Artifact Review**: Source review is enabled by default; archive inspection and privileged-content approval protect later handoffs.
 - **SLSA / Rekor Verification**: Inspect build provenance and Rekor transparency logs with `omg audit slsa --certificate-identity <identity> <artifact>`.
-- **Deterministic Rollbacks**: Explore transaction history and roll back changes with `omg rollback`.
+- **Transaction History and Rollback**: Inspect recorded changes and use `omg rollback` where supported; recovery depends on backend support and package availability.
 
 ---
 
@@ -288,7 +281,7 @@ omg daemon-status
 
 | Platform | Architecture | Package Backend | Daemon (`omgd`) | Coverage / Status |
 | :--- | :--- | :--- | :---: | :--- |
-| **Arch Linux** | `x86_64` | Native `libalpm` + AUR | Supported | Production-grade official repo and AUR engine with PKGBUILD review |
+| **Arch Linux** | `x86_64` | Native `libalpm` + AUR | Supported | Official repository and AUR workflows; alpha, with source and artifact checks |
 | **Debian** | `x86_64` | Native APT | Direct Fallback | Native APT package search, installation, and queries |
 | **Ubuntu** | `x86_64` | Native APT | Direct Fallback | Native APT package search, installation, and queries |
 | **Fedora** | `x86_64` | DNF | Direct Fallback | Experimental DNF backend (package mutations under active validation) |
@@ -302,10 +295,10 @@ omg daemon-status
 
 ## Security Model & Integrity Disclosures
 
-In accordance with our truthful, evidence-based engineering baseline:
+The security model includes explicit trust and coverage limits:
 
 1. **Supply Chain Attestation**: Official release archives and Cargo-generated SBOMs are cryptographically attested via GitHub Actions. The installer verifies digests and signatures using the GitHub CLI (`gh attestation verify`).
-2. **AUR Safety Boundaries**: AUR packages contain community-submitted code. OMG enforces interactive PKGBUILD review by default and supports isolated Bubblewrap container builds (`bwrap`).
+2. **AUR Safety Boundaries**: AUR packages contain community-submitted code. OMG enables interactive source review and isolated Bubblewrap builds by default. Network access and native builds require explicit configuration opt-ins; see [AUR policy](docs/aur.md).
 3. **Audit Limits**:
    - `omg audit sbom` produces a CycloneDX 1.5 JSON inventory with Arch Linux Security Advisory matching. It does not generate full transitive application dependency graphs for Debian or macOS.
    - `omg audit slsa` verifies supported Rekor signatures and Fulcio certificate chains for an artifact; it requires `--certificate-identity` and does not certify SLSA Levels 1–3 or build provenance.
