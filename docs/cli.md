@@ -1085,6 +1085,11 @@ package name cannot silently select a less verified source. Go module paths are
 accepted because they are authenticated through the configured module proxy and
 checksum database.
 
+The selected manager's resolved executable directory is retained so runtimes
+installed by OMG, rustup, or another user runtime manager continue to work.
+Other caller `PATH` entries are removed, and a manager executable resolved from
+the current project is rejected.
+
 Some legitimate tools or private registries need a narrower policy. Exceptions
 are comma-separated exact package names and apply only to the current command:
 

@@ -8,6 +8,8 @@
   credentials and package-manager configuration.
 - Replace the caller-controlled executable search path with root-controlled
   system directories during Linux tool installations.
+- Retain only the resolved manager's executable directory for user-managed
+  runtimes and reject manager executables resolved from the current project.
 - Apply manager-specific package grammar so npm GitHub shorthands, local paths,
   Git sources, and other alternate-source specifications cannot cross the
   registry-only tool-install boundary.

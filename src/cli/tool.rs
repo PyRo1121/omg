@@ -109,10 +109,45 @@ fn secured_manager_command(
     manager: &str,
     package: &str,
 ) -> Result<Command> {
-    let mut command = manager_command(program, staging_dir);
     if host_environment_is_allowed(manager, package) {
-        return Ok(command);
+        return Ok(manager_command(program, staging_dir));
     }
+
+    let requested_program = Path::new(program.as_ref());
+    let resolved_program = if requested_program.components().count() == 1 {
+        which::which(requested_program).with_context(|| {
+            format!(
+                "Failed to resolve {manager} executable '{}'",
+                requested_program.display()
+            )
+        })?
+    } else {
+        requested_program.to_path_buf()
+    };
+    let manager_bin = resolved_program
+        .parent()
+        .context("Package-manager executable has no parent directory")?;
+    if let Ok(project_dir) = std::env::current_dir() {
+        let is_project = [
+            ".git",
+            "package.json",
+            "Cargo.toml",
+            "pyproject.toml",
+            "go.mod",
+        ]
+        .iter()
+        .any(|marker| project_dir.join(marker).exists());
+        if is_project
+            && manager_bin.starts_with(&project_dir)
+            && !manager_bin.starts_with(staging_dir)
+        {
+            anyhow::bail!(
+                "Refusing project-local {manager} executable: {}",
+                resolved_program.display()
+            );
+        }
+    }
+    let mut command = manager_command(&resolved_program, staging_dir);
 
     let home = staging_dir.join(".manager-home");
     let config = home.join("config");
@@ -125,7 +160,14 @@ fn secured_manager_command(
 
     command.env_clear();
     #[cfg(unix)]
-    command.env("PATH", TOOL_SYSTEM_PATH);
+    {
+        let mut paths = vec![manager_bin.to_path_buf()];
+        paths.extend(std::env::split_paths(TOOL_SYSTEM_PATH));
+        command.env(
+            "PATH",
+            std::env::join_paths(paths).context("Manager executable path is not representable")?,
+        );
+    }
     #[cfg(windows)]
     if let Some(path) = std::env::var_os("PATH") {
         // Windows development builds need the discovered manager and its
@@ -1332,7 +1374,11 @@ mod tests {
     #[test]
     fn secured_commands_use_an_isolated_home() {
         let staging = tempfile::tempdir().expect("staging directory");
-        let command = secured_manager_command("npm", staging.path(), "npm", "eslint")
+        let executable = staging.path().join("bin/manager");
+        fs::create_dir_all(executable.parent().expect("manager parent"))
+            .expect("manager directory");
+        fs::write(&executable, b"fixture").expect("manager fixture");
+        let command = secured_manager_command(&executable, staging.path(), "npm", "eslint")
             .expect("secured command");
         let variables: std::collections::HashMap<_, _> = command
             .get_envs()
@@ -1346,10 +1392,14 @@ mod tests {
         assert!(!variables.contains_key(std::ffi::OsStr::new("SSH_AUTH_SOCK")));
         assert!(!variables.contains_key(std::ffi::OsStr::new("AWS_SECRET_ACCESS_KEY")));
         #[cfg(unix)]
-        assert_eq!(
-            variables.get(std::ffi::OsStr::new("PATH")),
-            Some(&std::ffi::OsString::from(TOOL_SYSTEM_PATH))
-        );
+        {
+            let path = variables
+                .get(std::ffi::OsStr::new("PATH"))
+                .expect("isolated PATH");
+            let entries: Vec<_> = std::env::split_paths(path).collect();
+            assert_eq!(entries.first(), executable.parent());
+            assert!(entries.contains(&PathBuf::from("/usr/bin")));
+        }
     }
 
     /// Tool installs may only swap their own package's links. Other packages,
