@@ -28,7 +28,8 @@ The hosted `QEMU Matrix` workflow is also a supported verification route when
 the workstation has no Linux/KVM environment. Push the candidate to a review
 branch, then dispatch that branch with `staged=true`, `distro=all`, and
 `arch=all`. Staged jobs build and run library and binary unit tests from the
-selected commit before booting guests. A published-release run checks the
+selected commit before booting guests. Coordinator, issue-filing and reporting
+fixtures must pass before guest builds begin. A published-release run checks the
 published binaries, not uncommitted workstation changes.
 
 The workflow resolves its tag once, records source and artifact provenance,

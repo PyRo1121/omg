@@ -34,6 +34,9 @@ on:
       - "scripts/qemu-transactions.sh"
       - "scripts/qemu-inventory.sh"
       - "scripts/test-release-smoke.sh"
+      - "scripts/release-smoke.sh"
+      - "scripts/test-qa-file-issue.sh"
+      - "scripts/qa-evidence-lib.sh"
       - "scripts/qa-file-issue.sh"
       - "scripts/ci-smoke-report.py"
       - "scripts/test_ci_smoke_report.py"
@@ -86,7 +89,7 @@ jobs:
   prepare:
     name: "Resolve test selection and provenance"
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
     outputs:
       staged: ${{ steps.selection.outputs.staged }}
       x64: ${{ steps.selection.outputs.x64 }}
@@ -103,6 +106,12 @@ jobs:
           ref: ${{ github.sha }}
       - name: Workflow selection regression checks
         run: python3 -m unittest discover -s tests -p test_qemu_workflow.py
+
+      - name: Verify harness and reporting fixtures before guest builds
+        run: |
+          ./scripts/test-release-smoke.sh
+          ./scripts/test-qa-file-issue.sh
+          python3 -m unittest discover -s scripts -p test_ci_smoke_report.py
 
       - name: Resolve selection
         id: selection
