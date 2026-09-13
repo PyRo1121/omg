@@ -10,6 +10,88 @@ use std::process::Command;
 
 use crate::cli::style;
 
+const ALLOW_NPM_SCRIPTS_ENV: &str = "OMG_TOOL_DANGEROUSLY_ALLOW_ALL_NPM_SCRIPTS";
+const ALLOW_PIP_SDISTS_ENV: &str = "OMG_TOOL_ALLOW_PIP_SDISTS";
+const ALLOW_CARGO_UNLOCKED_ENV: &str = "OMG_TOOL_ALLOW_CARGO_UNLOCKED";
+const ALLOW_HOST_ENV: &str = "OMG_TOOL_ALLOW_HOST_ENV";
+const ALLOW_UNVERIFIED_ENV: &str = "OMG_TOOL_ALLOW_UNVERIFIED";
+
+fn package_is_allowed(variable: &str, package: &str) -> bool {
+    std::env::var(variable).is_ok_and(|value| {
+        value
+            .split(',')
+            .map(str::trim)
+            .any(|allowed| !allowed.is_empty() && allowed == package)
+    })
+}
+
+fn host_environment_is_allowed(manager: &str, package: &str) -> bool {
+    package_is_allowed(ALLOW_HOST_ENV, &format!("{manager}:{package}"))
+}
+
+/// Construct a package-manager command with a minimal environment.
+///
+/// Package build and lifecycle scripts inherit their manager's environment.
+/// Clearing it here prevents an untrusted package from reading ambient registry,
+/// Git, SSH, cloud, and CI credentials. Private registries can opt out for one
+/// exact manager/package pair through `OMG_TOOL_ALLOW_HOST_ENV`.
+fn secured_manager_command(
+    program: impl AsRef<std::ffi::OsStr>,
+    staging_dir: &Path,
+    manager: &str,
+    package: &str,
+) -> Result<Command> {
+    let mut command = manager_command(program, staging_dir);
+    if host_environment_is_allowed(manager, package) {
+        return Ok(command);
+    }
+
+    let home = staging_dir.join(".manager-home");
+    let config = home.join("config");
+    let cache = home.join("cache");
+    let data = home.join("data");
+    let temp = home.join("tmp");
+    for directory in [&home, &config, &cache, &data, &temp] {
+        fs::create_dir_all(directory)?;
+    }
+
+    command.env_clear();
+    for variable in ["PATH", "SystemRoot", "WINDIR", "PATHEXT"] {
+        if let Some(value) = std::env::var_os(variable) {
+            command.env(variable, value);
+        }
+    }
+    command
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .env("XDG_CONFIG_HOME", &config)
+        .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_DATA_HOME", &data)
+        .env("TMPDIR", &temp)
+        .env("TMP", &temp)
+        .env("TEMP", &temp)
+        .env("LC_ALL", "C.UTF-8")
+        .env("LANG", "C.UTF-8");
+
+    // A rustup-installed `cargo` is a proxy and still needs the existing
+    // toolchain store. Cargo configuration remains isolated in the staged
+    // HOME; only rustup's immutable toolchain location crosses the boundary.
+    if manager == "cargo" {
+        let rustup_home = std::env::var_os("RUSTUP_HOME")
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("HOME")
+                    .or_else(|| std::env::var_os("USERPROFILE"))
+                    .map(PathBuf::from)
+                    .map(|home| home.join(".rustup"))
+            });
+        if let Some(rustup_home) = rustup_home.filter(|path| path.is_absolute()) {
+            command.env("RUSTUP_HOME", rustup_home);
+        }
+    }
+    Ok(command)
+}
+
 /// A resolved registry entry: `(manager, package, description)`.
 type RegistryEntry = (&'static str, &'static str, &'static str);
 
@@ -468,33 +550,69 @@ async fn install_managed(
     let run_install = || -> Result<()> {
         match manager {
             "npm" => {
-                // npm install --prefix <dir> <pkg>
+                // Lifecycle scripts are publisher-controlled code. Keep them
+                // disabled unless this exact package is explicitly approved.
                 let install_path = staging_dir
                     .to_str()
                     .context("Install directory path contains invalid UTF-8")?;
-                let status = manager_command("npm", &staging_dir)
-                    .args(["install", "--prefix", install_path, "--", pkg])
+                let allow_scripts = package_is_allowed(ALLOW_NPM_SCRIPTS_ENV, pkg);
+                let allow_host_environment = host_environment_is_allowed(manager, pkg);
+                let mut command = secured_manager_command("npm", &staging_dir, manager, pkg)?;
+                command.args(["install", "--prefix", install_path]);
+                if !allow_host_environment {
+                    command.arg("--registry=https://registry.npmjs.org/");
+                }
+                if !allow_scripts {
+                    command.arg("--ignore-scripts");
+                }
+                let status = command
+                    .args(["--", pkg])
                     .stdout(std::process::Stdio::null())
                     .stderr(std::process::Stdio::inherit())
                     .status()?;
 
                 if !status.success() {
-                    anyhow::bail!("NPM install of '{pkg}' failed. Try: npm install -g {pkg}");
+                    anyhow::bail!(
+                        "NPM install of '{pkg}' failed. If the reviewed package requires lifecycle scripts, retry with {ALLOW_NPM_SCRIPTS_ENV}={pkg}"
+                    );
+                }
+                if !package_is_allowed(ALLOW_UNVERIFIED_ENV, &format!("npm:{pkg}")) {
+                    let mut verification =
+                        secured_manager_command("npm", &staging_dir, manager, pkg)?;
+                    verification.args(["audit", "signatures", "--prefix", install_path]);
+                    if !allow_host_environment {
+                        verification.arg("--registry=https://registry.npmjs.org/");
+                    }
+                    let signature_status = verification
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::inherit())
+                        .status()?;
+                    if !signature_status.success() {
+                        anyhow::bail!(
+                            "NPM signature/provenance verification failed for '{pkg}'; refusing to activate it. A trusted private registry without signature support can be scoped with {ALLOW_UNVERIFIED_ENV}=npm:{pkg}"
+                        );
+                    }
                 }
                 Ok(())
             }
             "cargo" => {
-                // cargo install --root <dir> <pkg>
                 let install_path = staging_dir
                     .to_str()
                     .context("Install directory path contains invalid UTF-8")?;
-                let status = manager_command("cargo", &staging_dir)
-                    .args(["install", "--root", install_path, "--", pkg])
+                let mut command = secured_manager_command("cargo", &staging_dir, manager, pkg)?;
+                command.args(["install", "--root", install_path]);
+                if !package_is_allowed(ALLOW_CARGO_UNLOCKED_ENV, pkg) {
+                    command.arg("--locked");
+                }
+                let status = command
+                    .args(["--", pkg])
                     .stdout(std::process::Stdio::null()) // Cargo is noisy
                     .status()?;
 
                 if !status.success() {
-                    anyhow::bail!("Cargo install of '{pkg}' failed. Try: cargo install {pkg}");
+                    anyhow::bail!(
+                        "Cargo install of '{pkg}' failed. If the reviewed crate does not publish Cargo.lock, retry with {ALLOW_CARGO_UNLOCKED_ENV}={pkg}"
+                    );
                 }
                 Ok(())
             }
@@ -503,9 +621,10 @@ async fn install_managed(
                 let install_path = staging_dir
                     .to_str()
                     .context("Install directory path contains invalid UTF-8")?;
-                let status_venv = manager_command(python_binary(), &staging_dir)
-                    .args(["-m", "venv", "--", install_path])
-                    .status()?;
+                let status_venv =
+                    secured_manager_command(python_binary(), &staging_dir, manager, pkg)?
+                        .args(["-m", "venv", "--", install_path])
+                        .status()?;
 
                 if !status_venv.success() {
                     anyhow::bail!("Failed to create python venv at '{install_path}'");
@@ -513,13 +632,23 @@ async fn install_managed(
 
                 // 2. Install into venv
                 let pip_path = staging_dir.join("bin").join("pip");
-                let status_install = manager_command(&pip_path, &staging_dir)
-                    .args(["install", "--", pkg])
+                let mut command = secured_manager_command(&pip_path, &staging_dir, manager, pkg)?;
+                command.args(["install", "--disable-pip-version-check"]);
+                if !host_environment_is_allowed(manager, pkg) {
+                    command.args(["--index-url", "https://pypi.org/simple"]);
+                }
+                if !package_is_allowed(ALLOW_PIP_SDISTS_ENV, pkg) {
+                    command.arg("--only-binary=:all:");
+                }
+                let status_install = command
+                    .args(["--", pkg])
                     .stdout(std::process::Stdio::null())
                     .status()?;
 
                 if !status_install.success() {
-                    anyhow::bail!("Pip install of '{pkg}' failed. Try: pip install {pkg}");
+                    anyhow::bail!(
+                        "Pip install of '{pkg}' failed. If the reviewed package has no wheel, retry with {ALLOW_PIP_SDISTS_ENV}={pkg}"
+                    );
                 }
                 Ok(())
             }
@@ -535,12 +664,21 @@ async fn install_managed(
                 let go_bin = staging_dir.join("bin");
                 fs::create_dir_all(&go_bin)?;
 
-                let status = manager_command("go", &staging_dir)
+                let mut command = secured_manager_command("go", &staging_dir, manager, pkg)?;
+                command
                     .arg("install")
                     .args(["--", &target])
-                    .env("GOBIN", &go_bin)
-                    .stdout(std::process::Stdio::null())
-                    .status()?;
+                    .env("GOBIN", &go_bin);
+                if !host_environment_is_allowed(manager, pkg) {
+                    command
+                        .env("GOPROXY", "https://proxy.golang.org")
+                        .env("GOSUMDB", "sum.golang.org")
+                        .env("GOPRIVATE", "")
+                        .env("GONOPROXY", "")
+                        .env("GONOSUMDB", "")
+                        .env("GOENV", "off");
+                }
+                let status = command.stdout(std::process::Stdio::null()).status()?;
 
                 if !status.success() {
                     anyhow::bail!("Go install of '{pkg}' failed. Try: go install {target}");
@@ -1004,6 +1142,48 @@ mod tests {
             let command = manager_command(program, staging.path());
             assert_eq!(command.get_current_dir(), Some(staging.path()), "{program}");
         }
+    }
+
+    #[test]
+    fn package_exceptions_require_an_exact_comma_delimited_match() {
+        temp_env::with_var(
+            ALLOW_NPM_SCRIPTS_ENV,
+            Some("eslint,@scope/tool, exact "),
+            || {
+                assert!(package_is_allowed(ALLOW_NPM_SCRIPTS_ENV, "eslint"));
+                assert!(package_is_allowed(ALLOW_NPM_SCRIPTS_ENV, "@scope/tool"));
+                assert!(package_is_allowed(ALLOW_NPM_SCRIPTS_ENV, "exact"));
+                assert!(!package_is_allowed(ALLOW_NPM_SCRIPTS_ENV, "es"));
+                assert!(!package_is_allowed(ALLOW_NPM_SCRIPTS_ENV, "tool"));
+            },
+        );
+    }
+
+    #[test]
+    fn host_environment_exception_is_scoped_to_manager_and_package() {
+        temp_env::with_var(ALLOW_HOST_ENV, Some("npm:private-cli"), || {
+            assert!(host_environment_is_allowed("npm", "private-cli"));
+            assert!(!host_environment_is_allowed("cargo", "private-cli"));
+            assert!(!host_environment_is_allowed("npm", "other"));
+        });
+    }
+
+    #[test]
+    fn secured_commands_use_an_isolated_home() {
+        let staging = tempfile::tempdir().expect("staging directory");
+        let command = secured_manager_command("npm", staging.path(), "npm", "eslint")
+            .expect("secured command");
+        let variables: std::collections::HashMap<_, _> = command
+            .get_envs()
+            .filter_map(|(name, value)| value.map(|value| (name.to_owned(), value.to_owned())))
+            .collect();
+        assert_eq!(
+            variables.get(std::ffi::OsStr::new("HOME")),
+            Some(&staging.path().join(".manager-home").into_os_string())
+        );
+        assert!(!variables.contains_key(std::ffi::OsStr::new("NPM_TOKEN")));
+        assert!(!variables.contains_key(std::ffi::OsStr::new("SSH_AUTH_SOCK")));
+        assert!(!variables.contains_key(std::ffi::OsStr::new("AWS_SECRET_ACCESS_KEY")));
     }
 
     /// Tool installs may only swap their own package's links. Other packages,

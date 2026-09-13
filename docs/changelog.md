@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Tool supply-chain hardening
+
+- Isolate npm, Cargo, pip, and Go tool installations from ambient environment
+  credentials and package-manager configuration.
+- Disable npm lifecycle scripts by default and verify registry signatures and
+  provenance before activating an installed tool.
+- Require Python wheels, Cargo lockfiles, and Go's public checksum database by
+  default, with exact package-scoped compatibility overrides documented in the
+  CLI reference.
+- Support private registry workflows through independently scoped environment,
+  script/build, lockfile, and signature-verification exceptions.
+
 All notable changes to OMG are documented here.
 
 OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm, pyenv, rustup, and more with a single tool.

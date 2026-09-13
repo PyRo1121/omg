@@ -1068,6 +1068,66 @@ OMG includes a curated registry of 60+ popular developer tools across categories
 2. Fall back to interactive selection if not in registry
 3. Install to isolated `~/.local/share/omg/tools/`
 
+**Secure tool installs:**
+
+OMG treats package installation as execution of untrusted publisher content.
+For npm, Cargo, pip, and Go tools it uses an isolated home and configuration,
+does not pass ambient registry, Git, SSH, cloud, or CI environment credentials,
+and keeps the previous working tool until the replacement passes its checks. npm
+lifecycle scripts are disabled and registry signatures/provenance are audited;
+pip accepts wheels only; Cargo requires the published lockfile; and Go uses the
+public module proxy and checksum database.
+
+Some legitimate tools or private registries need a narrower policy. Exceptions
+are comma-separated exact package names and apply only to the current command:
+
+```bash
+OMG_TOOL_DANGEROUSLY_ALLOW_ALL_NPM_SCRIPTS="@scope/reviewed-cli" omg tool install reviewed-cli
+OMG_TOOL_ALLOW_PIP_SDISTS="reviewed-cli" omg tool install reviewed-cli
+OMG_TOOL_ALLOW_CARGO_UNLOCKED="reviewed-cli" omg tool install reviewed-cli
+OMG_TOOL_ALLOW_HOST_ENV="npm:@company/private-cli" omg tool install private-cli
+OMG_TOOL_ALLOW_UNVERIFIED="npm:@company/private-cli" omg tool install private-cli
+```
+
+`OMG_TOOL_ALLOW_HOST_ENV` accepts exact `manager:package` entries such as
+`npm:@company/private-cli`, `cargo:private-cli`, `pip:private-cli`, or
+`go:example.com/company/private-cli`. It restores the full host environment, so
+package scripts and build processes may read every credential available to the
+current shell. Use it only for a package and registry you control, in a shell
+containing the minimum necessary credential. Multiple approvals can be listed
+with commas. Avoid persistent shell-profile exports so an approval does not
+silently apply to later releases.
+
+If a corporate TLS proxy or private certificate authority is required, scope
+`OMG_TOOL_ALLOW_HOST_ENV` to the affected package and expose only the necessary
+proxy and certificate variables in that shell. The package's build process can
+read those values.
+
+Private registries that do not publish npm-compatible registry signatures may
+also require `OMG_TOOL_ALLOW_UNVERIFIED` with the exact `manager:package` value.
+This skips the final authenticity check and should be limited to an internally
+verified artifact. It does not imply `OMG_TOOL_ALLOW_HOST_ENV` or enable npm
+scripts; set each exception independently when it is actually required.
+
+The npm script exception is scoped to the requested package installation, but
+npm versions without a dependency-level allowlist can execute lifecycle scripts
+from that package's transitive dependencies too. Its deliberately explicit name
+reflects that risk. Review the complete dependency tree before using it.
+
+These defaults follow the upstream security controls documented by
+[npm](https://docs.npmjs.com/viewing-package-provenance/),
+[pip](https://pip.pypa.io/en/stable/topics/secure-installs/),
+[Cargo](https://doc.rust-lang.org/cargo/commands/cargo-install.html), and the
+[Go module system](https://go.dev/ref/mod#authenticating). npm provenance proves
+the published artifact's origin and integrity; it does not prove that the
+publisher's code is safe.
+
+Cargo crates can contain `build.rs`, and explicitly approved npm scripts or
+Python source distributions execute publisher-controlled build code. The
+isolated environment prevents automatic inheritance of shell credentials, but
+it is not a filesystem or network sandbox. Review these packages and use a
+container or disposable VM when the publisher is not fully trusted.
+
 ---
 
 ### omg init
