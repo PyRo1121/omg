@@ -539,8 +539,9 @@ fn acquire_usage_lock(lock_path: &Path) -> Result<std::fs::File> {
             rustix::fs::statat(&directory, name, rustix::fs::AtFlags::SYMLINK_NOFOLLOW)
                 .map(|entry| (entry.st_dev, entry.st_ino, entry.st_mode, entry.st_nlink));
         format!(
-            "Failed to open anchored usage lock {name:?}; parent (device, inode, links): \
-             {parent_state:?}; entry (device, inode, mode, links): {entry_state:?}"
+            "Failed to open anchored usage lock {}; parent (device, inode, links): \
+             {parent_state:?}; entry (device, inode, mode, links): {entry_state:?}",
+            name.display()
         )
     })?;
     let lock = std::fs::File::from(lock);
