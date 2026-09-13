@@ -8,6 +8,13 @@ status-level = "pass"
 final-status-level = "fail"
 retries = 1
 
+# These regressions must fail on their first failure: a successful retry can
+# conceal a lost update or first-creation lock race. Default overrides apply
+# to every profile, including ci and ci-junit, ahead of profile-wide retries.
+[[profile.default.overrides]]
+filter = 'test(=core::usage::tests::concurrent_locked_updates_do_not_lose_counters) | test(=core::usage::tests::locked_sync_timestamp_merge_does_not_lose_concurrent_counters) | test(=core::usage::tests::simultaneous_first_usage_locks_share_one_inode)'
+retries = 0
+
 [profile.ci]
 test-threads = "num-cpus"
 fail-fast = false

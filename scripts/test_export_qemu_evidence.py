@@ -12,8 +12,34 @@ SPEC = importlib.util.spec_from_file_location("export_qemu_evidence", Path(__fil
 exporter = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(exporter)
 
+TRANSACTION_DIAGNOSTICS = (
+    "command.json", "expected-identity.tsv",
+    "omg-info-before.stdout", "omg-info-before.stderr",
+    "native-info-before.stdout", "native-info-before.stderr",
+    "omg-identity-before.tsv", "native-identity-before.tsv",
+    "manual-before.stdout", "manual-before.stderr", "manual-after.stdout", "manual-after.stderr",
+    "cache-before-paths.txt", "cache-after-paths.txt",
+)
+TRANSACTION_PRIVATE = (
+    "data/usage.json", "cache/command.json", "config/expected-identity.tsv",
+    "data/manual-before.stderr", "private/omg-info-before.stdout",
+    "installed-before.raw", "omg-info-before.raw", "manual-before.raw",
+    "command.json.bak", "private-identity-before.tsv", "client-key", "overlay.qcow2",
+)
+
 
 class AllowlistTests(unittest.TestCase):
+    def test_transaction_diagnostics_are_allowed_only_at_trial_root(self):
+        prefix = ("run-test", "transactions", "trials", "install-omg-001", "transaction-trial")
+        for name in TRANSACTION_DIAGNOSTICS:
+            with self.subTest(name=name):
+                self.assertTrue(exporter.allowed_file((*prefix, name)))
+                self.assertFalse(exporter.allowed_file(("run-test", "guest", "evidence", "benchmarks", name)))
+                self.assertFalse(exporter.allowed_file((*prefix, "data", name)))
+        for name in TRANSACTION_PRIVATE:
+            with self.subTest(name=name):
+                self.assertFalse(exporter.allowed_file((*prefix, *name.split("/"))))
+
     def test_known_diagnostics_preserve_report_hierarchy(self):
         for path in ("provenance.json", "run-fixture/results.json", "run-fixture/guest-check.log",
                      "run-fixture/guest/serial.log", "run-fixture/guest/evidence/audit-directory-after.txt",
@@ -69,6 +95,21 @@ class DescriptorTests(unittest.TestCase):
             self.assertEqual(path.stat().st_uid, os.getuid())
             self.assertTrue(path.stat().st_mode & stat.S_IRUSR)
         self.assertEqual(state.stat().st_mode & 0o777, 0)
+
+    def test_transaction_diagnostics_export_without_private_or_raw_neighbors(self):
+        prefix = "run-test/transactions/trials/install-omg-001/transaction-trial/"
+        for name in TRANSACTION_DIAGNOSTICS:
+            self.fixture(prefix + name, ("diagnostic:" + name).encode())
+        for name in TRANSACTION_PRIVATE:
+            self.fixture(prefix + name, b"private-state-must-not-export")
+        status, report = self.run_export()
+        self.assertEqual(status, 0, report)
+        self.assertEqual(set(report["copied"]), {prefix + name for name in TRANSACTION_DIAGNOSTICS})
+        for name in TRANSACTION_DIAGNOSTICS:
+            self.assertEqual((self.destination / (prefix + name)).read_bytes(),
+                             ("diagnostic:" + name).encode())
+        for name in TRANSACTION_PRIVATE:
+            self.assertFalse((self.destination / (prefix + name)).exists())
 
     def test_symlink_hardlink_and_fifo_cannot_export_external_bytes(self):
         external = self.root / "private"

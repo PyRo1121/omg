@@ -43,6 +43,16 @@ BENCH_FILES = {
     "manual-after.names", "manual-expected.names", "cache-before.sha256",
     "cache-after.sha256", "started-at.txt",
 }
+# Additional files emitted by benchmark-hyperfine.sh --guest-transaction.
+# Admit these only at the transaction-trial root, never in cache/data/config.
+TRANSACTION_FILES = {
+    "command.json", "expected-identity.tsv",
+    "omg-info-before.stdout", "omg-info-before.stderr",
+    "native-info-before.stdout", "native-info-before.stderr",
+    "omg-identity-before.tsv", "native-identity-before.tsv",
+    "manual-before.stdout", "manual-before.stderr", "manual-after.stdout", "manual-after.stderr",
+    "cache-before-paths.txt", "cache-after-paths.txt",
+}
 
 
 def benchmark_file(name):
@@ -96,7 +106,10 @@ def allowed_file(parts):
     if len(parent) == 3 and parent[:2] == ("transactions", "trials"):
         return name in {"disk-create.log", "serial.log", "boot.log", "guest.log", "copy.log",
                         "validation.log", "stop.log"}
-    return benchmark_file(name)
+    return benchmark_file(name) or (
+        len(parent) == 4 and parent[:2] == ("transactions", "trials")
+        and parent[3] == "transaction-trial" and name in TRANSACTION_FILES
+    )
 
 
 def open_directory(path):
