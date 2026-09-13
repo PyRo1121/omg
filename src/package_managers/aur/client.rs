@@ -2212,7 +2212,7 @@ impl AurClient {
 
         let cache_key = self.cache_key(&pkg_dir, &env.makeflags)?;
 
-        let cached = self.cached_artifacts(
+        let cached = Self::cached_artifacts(
             &package,
             &requested_outputs,
             &pkg_dir,
@@ -2403,7 +2403,7 @@ impl AurClient {
         let mut env = self.makepkg_env(&pkg_dir).await?;
         env.pgp_home = pgp_home;
         let cache_key = self.cache_key(&pkg_dir, &env.makeflags)?;
-        if let Some(archives) = self.cached_artifacts(
+        if let Some(archives) = Self::cached_artifacts(
             package_base,
             &package_outputs,
             &pkg_dir,
@@ -4003,7 +4003,6 @@ impl AurClient {
     /// Do not promote recipe-writable payloads into trusted cache entries.
     /// Reuse stays disabled until controller-owned archive provenance exists.
     fn cached_artifacts(
-        &self,
         _cache_name: &str,
         _artifacts: &[String],
         _pkg_dir: &Path,
@@ -6202,7 +6201,7 @@ mod tests {
         let outputs = ["app".to_string(), "libs".to_string()];
 
         assert_eq!(
-            client.cached_artifacts("shared", &outputs, &pkg_dir, dir.path(), "matching-key"),
+            AurClient::cached_artifacts("shared", &outputs, &pkg_dir, dir.path(), "matching-key"),
             None,
         );
         assert!(
@@ -6222,15 +6221,13 @@ mod tests {
 
         std::fs::remove_file(&libs).unwrap();
         assert!(
-            client
-                .cached_artifacts("shared", &outputs, &pkg_dir, dir.path(), "matching-key")
+            AurClient::cached_artifacts("shared", &outputs, &pkg_dir, dir.path(), "matching-key")
                 .is_none(),
             "a missing split output must reject the whole cached build",
         );
         write_split_archive(&libs, "pkgname = libs\npkgver = 9.9-1\npkgbase = shared\n");
         assert!(
-            client
-                .cached_artifacts("shared", &outputs, &pkg_dir, dir.path(), "matching-key")
+            AurClient::cached_artifacts("shared", &outputs, &pkg_dir, dir.path(), "matching-key")
                 .is_none(),
             "a matching hash and filename must not hide one poisoned split output",
         );
