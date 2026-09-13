@@ -10,6 +10,9 @@
   system directories during Linux tool installations.
 - Retain only the resolved manager's executable directory for user-managed
   runtimes and reject manager executables resolved from the current project.
+- Run secured manager commands from the Linux filesystem root, isolate
+  `CARGO_HOME`, disable Cargo's Git CLI delegation, and disable pip configuration
+  files to prevent parent/config-based source substitution.
 - Apply manager-specific package grammar so npm GitHub shorthands, local paths,
   Git sources, and other alternate-source specifications cannot cross the
   registry-only tool-install boundary.

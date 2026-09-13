@@ -148,6 +148,8 @@ fn secured_manager_command(
         }
     }
     let mut command = manager_command(&resolved_program, staging_dir);
+    #[cfg(unix)]
+    command.current_dir("/");
 
     let home = staging_dir.join(".manager-home");
     let config = home.join("config");
@@ -191,6 +193,19 @@ fn secured_manager_command(
         .env("TEMP", &temp)
         .env("LC_ALL", "C.UTF-8")
         .env("LANG", "C.UTF-8");
+
+    if manager == "cargo" {
+        command
+            .env("CARGO_HOME", home.join(".cargo"))
+            .env("CARGO_NET_GIT_FETCH_WITH_CLI", "false")
+            .env("CARGO_REGISTRIES_CRATES_IO_PROTOCOL", "sparse");
+    }
+    if manager == "pip" {
+        #[cfg(unix)]
+        command.env("PIP_CONFIG_FILE", "/dev/null");
+        #[cfg(windows)]
+        command.env("PIP_CONFIG_FILE", "NUL");
+    }
 
     // A rustup-installed `cargo` is a proxy and still needs the existing
     // toolchain store. Cargo configuration remains isolated in the staged
@@ -1393,6 +1408,7 @@ mod tests {
         assert!(!variables.contains_key(std::ffi::OsStr::new("AWS_SECRET_ACCESS_KEY")));
         #[cfg(unix)]
         {
+            assert_eq!(command.get_current_dir(), Some(Path::new("/")));
             let path = variables
                 .get(std::ffi::OsStr::new("PATH"))
                 .expect("isolated PATH");

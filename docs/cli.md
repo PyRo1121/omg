@@ -1090,6 +1090,12 @@ installed by OMG, rustup, or another user runtime manager continue to work.
 Other caller `PATH` entries are removed, and a manager executable resolved from
 the current project is rejected.
 
+On Linux, secure manager commands run from `/` with absolute destination paths
+so Cargo and npm cannot discover configuration by walking from the staging tree
+into the user's home. Cargo receives an isolated `CARGO_HOME` and cannot delegate
+Git fetching to a host CLI. pip configuration files are disabled explicitly so
+global `extra-index-url` settings cannot reintroduce dependency confusion.
+
 Some legitimate tools or private registries need a narrower policy. Exceptions
 are comma-separated exact package names and apply only to the current command:
 
