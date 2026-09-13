@@ -176,7 +176,7 @@ pub(crate) fn sudo_as_user_program(user: &str, program: &str) -> Result<std::pro
     );
 
     let program = crate::core::privilege::trusted_program(program)?;
-    let mut command = crate::core::privilege::sudo_command()?;
+    let mut command = crate::core::privilege::system_command("sudo")?;
     command.args(["-H", "-u", user, "--"]).arg(program);
     Ok(command)
 }

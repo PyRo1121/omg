@@ -49,6 +49,7 @@ use super::common::{
 
 // Published at https://www.swift.org/keys/active/. Keep this list explicit so
 // replacing the remotely fetched aggregate keyring cannot silently add trust.
+#[cfg(feature = "pgp")]
 const SWIFT_SIGNING_FINGERPRINTS: &[&str] = &[
     "E813C892820A6FA13755B268F167DF1ACF9CE069", // Automatic signing key #4
     "A62AE125BBBFBB96A6E042EC925CC1CCED3D1561", // Swift 5.x releases

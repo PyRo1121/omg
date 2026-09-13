@@ -3155,7 +3155,7 @@ impl AurClient {
             let home = original_user_home()?;
             let dest_str = dest.to_string_lossy();
 
-            let mut cmd = sudo_as_user_program(&user, "git")?;
+            let mut cmd = Command::from(sudo_as_user_program(&user, "git")?);
 
             if let Some(ref home_path) = home {
                 cmd.env("HOME", home_path);
