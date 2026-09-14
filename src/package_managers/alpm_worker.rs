@@ -1,4 +1,4 @@
-use std::sync::mpsc;
+use std::sync::mpsc as std_mpsc;
 use std::thread;
 
 use anyhow::{Context, Result};
@@ -23,7 +23,16 @@ enum AlpmRequest {
 }
 
 pub struct AlpmWorker {
-    tx: mpsc::Sender<AlpmRequest>,
+    tx: tokio::sync::mpsc::Sender<AlpmRequest>,
+}
+
+const ALPM_REQUEST_QUEUE_CAPACITY: usize = 128;
+
+fn request_channel() -> (
+    tokio::sync::mpsc::Sender<AlpmRequest>,
+    tokio::sync::mpsc::Receiver<AlpmRequest>,
+) {
+    tokio::sync::mpsc::channel(ALPM_REQUEST_QUEUE_CAPACITY)
 }
 
 fn initialize_alpm_worker() -> Result<alpm::Alpm> {
@@ -57,8 +66,8 @@ fn refresh_if_catalog_changed(loaded: &mut LoadedAlpm) -> Result<()> {
 
 impl AlpmWorker {
     pub fn new() -> Result<Self> {
-        let (tx, rx) = mpsc::channel();
-        let (ready_tx, ready_rx) = mpsc::sync_channel(1);
+        let (tx, mut rx) = request_channel();
+        let (ready_tx, ready_rx) = std_mpsc::sync_channel(1);
 
         thread::spawn(move || {
             let mut loaded = match load_alpm_worker() {
@@ -79,7 +88,7 @@ impl AlpmWorker {
                 return;
             }
 
-            while let Ok(req) = rx.recv() {
+            while let Some(req) = rx.blocking_recv() {
                 match req {
                     AlpmRequest::Info(name, reply) => {
                         let res = match refresh_if_catalog_changed(&mut loaded) {
@@ -109,7 +118,10 @@ impl AlpmWorker {
 
     pub async fn get_info(&self, name: String) -> Result<Option<PackageInfo>> {
         let (tx, rx) = oneshot::channel();
-        self.tx.send(AlpmRequest::Info(name, tx))?;
+        self.tx
+            .send(AlpmRequest::Info(name, tx))
+            .await
+            .context("ALPM worker request queue closed")?;
 
         rx.await
             .context("ALPM worker disconnected (it may have failed to initialize)")?
@@ -117,7 +129,10 @@ impl AlpmWorker {
 
     pub async fn list_updates(&self) -> Result<Vec<UpdateInfo>> {
         let (tx, rx) = oneshot::channel();
-        self.tx.send(AlpmRequest::ListUpdates(tx))?;
+        self.tx
+            .send(AlpmRequest::ListUpdates(tx))
+            .await
+            .context("ALPM worker request queue closed")?;
 
         rx.await
             .context("ALPM worker disconnected (it may have failed to initialize)")?
@@ -126,7 +141,26 @@ impl AlpmWorker {
 
 #[cfg(test)]
 mod tests {
-    use super::AlpmWorker;
+    use super::{AlpmRequest, AlpmWorker, request_channel};
+    use tokio::sync::oneshot;
+
+    #[test]
+    fn request_queue_applies_backpressure_at_its_capacity() {
+        let (tx, _rx) = request_channel();
+        for index in 0..128 {
+            let (reply, _response) = oneshot::channel();
+            tx.try_send(AlpmRequest::Info(index.to_string(), reply))
+                .expect("request within the daemon connection cap must fit");
+        }
+        let (reply, _response) = oneshot::channel();
+        assert!(
+            matches!(
+                tx.try_send(AlpmRequest::Info("overflow".to_owned(), reply)),
+                Err(tokio::sync::mpsc::error::TrySendError::Full(_))
+            ),
+            "the worker queue must not grow beyond the daemon connection cap"
+        );
+    }
 
     #[test]
     #[serial_test::serial]

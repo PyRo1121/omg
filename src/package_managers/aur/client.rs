@@ -19,7 +19,6 @@ use sha2::{Digest, Sha256};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 use tracing::{instrument, warn};
-use which::which;
 
 use super::error::AurError;
 use super::parallel_build::BuildJob;
@@ -169,7 +168,8 @@ fn create_scoped_pgp_home(
         .prefix("aur-pgp-")
         .tempdir_in(cache_dir)
         .context("Failed to create package-scoped AUR PGP keyring")?;
-    let exported = std::process::Command::new("gpg")
+    let gpg = crate::core::privilege::trusted_program("gpg")?;
+    let exported = std::process::Command::new(&gpg)
         .arg("--no-options")
         .arg("--batch")
         .arg("--homedir")
@@ -187,7 +187,7 @@ fn create_scoped_pgp_home(
     );
     let key_bundle = build_keyring.path().join("trusted-keys.pgp");
     std::fs::write(&key_bundle, &exported.stdout).context("Failed to stage AUR PGP keys")?;
-    let imported = std::process::Command::new("gpg")
+    let imported = std::process::Command::new(&gpg)
         .arg("--no-options")
         .arg("--batch")
         .arg("--homedir")
@@ -560,8 +560,16 @@ fn native_build_command() -> Result<Command> {
     Ok(command)
 }
 
-fn sandbox_command(home: &Path, user: &str) -> Command {
-    let mut command = Command::new("bwrap");
+fn sandbox_command(home: &Path, user: &str) -> Result<Command> {
+    sandbox_command_with(home, user, crate::core::privilege::trusted_program)
+}
+
+fn sandbox_command_with(
+    home: &Path,
+    user: &str,
+    resolve: impl FnOnce(&str) -> Result<PathBuf>,
+) -> Result<Command> {
+    let mut command = Command::new(resolve("bwrap")?);
     configure_build_environment(&mut command, home, user);
     command.args([
         "--clearenv",
@@ -570,7 +578,7 @@ fn sandbox_command(home: &Path, user: &str) -> Command {
         "--new-session",
         "--die-with-parent",
     ]);
-    command
+    Ok(command)
 }
 
 /// Make `/etc/resolv.conf` usable when it points outside the read-only `/etc`
@@ -3486,7 +3494,7 @@ impl AurClient {
         env: &MakepkgEnv,
         package: &str,
     ) -> Result<std::process::ExitStatus> {
-        let bwrap_available = which("bwrap").is_ok();
+        let bwrap_available = crate::core::privilege::trusted_program("bwrap").is_ok();
 
         if bwrap_available {
             tracing::info!("Using bubblewrap sandbox for secure AUR build");
@@ -3591,7 +3599,7 @@ impl AurClient {
             // Its PID namespace makes cancellation kill compiler descendants
             // too; --die-with-parent alone only kills the direct command.
             // --new-session blocks reuse of tty-scoped sudo credentials.
-            let mut cmd = sandbox_command(&home, &build_user_name);
+            let mut cmd = sandbox_command(&home, &build_user_name)?;
             if self.settings.aur.allow_network {
                 crate::cli::modern_ui::print_warning(
                     "AUR build networking is enabled: untrusted build code can reach host-local and private services.",
@@ -3765,15 +3773,15 @@ impl AurClient {
             self.settings.aur.allow_network,
             "Chroot devtools cannot enforce offline builds; choose bubblewrap or explicitly enable aur.allow_network"
         );
-        let mut cmd = if which("pkgctl").is_ok() {
-            let mut cmd = Command::new("pkgctl");
+        let mut cmd = if let Ok(pkgctl) = crate::core::privilege::trusted_program("pkgctl") {
+            let mut cmd = Command::new(pkgctl);
             cmd.arg("build");
             if self.settings.aur.secure_makepkg {
                 cmd.arg("--clean");
             }
             cmd
-        } else if which("makechrootpkg").is_ok() {
-            let mut cmd = Command::new("makechrootpkg");
+        } else if let Ok(makechrootpkg) = crate::core::privilege::trusted_program("makechrootpkg") {
+            let mut cmd = Command::new(makechrootpkg);
             cmd.args(["-r", "/var/lib/archbuild"]).arg("--");
             cmd
         } else {
@@ -4502,6 +4510,17 @@ fn compiler_job_flags(
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    #[test]
+    fn sandbox_helper_resolves_outside_the_callers_path() {
+        let command = sandbox_command_with(Path::new("/home/builder"), "builder", |program| {
+            assert_eq!(program, "bwrap");
+            Ok(PathBuf::from("/usr/bin/bwrap"))
+        })
+        .expect("trusted bubblewrap installation");
+        assert!(Path::new(command.get_program()).is_absolute());
+    }
+
     #[test]
     fn auto_makeflags_divide_cores_across_concurrent_builds() {
         assert_eq!(compiler_job_flags(None, None, 16, 1), "-j16");
@@ -4958,11 +4977,18 @@ mod tests {
 
     #[test]
     fn sandbox_launcher_uses_bwrap_directly_and_detaches_the_tty() {
-        let command = sandbox_command(Path::new("/home/builder"), "builder");
+        let command = sandbox_command_with(Path::new("/home/builder"), "builder", |_| {
+            Ok(PathBuf::from("/usr/bin/bwrap"))
+        })
+        .unwrap();
         let command = command.as_std();
         let args: Vec<_> = command.get_args().collect();
 
-        assert_eq!(command.get_program(), "bwrap");
+        assert!(Path::new(command.get_program()).is_absolute());
+        assert_eq!(
+            Path::new(command.get_program()).file_name().unwrap(),
+            "bwrap"
+        );
         assert!(args.contains(&"--new-session".as_ref()));
         assert!(args.contains(&"--die-with-parent".as_ref()));
         assert!(args.contains(&"--unshare-pid".as_ref()));
@@ -4985,7 +5011,7 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port().to_string();
         let log_path = client.build_log_path("fixture");
-        let mut command = sandbox_command(directory.path(), "builder");
+        let mut command = sandbox_command(directory.path(), "builder").unwrap();
         // Keep the host /proc mount so the child can report its host PID after
         // PID isolation. Production mounts a fresh /proc instead. Do not bind
         // the whole host root: a read-only /dev makes `cmd &` fail opening

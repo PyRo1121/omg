@@ -273,14 +273,25 @@ fn gnupg_listing_contains_key(listing: &str, key_id: &str) -> bool {
     })
 }
 
-fn gnupg_command(gnupg_home: &Path) -> std::process::Command {
-    let mut command = std::process::Command::new("gpg");
+fn gnupg_command(gnupg_home: &Path) -> Result<std::process::Command, KeyserverError> {
+    gnupg_command_with(gnupg_home, crate::core::privilege::trusted_program)
+}
+
+fn gnupg_command_with(
+    gnupg_home: &Path,
+    resolve: impl FnOnce(&str) -> anyhow::Result<std::path::PathBuf>,
+) -> Result<std::process::Command, KeyserverError> {
+    let program = resolve("gpg").map_err(|source| KeyserverError::GnuPgLaunch {
+        operation: "resolving the trusted GnuPG executable",
+        source: io::Error::new(io::ErrorKind::PermissionDenied, source.to_string()),
+    })?;
+    let mut command = std::process::Command::new(program);
     command
         .arg("--no-options")
         .arg("--batch")
         .arg("--homedir")
         .arg(gnupg_home);
-    command
+    Ok(command)
 }
 
 /// Query GnuPG's native keybox instead of parsing `pubring.kbx` as OpenPGP packets.
@@ -294,7 +305,7 @@ pub fn is_key_in_gnupg(key_id: &str, gnupg_home: &Path) -> Result<bool, Keyserve
         return Ok(false);
     }
 
-    let output = gnupg_command(gnupg_home)
+    let output = gnupg_command(gnupg_home)?
         .arg("--with-colons")
         .arg("--fingerprint")
         .arg("--list-keys")
@@ -313,7 +324,7 @@ pub fn is_key_in_gnupg(key_id: &str, gnupg_home: &Path) -> Result<bool, Keyserve
 
     // A selector miss and a corrupt keybox both return non-zero. Validate the
     // keyring separately so corruption still fails closed.
-    let status = gnupg_command(gnupg_home)
+    let status = gnupg_command(gnupg_home)?
         .arg("--list-keys")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -411,7 +422,7 @@ pub fn import_key_into_gnupg(cert: &Cert, gnupg_home: &Path) -> Result<(), Keyse
             source,
         })?;
 
-    let status = gnupg_command(gnupg_home)
+    let status = gnupg_command(gnupg_home)?
         .arg("--import")
         .arg(certificate.path())
         .stdout(std::process::Stdio::null())
@@ -468,6 +479,17 @@ impl std::fmt::Display for KeyInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn gnupg_helper_resolves_outside_the_callers_path() {
+        let command = gnupg_command_with(Path::new("/tmp/gnupg"), |program| {
+            assert_eq!(program, "gpg");
+            Ok(std::path::PathBuf::from("/usr/bin/gpg"))
+        })
+        .expect("trusted GnuPG installation");
+        assert!(Path::new(command.get_program()).is_absolute());
+    }
 
     fn test_key_handle() -> KeyHandle {
         KeyHandle::from(sequoia_openpgp::KeyID::from(0x0123_4567_89AB_CDEF))
