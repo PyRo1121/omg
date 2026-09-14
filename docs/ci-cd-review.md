@@ -79,8 +79,9 @@ The first hosted test correctly failed when QEMU's daemonization fork collided
 with spawn denial. The corrected launch uses a controller-owned background
 process, retaining spawn denial. Debian run 34904901174 then passed, recording
 the unprivileged process state, a changed guest boot ID after reboot, and verified
-controller removal. All-platform, staged, and transaction evidence must still be
-verified before merge. Container setup remains privileged within its namespace;
+controller removal. Published-release run 34905703515 subsequently passed all four
+guests (Arch, Debian, Fedora and Ubuntu), including the aggregate result. Staged
+build and guest evidence remains required before merge. Container setup remains privileged within its namespace;
 this is a reduction in guest-process privilege, not a claim of perfect isolation.
 
 Existing safeguards retained include pinned images, mandatory KVM without TCG
@@ -91,6 +92,17 @@ resource exhaustion, and reporting failure handling remain part of the ongoing
 review; they are not declared resolved by this patch.
 
 ## Release decisions
+
+### Operator compatibility changes
+
+This patch intentionally tightens the CI/harness contract without changing the
+public OMG CLI or Rust API. Published-mode operators must select an attested release
+from this repository's release workflow; old checksum-only archives are rejected.
+QEMU must support the enforced UID/GID and seccomp state; there is no root or
+unfiltered fallback. Release automation must have successful current push runs for
+all prerequisites listed below. A PR or partial manual run cannot substitute for
+that evidence. These requirements apply when the workflow changes land, independently
+of the crate version; a subsequent product release receives its own version bump.
 
 The prerequisite helper now checks the newest push-triggered run for the exact
 commit. An older green run must not hide a newer failure, cancellation, or skip.
@@ -124,8 +136,13 @@ Full website CI and public browser journeys remain required.
 
 ## Validation record
 
-- PR #415: maintenance and workflow security changes; hosted CI, smoke and
-  workflow analysis passing when last checked. Fuzz campaign still running.
+- PR #415 merged after its checks passed; bounded fuzz run 34904379805 also passed.
+- Published QEMU run 34905703515 passed Arch, Debian, Fedora and Ubuntu.
+- The public rust-cache namespace triggered Gitleaks' generic API-key heuristic.
+  Its exception requires the exact input line AND workflow path and applies only
+  to that rule. Gitleaks 8.30.1 passes the branch history; negative controls confirm
+  a changed token and the same label in another file remain detected.
+  [Gitleaks configuration](https://github.com/gitleaks/gitleaks#configuration)
 - All OMG workflows pass actionlint 1.7.12 syntax/expression validation locally.
 - QEMU preparation: four focused contract/attestation tests pass.
 - Process isolation guard: valid state accepted; missing state, root IDs,
