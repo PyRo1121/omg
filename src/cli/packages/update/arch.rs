@@ -219,6 +219,24 @@ fn history_changes(updates: &[UpdateInfo]) -> Vec<crate::core::history::PackageC
         .collect()
 }
 
+fn enforce_selected_update_scope(
+    aur_only: bool,
+    official_count: usize,
+    updates: &[UpdateInfo],
+) -> Result<()> {
+    if !aur_only {
+        return Ok(());
+    }
+    anyhow::ensure!(
+        official_count == 0
+            && updates
+                .iter()
+                .all(|update| update.repo.eq_ignore_ascii_case("aur")),
+        "AUR-only update scope contained an official package; refusing the transaction"
+    );
+    Ok(())
+}
+
 #[expect(clippy::fn_params_excessive_bools)] // Maps directly to CLI update flags
 pub async fn update(
     check_only: bool,
@@ -343,6 +361,11 @@ pub async fn update(
             allowed.into_iter().map(|(name, _, _)| name).collect()
         }
     };
+
+    // Fail closed at the transaction boundary as well as at discovery. This
+    // prevents a future refactor from feeding an official package into the
+    // install phase merely because it bypassed the earlier scope branches.
+    enforce_selected_update_scope(aur_only, official_count, &all_updates)?;
 
     println!();
 
@@ -622,6 +645,19 @@ mod tests {
         assert!(!should_sync_official_databases(true, false, false, false));
         assert!(!should_sync_official_databases(false, true, false, false));
         assert!(!should_sync_official_databases(false, false, true, false));
+    }
+
+    #[test]
+    fn aur_only_transaction_guard_rejects_official_packages() {
+        let aur = update_info("paru", "AUR");
+        enforce_selected_update_scope(true, 0, std::slice::from_ref(&aur))
+            .expect("AUR-only selection must accept AUR packages");
+
+        let official = update_info("linux", "core");
+        assert!(enforce_selected_update_scope(true, 1, &[aur, official]).is_err());
+        assert!(enforce_selected_update_scope(true, 1, &[]).is_err());
+        enforce_selected_update_scope(false, 1, &[])
+            .expect("full updates may contain official packages");
     }
 
     #[test]
