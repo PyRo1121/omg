@@ -1193,29 +1193,44 @@ const fn update_execution(fast: bool, turbo: bool, no_sync: bool) -> UpdateExecu
     }
 }
 
-#[expect(clippy::fn_params_excessive_bools)] // Maps directly to CLI flags: --check, --yes, --dry-run, --no-sync, --fast, --turbo
-async fn handle_update_command(
+fn validate_update_flags(
     check: bool,
-    yes: bool,
     dry_run: bool,
-    no_sync: bool,
+    aur_only: bool,
     fast: bool,
     turbo: bool,
 ) -> Result<()> {
-    // Fast/turbo re-exec into non-interactive privileged flows that cannot
-    // preview or skip; honoring --check/--dry-run there would be a lie, so
-    // reject the combination instead of silently ignoring it (wave-5 F4).
-    // (--yes is accepted: fast/turbo never prompt, so it is already implied.)
+    if aur_only && (fast || turbo) {
+        anyhow::bail!(
+            "--aur-only cannot be combined with --fast/--turbo: those modes execute system-update paths"
+        );
+    }
     if (fast || turbo) && (check || dry_run) {
         anyhow::bail!(
             "--{} cannot be combined with --fast/--turbo: fast and turbo updates run non-interactively without preview",
             if check { "check" } else { "dry-run" }
         );
     }
+    Ok(())
+}
+
+#[expect(clippy::fn_params_excessive_bools)] // Maps directly to CLI update flags
+async fn handle_update_command(
+    check: bool,
+    yes: bool,
+    dry_run: bool,
+    no_sync: bool,
+    aur_only: bool,
+    fast: bool,
+    turbo: bool,
+) -> Result<()> {
+    // Revalidate Clap conflicts here so internal callers and future dispatch
+    // refactors cannot route a scoped request into a privileged fast path.
+    validate_update_flags(check, dry_run, aur_only, fast, turbo)?;
     match update_execution(fast, turbo, no_sync) {
         UpdateExecution::CachedFast => packages::update_turbo().await,
         UpdateExecution::SyncFast => packages::update_fast().await,
-        UpdateExecution::Standard => packages::update(check, yes, dry_run, no_sync).await,
+        UpdateExecution::Standard => packages::update(check, yes, dry_run, no_sync, aur_only).await,
     }
 }
 
@@ -1383,13 +1398,15 @@ async fn dispatch_command(command: &Commands, ctx: &omg_lib::cli::CliContext) ->
             dry_run,
             review,
             no_sync,
+            aur_only,
             fast,
             turbo,
         } => {
             if *review {
                 omg_lib::config::Settings::enable_cli_review_pkgbuild();
             }
-            handle_update_command(*check, *yes, *dry_run, *no_sync, *fast, *turbo).await?;
+            handle_update_command(*check, *yes, *dry_run, *no_sync, *aur_only, *fast, *turbo)
+                .await?;
         }
         Commands::Info { package } => packages::info_with_json(package, ctx.json).await?,
         Commands::Clean {
@@ -1927,6 +1944,18 @@ mod tests {
         ] {
             assert_eq!(update_execution(fast, turbo, no_sync), expected);
         }
+    }
+
+    #[test]
+    fn update_flag_validation_rejects_aur_only_fast_paths() {
+        for (fast, turbo) in [(true, false), (false, true), (true, true)] {
+            let error = validate_update_flags(false, false, true, fast, turbo)
+                .expect_err("AUR-only must never select a system-update path");
+            assert!(error.to_string().contains("system-update paths"));
+        }
+
+        validate_update_flags(true, false, true, false, false)
+            .expect("AUR-only check mode must remain available");
     }
     use super::*;
 

@@ -316,6 +316,7 @@ mod update_cli_tests {
         // Documented flags must appear in help (src/cli/args.rs Update).
         result.assert_contains("--check");
         result.assert_contains("--dry-run");
+        result.assert_contains("--aur-only");
         result.assert_contains("--fast");
         result.assert_contains("--turbo");
     }
@@ -341,6 +342,23 @@ mod update_cli_tests {
         // Pinned header: src/cli/packages/update/arch.rs update().
         result.assert_contains("Dry run");
         result.assert_reports_update_status();
+    }
+
+    #[test]
+    fn test_update_aur_only_flag() {
+        let result = run_omg(&["update", "--check", "--aur-only"]);
+        result.assert_success();
+        result.assert_contains("AUR only");
+        result.assert_reports_update_status();
+    }
+
+    #[test]
+    fn test_update_aur_only_rejects_fast_paths() {
+        for flag in ["--fast", "--turbo"] {
+            let result = run_omg(&["update", "--aur-only", flag]);
+            result.assert_failure();
+            result.assert_contains("cannot be used with");
+        }
     }
 
     #[test]

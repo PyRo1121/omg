@@ -181,6 +181,7 @@ omg update [OPTIONS] [aliases: u]
 | `--yes` | `-y` | Skip confirmation prompt |
 | `--dry-run` | | Show what would be updated without making changes |
 | `--no-sync` | | Do not refresh sync databases before upgrade |
+| `--aur-only` | | Update AUR packages only; skip official database sync and system upgrade (Arch only) |
 | `--fast` | `-f` | Fast mode: sync + upgrade in a single operation (no preview) |
 | `--turbo` | `-T` | Turbo mode: skip sync, use cached data, parallel extraction |
 | `--review` | | Force PKGBUILD review for each AUR build (on by default; see `aur.review_pkgbuild`) |
@@ -194,6 +195,9 @@ omg update
 # Check for updates only
 omg update --check
 
+# Update AUR packages without touching the official system-update lane
+omg update --aur-only
+
 # Fast path without preview
 omg update --fast
 ```
@@ -204,6 +208,16 @@ omg update --fast
 2. Update official packages first
 3. Build and update AUR packages
 4. Record transaction in history
+
+With `--aur-only`, steps 1 and 2 are omitted. AUR updates still use the normal
+policy screening, source review, sandboxed build, package archive inspection,
+and sealed privileged-install handoff. The flag cannot be combined with
+`--fast` or `--turbo`. PKGBUILD source checksums remain enforced by `makepkg`
+unless a recipe explicitly declares `SKIP`; OMG keeps PKGBUILD review enabled
+so that exception remains visible rather than being described as verified
+content. See the
+[PKGBUILD integrity fields](https://man.archlinux.org/man/PKGBUILD.5.en#cksums_(array))
+and the [AUR security workflow](aur.md).
 
 ---
 
