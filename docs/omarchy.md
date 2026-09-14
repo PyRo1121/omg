@@ -69,17 +69,22 @@ On Linux, managed installer subprocesses use `no_new_privs` to prevent execution
 
 ## How it should fit into Omarchy
 
-The proposed first integration is optional managed developer-tool installation and evaluation of OMG's AUR build/install path. System upgrade ownership stays with Omarchy.
+The proposed first integration is optional managed developer-tool installation and delegation of Omarchy's existing AUR-update step to `omg update --aur-only`. System upgrade ownership stays with Omarchy.
 
 | Area | Proposed responsibility |
 | --- | --- |
-| OS upgrades, mirror/channel selection, migrations, snapshots | Omarchy's existing update workflow. Do not substitute `omg update` or bypass Omarchy's upgrade guard. |
+| OS upgrades, mirror/channel selection, migrations, snapshots | Omarchy's existing update workflow. Do not substitute unrestricted `omg update` or bypass Omarchy's upgrade guard. |
 | Existing mise projects | Reuse supported `[tools]`, `[tasks]`, and `[env]` declarations directly in OMG. Keep mise for unsupported features and choose one active shell runtime selector. |
 | Managed developer CLIs | Evaluate OMG's defaults, exceptions, activation behavior, and removal experience on a defined set of tools. |
+| AUR updates | Omarchy may optionally call `omg update --aur-only` where its updater currently invokes the AUR helper. This mode cannot refresh official databases, query the official update lane, or perform a system upgrade; every selected AUR update retains OMG's normal review, build, archive-inspection, and privileged-install gates. |
 | AUR installation | Evaluate the complete transaction, including dependency installation and compatibility with Omarchy's selected repository channel. |
 | Recovery | Preserve native package tools and Omarchy recovery. OMG tool activation rollback is not a whole-system snapshot. |
 
 These are integration requirements, not a claim that Omarchy-specific compatibility has already been tested. In particular, an Arch backend alone does not establish that every package transaction respects Omarchy's additional update coordination. Omarchy's stable mirror also intentionally trails current Arch packages; AUR dependency availability must be assessed against the selected channel. [Update channels and guards](https://omarchy.org/manual/updates/)
+
+The delegation point is deliberately narrow. Omarchy's update transaction remains responsible for its preflight checks, migrations, official package upgrade, snapshots, restart handling, and recovery. Its documented update sequence already separates the AUR helper from those stages, so an integration should replace only that helper call and preserve its position in the transaction. [Omarchy update process](https://github.com/omacom/omarchy/blob/quattro/docs/update-process.md)
+
+`--aur-only` narrows package selection; it is not a reduced-security mode. AUR recipes still use the same policy and build path as a normal OMG update. Arch's `makepkg` verifies the integrity arrays declared by a PKGBUILD, but a recipe can declare `SKIP`, so checksum presence alone is not publisher authentication. OMG continues to surface and enforce its recipe policy around that boundary. [PKGBUILD integrity fields](https://man.archlinux.org/man/PKGBUILD.5.en#cksums_(array))
 
 ### Existing mise compatibility
 
