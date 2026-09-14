@@ -564,7 +564,7 @@ mod tests {
     }
 
     #[test]
-    fn gnupg_import_round_trips_through_the_native_keybox() {
+    fn gnupg_import_requires_a_trusted_launcher_before_native_keybox_round_trip() {
         if which::which("gpg").is_err() {
             return;
         }
@@ -582,6 +582,24 @@ mod tests {
             .generate()
             .expect("test certificate");
         let fingerprint = certificate.fingerprint().to_hex();
+
+        // A PATH-visible GnuPG installation need not meet the hardened launcher
+        // policy (for example, a user-owned package-manager installation).
+        // Exercise the rejection contract instead of assuming it may execute.
+        if crate::core::privilege::trusted_program("gpg").is_err() {
+            let error = import_key_into_gnupg(&certificate, home.path())
+                .expect_err("an untrusted GnuPG launcher must never import a key");
+            assert!(
+                matches!(
+                    error,
+                    KeyserverError::GnuPgLaunch { ref source, .. }
+                        if source.kind() == io::ErrorKind::PermissionDenied
+                ),
+                "expected a trusted-launcher rejection, got: {error}"
+            );
+            assert!(!home.path().join("pubring.kbx").exists());
+            return;
+        }
 
         import_key_into_gnupg(&certificate, home.path()).expect("GnuPG import");
 
