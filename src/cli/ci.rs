@@ -147,7 +147,13 @@ fn write_config_file(path: &str, config: &str) -> Result<()> {
         Err(error) => return Err(error.into()),
     };
 
-    if !created {
+    if created {
+        println!(
+            "  {} Created {}",
+            style::maybe_color("✓", |t| t.green().to_string()),
+            style::maybe_color(path, |t| t.cyan().to_string())
+        );
+    } else {
         println!(
             "  {} {} already exists - not overwriting",
             style::maybe_color("⚠", |t| t.yellow().to_string()),
@@ -155,12 +161,6 @@ fn write_config_file(path: &str, config: &str) -> Result<()> {
         );
         println!("  Here's what we'd generate:\n");
         println!("{}", style::dim(config));
-    } else {
-        println!(
-            "  {} Created {}",
-            style::maybe_color("✓", |t| t.green().to_string()),
-            style::maybe_color(path, |t| t.cyan().to_string())
-        );
     }
     Ok(())
 }
