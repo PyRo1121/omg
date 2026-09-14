@@ -11,15 +11,22 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ---
 
 ## [Unreleased]
-### Breaking Changes
+### ⚠️  Breaking Changes
 
-- **Mise environments**: Explicit `omg run` and task execution now apply previously ignored local overrides, `MISE_ENV` selections, grouped project configuration, and sorted fragments. These layers participate automatically; no new opt-in flag is required. Ancestor discovery can include a home-directory configuration when the project is below that home directory. Invalid `MISE_ENV` names now fail instead of being ignored. Review existing layers before upgrading; see the [migration steps](mise-compatibility.md#migrating-existing-omg-projects). Automatic shell hooks still do not import project environment directives.
-
+- **Config**: Document mise environment layer migration ⚠️ **BREAKING CHANGE**
 ### ✨ New Features
 
+- **Config**: Support layered mise project environments ([#403](https://github.com/PyRo1121/omg/issues/403)) ⚠️ **BREAKING CHANGE**
+
+feat(config)!: support layered mise project environments
+
+- **Config**: Load layered mise environment configuration
 - **Arch**: Add AUR-only update scope
 ### 🐛 Bug Fixes
 
+- **Config**: Skip absent optional mise directory paths
+- **Config**: Match mise environment precedence and config roots
+- **Config**: Remove superseded mise file parser
 - **Security**: Fail closed at the AUR-only transaction boundary
 
 Revalidate AUR-only conflicts inside the update handler so internal callers and future dispatch refactors cannot route a scoped request into fast or turbo system-update operations.
@@ -404,6 +411,7 @@ Detect AUR artifacts that integrate with privileged system surfaces, rebuild the
 - Harden Package-Manager Privilege Boundaries
 ### 🧪 Testing
 
+- **Config**: Cover mise layers in the main regression suite
 - **Arch**: Pass the explicit full-update scope
 
 Supply aur_only=false to the legacy update-phase assertion after the helper gained an explicit scope parameter. Coverage and the staged Arch build both compile the cfg(test) module and therefore caught this omitted argument before any test execution.
