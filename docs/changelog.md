@@ -11,7 +11,20 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ---
 
 ## [Unreleased]
+### ✨ New Features
+
+- **Arch**: Add AUR-only update scope
 ### 🐛 Bug Fixes
+
+- **Security**: Fail closed at the AUR-only transaction boundary
+
+Revalidate AUR-only conflicts inside the update handler so internal callers and future dispatch refactors cannot route a scoped request into fast or turbo system-update operations.
+
+Assert the final selected transaction contains zero official packages before any update is installed. This second boundary catches future discovery regressions even if an official package reaches the combined update list.
+
+Add regression coverage for handler-level flag confusion, injected official-package rejection, valid AUR-only selection, and unchanged full-update behavior.
+
+Security impact: preserves Omarchy ownership of official upgrades and prevents a confused-deputy path from widening an AUR-only request after CLI parsing.
 
 - **Ci**: Combine identical cached update status branches
 - **Security**: Close remaining Arch trust gaps
@@ -341,6 +354,7 @@ clone it again instead, and cover the config-selected vectors in the test.
 
 ### 📚 Documentation
 
+- **Omarchy**: Define narrow AUR delegation contract
 - **Omarchy**: Substantiate managed-install default comparisons
 - **Omarchy**: Clarify existing mise configuration support
 - **Omarchy**: Explain installation protections and integration proposal
@@ -385,6 +399,16 @@ Detect AUR artifacts that integrate with privileged system surfaces, rebuild the
 
 - Harden Package-Manager Privilege Boundaries
 ### 🧪 Testing
+
+- **Arch**: Pass the explicit full-update scope
+
+Supply aur_only=false to the legacy update-phase assertion after the helper gained an explicit scope parameter. Coverage and the staged Arch build both compile the cfg(test) module and therefore caught this omitted argument before any test execution.
+
+All update_phase_context and should_sync_official_databases call sites were enumerated after the fix, preserving explicit scope at every production and regression-test boundary.
+
+- **Cli**: Cover update --aur-only contract rows
+
+The new flag was missing from the declared-long-flag inventory, which would fail when this stack retargets main.
 
 - **Update**: Enforce cached check-only behavior
 
