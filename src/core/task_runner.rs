@@ -339,53 +339,21 @@ impl TaskDetector {
         Ok(())
     }
 
-    /// Detect tasks declared in `mise.toml`/`.mise.toml` `[tasks.*]`.
-    ///
-    /// Only the portable subset maps to OMG: `run` as a string or array of
-    /// strings, executed sequentially through `sh -c`. Dependency edges
-    /// (`depends`), file-task directories, and templates stay out of scope
-    /// and are ignored rather than mis-executed.
+    /// Discover native tasks using the same bounded project layers as env/pins.
     fn detect_mise_tasks(&self, tasks: &mut Vec<Task>) -> Result<()> {
-        for filename in ["mise.toml", ".mise.toml"] {
-            let path = self.current_dir.join(filename);
-            let Some(content) = read_optional_file(&path)? else {
-                continue;
-            };
-            let document: toml::Value = toml::from_str(&content)
-                .with_context(|| format!("Failed to parse {}", path.display()))?;
-            let Some(declared) = document.get("tasks").and_then(toml::Value::as_table) else {
-                continue;
-            };
-            for (name, spec) in declared {
-                let Some(table) = spec.as_table() else {
-                    continue;
-                };
-                let runs: Vec<String> = match table.get("run") {
-                    Some(toml::Value::String(run)) => vec![run.clone()],
-                    Some(toml::Value::Array(steps)) => steps
-                        .iter()
-                        .filter_map(toml::Value::as_str)
-                        .map(str::to_owned)
-                        .collect(),
-                    _ => Vec::new(),
-                };
-                if runs.is_empty() {
-                    continue;
-                }
-                crate::config::mise_env::parse_mise_env(spec, &self.current_dir)?;
-                let script = runs
-                    .iter()
-                    .map(|run| format!("{{\n{run}\n}}"))
-                    .collect::<Vec<_>>()
-                    .join(" && ");
-                tasks.push(Task {
-                    name: name.clone(),
-                    command: "sh".to_string(),
-                    args: vec!["-c".to_string(), script, name.clone()],
-                    source: filename.to_string(),
-                    ecosystem: Ecosystem::Mise,
-                });
-            }
+        for task in load_native_mise_tasks(&self.current_dir)?.into_values() {
+            tasks.push(Task {
+                name: task.name.clone(),
+                command: "sh".to_string(),
+                args: vec!["-c".to_string(), task.script(), task.name.clone()],
+                source: task
+                    .source
+                    .strip_prefix(&self.current_dir)
+                    .unwrap_or(&task.source)
+                    .display()
+                    .to_string(),
+                ecosystem: Ecosystem::Mise,
+            });
         }
         Ok(())
     }
@@ -623,23 +591,16 @@ pub fn run_task_advanced(
             style::accent(&task.source)
         );
 
-        let task_env = if task.ecosystem == Ecosystem::Mise {
-            let path = current_dir.join(&task.source);
-            let document: toml::Value = toml::from_str(&std::fs::read_to_string(&path)?)?;
-            let spec = document
-                .get("tasks")
-                .and_then(|tasks| tasks.get(&task.name))
-                .context("Selected mise task disappeared before execution")?;
-            Some(crate::config::mise_env::parse_mise_env(spec, &current_dir)?)
+        if task.ecosystem == Ecosystem::Mise {
+            execute_native_mise_task(&current_dir, &task.name, extra_args)?;
         } else {
-            None
-        };
-        execute_process(
-            &task.command,
-            &with_arg_separator(&task.command, task.args, extra_args),
-            extra_args,
-            task_env.as_ref(),
-        )?;
+            execute_process(
+                &task.command,
+                &with_arg_separator(&task.command, task.args, extra_args),
+                extra_args,
+                None,
+            )?;
+        }
     }
 
     Ok(())
@@ -906,20 +867,76 @@ fn apply_resolved_environment(
     Ok(())
 }
 
+fn execute_native_mise_task(directory: &Path, name: &str, extra_args: &[String]) -> Result<()> {
+    // Use one fresh declaration snapshot for both commands and env.
+    // Validate the entire graph before any dependency can execute.
+    let declarations = load_native_mise_tasks(directory)?;
+    let plan = crate::config::mise_tasks::plan(&declarations, name)?;
+    for native in plan {
+        if native.runs.is_empty() {
+            continue;
+        }
+        let args = vec!["-c".to_string(), native.script(), native.name.clone()];
+        let forwarded = if native.name == name { extra_args } else { &[] };
+        execute_process_in(
+            "sh",
+            &args,
+            forwarded,
+            Some(&native.env),
+            directory,
+            &native.directory,
+            &native.root,
+        )
+        .with_context(|| format!("Mise task {:?} failed", native.name))?;
+    }
+    Ok(())
+}
+
+fn load_native_mise_tasks(
+    directory: &Path,
+) -> Result<std::collections::BTreeMap<String, crate::config::mise_tasks::NativeTask>> {
+    let selection = std::env::var("MISE_ENV")
+        .ok()
+        .map(|value| ("MISE_ENV".to_owned(), value))
+        .into_iter()
+        .collect();
+    let documents = crate::config::mise_config::load(directory, &selection)?;
+    crate::config::mise_tasks::parse(&documents)
+}
+
 fn execute_process(
     cmd: &str,
     args: &[String],
     extra_args: &[String],
     task_env: Option<&crate::config::mise_env::MiseEnv>,
 ) -> Result<()> {
-    // Detect required runtime versions and inject them into PATH
-    // This ensures 'npm' uses the correct node version, 'cargo' uses correct rust channel, etc.
-    let current_dir = std::env::current_dir()?;
+    let directory = std::env::current_dir()?;
+    execute_process_in(
+        cmd, args, extra_args, task_env, &directory, &directory, &directory,
+    )
+}
+
+fn execute_process_in(
+    cmd: &str,
+    args: &[String],
+    extra_args: &[String],
+    task_env: Option<&crate::config::mise_env::MiseEnv>,
+    current_dir: &Path,
+    working_dir: &Path,
+    task_root: &Path,
+) -> Result<()> {
+    // Project selection remains tied to the invocation directory. Each task
+    // gets its own cwd and declaring root without changing process-global cwd.
+    anyhow::ensure!(
+        working_dir.is_dir(),
+        "Task directory does not exist: {}",
+        working_dir.display()
+    );
     // Parallel tasks share one terminal and one managed-runtime store. Keep
     // prompts and runtime/corepack installation inside a single setup owner,
     // then release the lock before running the actual task processes.
     let setup_guard = lock_task_setup();
-    if let Some(toolchain_file) = find_rust_toolchain_file(&current_dir) {
+    if let Some(toolchain_file) = find_rust_toolchain_file(current_dir) {
         // Only rustup proxy executables honor rust-toolchain files. A distro
         // rustc/cargo on PATH must not silently bypass the project pin.
         if !rustup_controls_system_rust() {
@@ -942,8 +959,8 @@ fn execute_process(
         // When all system executables are rustup proxies, rustup owns project
         // toolchain switching and OMG must not install a competing toolchain.
     }
-    let mut versions = hooks::detect_versions(&current_dir)?;
-    if let Some((runtime, default_version)) = detect_js_runtime(&current_dir)? {
+    let mut versions = hooks::detect_versions(current_dir)?;
+    if let Some((runtime, default_version)) = detect_js_runtime(current_dir)? {
         versions.entry(runtime).or_insert(default_version);
     }
     ensure_js_package_manager(cmd)?;
@@ -975,6 +992,7 @@ fn execute_process(
         .find(|path| path.exists());
 
     let mut command = Command::new(cmd);
+    command.current_dir(working_dir);
     // SECURITY: cmd is spawned argv-directly (no shell), so metacharacters are
     // inert. Reject only what makes an executable path unusable: emptiness and
     // control characters (including NUL). Package-name rules would wrongly
@@ -1009,7 +1027,7 @@ fn execute_process(
     let base_env = command_environment(&command)?;
     let overlaid = crate::config::mise_env::with_path_overlay(&base_env, &path_additions);
     let mise_env = crate::config::mise_env::load_mise_env_chain(
-        &current_dir,
+        current_dir,
         &overlaid,
         crate::config::mise_env::Strictness::Strict,
     )?;
@@ -1025,7 +1043,7 @@ fn execute_process(
 
     if let Some(parsed) = task_env {
         let effective = command_environment(&command)?;
-        let resolved = crate::config::mise_env::resolve_task_env(parsed, &effective, &current_dir)?;
+        let resolved = crate::config::mise_env::resolve_task_env(parsed, &effective, task_root)?;
         apply_resolved_environment(&mut command, &resolved)?;
     }
 
@@ -1900,6 +1918,63 @@ mod wave3_tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+
+    #[cfg(unix)]
+    #[test]
+    fn mise_native_plan_executes_once_with_isolated_env_cwd_and_arguments() {
+        let root = TempDir::new().unwrap();
+        let child = root.path().join("child");
+        fs::create_dir(&child).unwrap();
+        fs::write(
+            root.path().join("mise.toml"),
+            r#"
+[tasks.setup]
+run = "printf 'setup:%s\\n' \"${OMG_TASK_SCOPE-unset}\" >> trace"
+[tasks.left]
+depends = ["setup"]
+run = "printf 'left\\n' >> trace"
+[tasks.right]
+depends = ["setup"]
+run = "printf 'right\\n' >> trace"
+[tasks.build]
+depends = ["left", "right"]
+dir = "child"
+env.OMG_TASK_SCOPE = "root-only"
+env.OMG_TASK_ROOT = "{{config_root}}"
+run = "printf '%s|%s|%s' \"$OMG_TASK_SCOPE\" \"$1\" \"$OMG_TASK_ROOT\" > result"
+"#,
+        )
+        .unwrap();
+        let before = std::env::current_dir().unwrap();
+        execute_native_mise_task(&child, "build", &["literal $HOME; argument".into()]).unwrap();
+        assert_eq!(
+            fs::read_to_string(root.path().join("trace")).unwrap(),
+            "setup:unset\nleft\nright\n"
+        );
+        assert_eq!(
+            fs::read_to_string(child.join("result")).unwrap(),
+            format!(
+                "root-only|literal $HOME; argument|{}",
+                root.path().display()
+            )
+        );
+        assert_eq!(std::env::current_dir().unwrap(), before);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn mise_native_failure_stops_dependents_and_invalid_graph_has_no_side_effects() {
+        let root = TempDir::new().unwrap();
+        for dependency in ["missing", "build"] {
+            fs::write(root.path().join("mise.toml"), format!("[tasks.setup]\nrun='touch marker'\n[tasks.build]\ndepends=['setup','{dependency}']\nrun='touch result'\n")).unwrap();
+            assert!(execute_native_mise_task(root.path(), "build", &[]).is_err());
+            assert!(!root.path().join("marker").exists());
+        }
+        fs::write(root.path().join("mise.toml"), "[tasks.setup]\nrun=['false','touch marker']\n[tasks.build]\ndepends=['setup']\nrun='touch result'\n").unwrap();
+        assert!(execute_native_mise_task(root.path(), "build", &[]).is_err());
+        assert!(!root.path().join("marker").exists());
+        assert!(!root.path().join("result").exists());
+    }
 
     #[test]
     fn makefile_parser_extracts_only_rule_targets() {
