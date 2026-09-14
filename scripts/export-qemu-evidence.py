@@ -27,6 +27,7 @@ HOST_FILES = {
     "benchmark-driver-sha256.txt", "cases.tsv", "controller-id.txt", "release-checksum.txt",
 }
 GUEST_FILES = {
+    "qemu-startup.log",
     "exit-code", "audit-directory-after.txt", "audit-directory-metadata.txt",
     "index-update.txt", "search.txt", "omg-info.txt", "native-info.txt",
     "local-package.sha256", "local-consent.txt", "system-audit-verify.txt",
