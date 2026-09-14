@@ -21,6 +21,13 @@ def step_script(block, name):
 
 
 class ReleaseWorkflowBoundaryTests(unittest.TestCase):
+    def test_release_requires_all_security_and_guest_prerequisites(self):
+        release = (WORKFLOWS / 'release.yml').read_text(encoding='utf-8')
+        gate = job_block(release, 'gate-on-ci')
+        for workflow in ('ci.yml', 'benchmark.yml', 'audit.yml', 'secrets.yml',
+                         'codeql.yml', 'coverage.yml', 'docker-e2e.yml', 'qemu-matrix.yml'):
+            self.assertIn(f'scripts/require-workflow-success.sh {workflow} "$GITHUB_SHA"', gate)
+
     def test_fixture_and_single_tag_gate_all_smoke_jobs(self):
         text = (WORKFLOWS / 'release-smoke.yml').read_text()
         for job in ('smoke', 'smoke-macos'):

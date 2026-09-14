@@ -3,7 +3,7 @@
 # Boots disposable KVM guests per distro and runs the package-lifecycle
 # guest check via scripts/benchmark-qemu.sh.
 # - schedule/dispatch default: published release guests, x86_64 (no build).
-# - pull_request: x86_64 per-distro builds packaged exactly like the release
+# - pull_request/main push: x86_64 per-distro builds packaged like the release
 #   recipe and tested via --staged-dir. ARM is excluded because its configurable
 #   runner must never execute untrusted pull-request code.
 # - aarch64 legs are staged workflow-dispatch only; guest runners use OMG_QEMU_ARM_RUNNER
@@ -20,6 +20,19 @@
 name: QEMU Matrix
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "build.rs"
+      - "rust-toolchain.toml"
+      - ".cargo/**"
+      - "benchmark-hyperfine.sh"
+      - "scripts/**"
+      - ".github/workflows/qemu-matrix.yml"
   pull_request:
     branches: [main]
     paths:
@@ -35,6 +48,7 @@ on:
       - "scripts/benchmark-qemu.sh"
       - "scripts/prepare-qemu-release.py"
       - "scripts/test_prepare_qemu_release.py"
+      - "scripts/test_qemu_process_isolation.py"
       - "scripts/qemu-transactions.sh"
       - "scripts/qemu-inventory.sh"
       - "scripts/test-release-smoke.sh"
@@ -165,7 +179,7 @@ jobs:
           REQUESTED_RELEASE_TAG: ${{ inputs.tag }}
           REQUESTED_DISTRO: ${{ inputs.distro || 'all' }}
           REQUESTED_ARCH: ${{ inputs.arch || 'all' }}
-          STAGED: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.staged) }}
+          STAGED: ${{ github.event_name == 'pull_request' || github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.staged) }}
           EVENT_NAME: ${{ github.event_name }}
           GH_TOKEN: ${{ github.event_name != 'pull_request' && secrets.GITHUB_TOKEN || '' }}
         run: |
@@ -180,7 +194,7 @@ jobs:
           x64=true
           arm64=false
           [[ "$REQUESTED_ARCH" != arm64 ]] || x64=false
-          if [[ "$STAGED" == true && "$EVENT_NAME" != pull_request && "$REQUESTED_ARCH" != x64 && "$REQUESTED_DISTRO" != arch ]]; then arm64=true; fi
+          if [[ "$STAGED" == true && "$EVENT_NAME" == workflow_dispatch && "$REQUESTED_ARCH" != x64 && "$REQUESTED_DISTRO" != arch ]]; then arm64=true; fi
           if [[ "$REQUESTED_DISTRO" == all ]]; then
             distros='["arch","debian","ubuntu","fedora"]'
             arm_distros='["debian","ubuntu","fedora"]'
