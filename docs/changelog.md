@@ -29,6 +29,13 @@ feat(config)!: support layered mise project environments
 - **Arch**: Add AUR-only update scope
 ### 🐛 Bug Fixes
 
+- **Test**: Exercise CI path protections with valid relative fixtures
+- **Security**: Satisfy hardened CI writer lint
+- **Security**: Refuse redirected container config writes
+- **Security**: Reject symlinked CI config parents
+- **Security**: Refuse redirected CI config writes
+- **Security**: Fail closed on daemon path resolution
+- **Security**: Isolate changelog write credentials
 - **Ci**: Isolate smoke credentials and repair maintenance checks
 - **Ci**: Align QEMU release contracts and isolate workflow credentials
 - **Config**: Skip absent optional mise directory paths
