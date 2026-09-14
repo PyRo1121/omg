@@ -52,7 +52,7 @@ impl ArtifactInspection {
     }
 
     pub(crate) fn requires_paired_build(&self) -> bool {
-        !self.paired_build_reasons.is_empty()
+        self.requires_exception() || !self.paired_build_reasons.is_empty()
     }
 
     pub(crate) fn audit_summary(&self) -> String {
