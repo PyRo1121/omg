@@ -13,13 +13,15 @@ There are two different completion targets: running existing mise projects throu
 
 ## Configuration-layer increment
 
-The environment resolver now reads project-local overrides, comma-separated `MISE_ENV` selections, selected-environment local overrides, grouped project configurations, and sorted `conf.d` fragments. Child project configurations override parent configurations. Each document retains its project root for relative directives, and configuration discovery uses bounded regular-file reads without executing project code.
+The environment resolver now reads project-local overrides, comma-separated `MISE_ENV` selections, selected-environment local overrides, grouped project configurations, and sorted `conf.d` fragments. Child project configurations override parent configurations. Each document retains its declaring configuration root for relative directives, and configuration discovery uses bounded regular-file reads without executing project code.
 
-The portable harness compiles the production modules directly: `cargo test --manifest-path tests/mise-compat/Cargo.toml`. Its 25 tests passed on Windows on September 14, 2026. The compatibility cases also run in the normal crate test suite. Hosted Linux and QEMU validation is tracked by the implementation PR; the Windows result alone is not Linux execution evidence.
+The portable harness compiles the production modules directly: `cargo test --manifest-path tests/mise-compat/Cargo.toml`. Its 28 tests passed on Windows on September 14, 2026. The compatibility cases also run in the normal crate test suite. Hosted Linux and QEMU validation is tracked by the implementation PR; the Windows result alone is not Linux execution evidence.
 
 This increment applies to environment resolution. Runtime pin selection and task discovery do not yet consume the shared loader. Global/system configuration, complete upstream template semantics, and backend/plugin parity remain outstanding. No full mise compatibility percentage is claimed.
 
 ## Migrating existing OMG projects
+
+Within each directory, ordinary configuration and local overrides load first. Each `MISE_ENV` selection then loads its ordinary files followed by its local files, before the next selection. This follows the pinned upstream [`LOCAL_CONFIG_FILENAMES` and `DEFAULT_CONFIG_FILENAMES` ordering](https://github.com/jdx/mise/blob/0db3fbe9efcee1944bc4990434c1a5ebcb480fca/src/config/mod.rs). Grouped `config*.toml` files use the project root for relative directives; the legacy `.config/mise/mise.toml` and `.config/mise/mise.local.toml` aliases use their containing directory, matching upstream [`config_root`](https://github.com/jdx/mise/blob/0db3fbe9efcee1944bc4990434c1a5ebcb480fca/src/config/config_file/config_root.rs).
 
 Applying previously ignored environment layers is an intentional behavior change for explicit `omg run` and task execution. Existing local files or a pre-existing `MISE_ENV` selection can change assignments, PATH additions, required-value validation, and explicitly sourced scripts after upgrading. This support does not require a new opt-in flag.
 

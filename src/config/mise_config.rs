@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone)]
 pub(crate) struct Document {
     pub path: PathBuf,
-    /// Project root, including for grouped `.config/mise/config.toml` files.
+    /// Declaring configuration root, preserving mise's grouped-file semantics.
     pub root: PathBuf,
     pub value: toml::Value,
 }
@@ -49,10 +49,20 @@ fn add_document(
     anyhow::ensure!(documents.len() < 256, "Too many mise configuration files");
     let value: toml::Value = toml::from_str(&text)
         .with_context(|| format!("Failed to parse mise configuration {}", path.display()))?;
+    // mise's legacy `.config/mise/mise*.toml` aliases resolve relative
+    // directives beside the file; grouped `config*.toml` uses the project root.
+    let config_root = if [".config/mise/mise.toml", ".config/mise/mise.local.toml"]
+        .iter()
+        .any(|name| path == root.join(name))
+    {
+        root.join(".config/mise")
+    } else {
+        root.to_owned()
+    };
     seen.insert(path.clone());
     documents.push(Document {
         path,
-        root: root.to_owned(),
+        root: config_root,
         value,
     });
     Ok(())
@@ -140,16 +150,6 @@ pub(crate) fn load(start: &Path, env: &HashMap<String, String>) -> Result<Vec<Do
             ".mise/config",
             ".mise",
         ];
-        for selected_env in &selected {
-            for stem in stems {
-                add_document(
-                    &mut documents,
-                    &mut seen,
-                    root.join(format!("{stem}.{selected_env}.toml")),
-                    root,
-                )?;
-            }
-        }
         for name in [
             ".config/mise/config.local.toml",
             ".config/mise/mise.local.toml",
@@ -161,7 +161,17 @@ pub(crate) fn load(start: &Path, env: &HashMap<String, String>) -> Result<Vec<Do
         ] {
             add_document(&mut documents, &mut seen, root.join(name), root)?;
         }
+        // Upstream appends each selected environment, including its local
+        // overrides, after the entire ordinary/local configuration list.
         for selected_env in &selected {
+            for stem in stems {
+                add_document(
+                    &mut documents,
+                    &mut seen,
+                    root.join(format!("{stem}.{selected_env}.toml")),
+                    root,
+                )?;
+            }
             for stem in stems {
                 add_document(
                     &mut documents,
@@ -180,6 +190,30 @@ mod compatibility {
     use super::super::mise_env::{Strictness, load_mise_env_chain};
     use std::collections::HashMap;
     use std::fs;
+
+    #[test]
+    fn selected_environment_overrides_generic_local_configuration() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("mise.local.toml"), "[env]\nMODE='local'\n").unwrap();
+        fs::write(root.path().join("mise.test.toml"), "[env]\nMODE='test'\n").unwrap();
+        let base = HashMap::from([("MISE_ENV".into(), "test".into())]);
+        let env = load_mise_env_chain(root.path(), &base, Strictness::Strict).unwrap();
+        assert!(env.set.contains(&("MODE".into(), "test".into())));
+    }
+
+    #[test]
+    fn later_selected_environment_overrides_earlier_environment_local() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(
+            root.path().join("mise.test.local.toml"),
+            "[env]\nMODE='test-local'\n",
+        )
+        .unwrap();
+        fs::write(root.path().join("mise.prod.toml"), "[env]\nMODE='prod'\n").unwrap();
+        let base = HashMap::from([("MISE_ENV".into(), "test,prod".into())]);
+        let env = load_mise_env_chain(root.path(), &base, Strictness::Strict).unwrap();
+        assert!(env.set.contains(&("MODE".into(), "prod".into())));
+    }
 
     #[test]
     fn selected_environments_reject_paths_and_keep_last_duplicate() {
@@ -209,6 +243,22 @@ mod compatibility {
             env.set
                 .contains(&("ROOT".into(), root.path().display().to_string()))
         );
+    }
+
+    #[test]
+    fn legacy_grouped_mise_aliases_retain_their_file_directory() {
+        for filename in ["mise.toml", "mise.local.toml"] {
+            let root = tempfile::tempdir().unwrap();
+            let directory = root.path().join(".config/mise");
+            fs::create_dir_all(&directory).unwrap();
+            fs::write(directory.join(filename), "[env]\nROOT='{{config_root}}'\n").unwrap();
+            let env =
+                load_mise_env_chain(root.path(), &HashMap::new(), Strictness::Strict).unwrap();
+            assert!(
+                env.set
+                    .contains(&("ROOT".into(), directory.display().to_string()))
+            );
+        }
     }
 
     #[test]
