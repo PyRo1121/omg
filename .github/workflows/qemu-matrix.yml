@@ -33,6 +33,8 @@ on:
       - "benchmark-hyperfine.sh"
       - "scripts/record-benchmark-run.py"
       - "scripts/benchmark-qemu.sh"
+      - "scripts/prepare-qemu-release.py"
+      - "scripts/test_prepare_qemu_release.py"
       - "scripts/qemu-transactions.sh"
       - "scripts/qemu-inventory.sh"
       - "scripts/test-release-smoke.sh"
@@ -80,7 +82,6 @@ permissions:
   contents: read
 
 env:
-  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
 
@@ -109,7 +110,10 @@ jobs:
           persist-credentials: false
           ref: ${{ github.sha }}
       - name: Workflow selection regression checks
-        run: python3 -m unittest discover -s tests -p test_qemu_workflow.py
+        run: |
+          python3 -m unittest discover -s tests -p test_qemu_workflow.py
+          python3 -m unittest discover -s tests -p test_qemu_verdict.py
+          python3 -m unittest discover -s scripts -p test_prepare_qemu_release.py
 
       - name: Verify harness and reporting fixtures before guest builds
         run: |
@@ -162,6 +166,7 @@ jobs:
           REQUESTED_ARCH: ${{ inputs.arch || 'all' }}
           STAGED: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.staged) }}
           EVENT_NAME: ${{ github.event_name }}
+          GH_TOKEN: ${{ github.event_name != 'pull_request' && secrets.GITHUB_TOKEN || '' }}
         run: |
           if [[ "$STAGED" == true && -n "$REQUESTED_RELEASE_TAG" ]]; then
             echo "::error::staged builds use the workflow revision; tag is only for published releases"
@@ -525,16 +530,27 @@ jobs:
             '{harness_revision:$revision,artifact_tag:$tag,staged:($staged == "true"),distro:$distro,arch:$arch}' \
             > "$RUNNER_TEMP/qemu-evidence/provenance.json"
 
+      - name: Prepare published release
+        if: needs.prepare.outputs.staged != 'true'
+        env:
+          GH_TOKEN: ${{ github.event_name != 'pull_request' && secrets.GITHUB_TOKEN || '' }}
+          ARTIFACT_TAG: ${{ needs.prepare.outputs.tag }}
+          DISTRO: ${{ matrix.distro }}
+        run: |
+          python3 scripts/prepare-qemu-release.py --tag "$ARTIFACT_TAG" --distro "$DISTRO" --destination published
+          jq -s '.[0] + .[1]' "$RUNNER_TEMP/qemu-evidence/provenance.json" published/inventory-provenance.json > "$RUNNER_TEMP/qemu-evidence/provenance.next.json"
+          mv "$RUNNER_TEMP/qemu-evidence/provenance.next.json" "$RUNNER_TEMP/qemu-evidence/provenance.json"
+
       - name: Configure Sentry reporting
+        if: github.event_name != 'pull_request'
         env:
           OMG_SMOKE_SENTRY_DSN: ${{ secrets.OMG_SMOKE_SENTRY_DSN }}
         run: python3 scripts/ci-smoke-report.py configure
 
       - name: Open KVM device permissions
-        # Runners expose /dev/kvm root-owned; the job user needs rw for
-        # docker --device passthrough. Best-effort: the next step gates.
+        # Grant only this runner user access; the next step verifies it.
         run: |
-          sudo chmod 666 /dev/kvm || true
+          sudo setfacl -m "u:$(id -u):rw" /dev/kvm
 
       - name: Fail fast without KVM
         run: |
@@ -572,7 +588,7 @@ jobs:
           else
             # No nested-container: guests have no docker-in-guest (yet).
             # Declared-ux rows (self-update-*, daemon-foreground) self-skip.
-            args+=(--inventory-tiers "hermetic,qemu,container,network,pty" --inventory-allow-mutations)
+            args+=(--release-dir published --inventory-file published/cases.tsv --inventory-tiers "hermetic,qemu,container,network,pty" --inventory-allow-mutations)
           fi
           ./scripts/benchmark-qemu.sh "${args[@]}"
 
@@ -646,6 +662,7 @@ jobs:
             > "$RUNNER_TEMP/qemu-evidence/provenance.json"
 
       - name: Configure Sentry reporting
+        if: github.event_name != 'pull_request'
         env:
           OMG_SMOKE_SENTRY_DSN: ${{ secrets.OMG_SMOKE_SENTRY_DSN }}
         run: python3 scripts/ci-smoke-report.py configure
@@ -729,6 +746,7 @@ jobs:
           merge-multiple: false
 
       - name: File or update failure issues
+        if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -753,6 +771,7 @@ jobs:
           ref: ${{ github.sha }}
 
       - name: Configure workflow Sentry reporting
+        if: github.event_name != 'pull_request'
         env:
           OMG_SMOKE_SENTRY_DSN: ${{ secrets.OMG_SMOKE_SENTRY_DSN }}
         run: python3 scripts/ci-smoke-report.py configure

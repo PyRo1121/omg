@@ -457,7 +457,8 @@ done
 export FAKE_INVENTORY_RESULT=PASS FAKE_INVENTORY_SHAPE=mixed
 export OMG_SMOKE_SENTRY_CONFIG="$scratch/sentry-config.json" FAKE_SENTRY_ENVELOPE="$scratch/qemu-envelope.txt"
 assert_rc 1 "$qemu_runner" --distro arch --release v9.9.9 --staged-dir "$scratch/valid" --inventory-tiers hermetic --evidence-dir "$scratch/qemu-row-telemetry"
-jq -se '.[2].extra.failures | length == 2 and any(.[]; .result == "FAIL") and any(.[]; .result == "PRODUCT_FAIL")' "$FAKE_SENTRY_ENVELOPE" >/dev/null || fail 'QEMU row failure not delivered with lifecycle failure'
+jq -se '.[2].extra.failures | length == 1 and .[0].result == "FAIL"' "$FAKE_SENTRY_ENVELOPE" >/dev/null || fail 'QEMU row failure duplicated as a lifecycle failure'
+jq -e '.[0].result == "PASS" and .[0].exit_code == 0' "$(results_file "$scratch/qemu-row-telemetry")" >/dev/null || fail 'inventory failure overwrote passing lifecycle evidence'
 if grep -q 'fixture-private-token' "$FAKE_SENTRY_ENVELOPE"; then fail 'QEMU telemetry included private fields'; fi
 unset FAKE_INVENTORY_RESULT FAKE_INVENTORY_EXIT FAKE_INVENTORY_SHAPE OMG_SMOKE_SENTRY_CONFIG FAKE_SENTRY_ENVELOPE
 export FAKE_QEMU_GUEST_EXIT=1

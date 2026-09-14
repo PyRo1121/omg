@@ -4,6 +4,8 @@ set -euo pipefail
 distro=all
 tag=v0.1.218
 staged_dir=
+release_dir=
+inventory_file=
 arch=
 print_pins=false
 benchmark=false
@@ -11,14 +13,16 @@ transaction_samples=0
 inventory_tiers=
 inventory_mutations=false
 report_inventory='[]'
+inventory_product_failure=false
 root="$HOME/.cache/build-targets/omg-qemu-benchmark"
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 while (($#)); do
   case "$1" in
-    --distro|--release|--staged-dir|--evidence-dir|--inventory-tiers|--arch)
+    --distro|--release|--staged-dir|--release-dir|--inventory-file|--evidence-dir|--inventory-tiers|--arch)
       [[ $# -ge 2 && -n "$2" ]] || exit 2
       case "$1" in
         --distro) distro=$2 ;; --release) tag=$2 ;; --staged-dir) staged_dir=$2 ;; --evidence-dir) root=$2 ;;
+        --release-dir) release_dir=$2 ;; --inventory-file) inventory_file=$2 ;;
         --inventory-tiers) inventory_tiers=$2 ;; --arch) arch=$2 ;;
       esac
       shift 2 ;;
@@ -28,7 +32,32 @@ while (($#)); do
       benchmark=true; transaction_samples=$2; shift 2 ;;
     --print-pins) print_pins=true; shift ;;
     --inventory-allow-mutations) inventory_mutations=true; shift ;;
-    --help) printf 'Usage: scripts/benchmark-qemu.sh [--distro all|arch|debian|ubuntu|fedora] [--arch x86_64|aarch64] [--release vVERSION] [--staged-dir DIR] [--evidence-dir DIR] [--benchmark] [--benchmark-transactions COUNT] [--print-pins] [--inventory-tiers CSV] [--inventory-allow-mutations]\nRuns sequential disposable KVM guests with pinned images, reboot, sudo, package lifecycle and optional warm read-query timing. Guests run the host architecture by default (--arch overrides, but KVM cannot cross architectures, so a mismatch fails closed instead of silently emulating). With --inventory-tiers, drives tests/cli_behavior_inventory.tsv rows over SSH after a passing lifecycle (see scripts/qemu-inventory.sh). --benchmark-transactions COUNT additionally runs independently reset install/remove trials (1-100 per tool). --print-pins lists the pinned guest images without booting anything. Requires Docker, KVM, jq, coreutils; published downloads need gh and benchmarks need Python 3. No compilation or host package changes.\n'; exit 0 ;;
+    --help)
+      cat <<'HELP'
+Usage: scripts/benchmark-qemu.sh [--distro all|arch|debian|ubuntu|fedora]
+  [--arch x86_64|aarch64] [--release vVERSION]
+  [--staged-dir DIR | --release-dir DIR] [--inventory-file TSV]
+  [--evidence-dir DIR] [--benchmark] [--benchmark-transactions COUNT]
+  [--print-pins] [--inventory-tiers CSV] [--inventory-allow-mutations]
+
+Runs disposable KVM guests with pinned images, reboot, sudo, package lifecycle,
+and optional warm read-query timing. Host and guest architecture must match;
+there is no TCG fallback. --print-pins lists images without booting guests.
+
+--staged-dir uses locally built archives and the current source inventory.
+--release-dir uses downloaded published archives without a GitHub token in the
+harness. Published --inventory-tiers requires --inventory-file from the release
+revision. Prepare both with scripts/prepare-qemu-release.py:
+  python3 scripts/prepare-qemu-release.py --tag vVERSION --distro arch --destination published
+  scripts/benchmark-qemu.sh --distro arch --release vVERSION --release-dir published --inventory-file published/cases.tsv --inventory-tiers hermetic,container
+
+Inventory rows run over SSH after a passing lifecycle (scripts/qemu-inventory.sh).
+--benchmark-transactions COUNT runs independently reset install/remove trials
+(1-100 per tool). Requires Docker, KVM, jq, and coreutils. Direct published
+downloads need gh; release preparation and benchmarks need Python 3.
+No compilation or host package changes.
+HELP
+      exit 0 ;;
     *) printf 'error: unknown argument %s\n' "$1" >&2; exit 2 ;;
   esac
 done
@@ -43,7 +72,12 @@ if [[ -z "$arch" ]]; then
 fi
 case "$arch" in x86_64|amd64) arch=x86_64 ;; aarch64|arm64) arch=aarch64 ;; *) exit 2 ;; esac
 [[ -z "$staged_dir" || -d "$staged_dir" ]] || exit 2
-tsv="$here/../tests/cli_behavior_inventory.tsv"
+[[ -z "$release_dir" || ( -d "$release_dir" && -z "$staged_dir" ) ]] || exit 2
+tsv="${inventory_file:-$here/../tests/cli_behavior_inventory.tsv}"
+if [[ -n "$inventory_tiers" && -z "$staged_dir" && -z "$inventory_file" ]]; then
+  printf 'error: published inventory needs --inventory-file from the release revision (scripts/prepare-qemu-release.py)\n' >&2
+  exit 2
+fi
 if [[ -n "$inventory_tiers" && ! -f "$tsv" ]]; then
   printf 'error: --inventory-tiers needs %s\n' "$tsv" >&2
   exit 2
@@ -154,6 +188,8 @@ if [[ "$distro" == all ]]; then
   rc=0
   args=(--release "$tag" --arch "$arch")
   [[ -z "$staged_dir" ]] || args+=(--staged-dir "$staged_dir")
+  [[ -z "$release_dir" ]] || args+=(--release-dir "$release_dir")
+  [[ -z "$inventory_file" ]] || args+=(--inventory-file "$inventory_file")
   [[ "$benchmark" == false ]] || args+=(--benchmark)
   [[ "$transaction_samples" == 0 ]] || args+=(--benchmark-transactions "$transaction_samples")
   [[ -z "$inventory_tiers" ]] || args+=(--inventory-tiers "$inventory_tiers")
@@ -179,7 +215,7 @@ controller="omg-qemu-${work##*/}"
 printf 'Starting %s (%s). Evidence: %s\n' "$distro" "$arch" "$work"
 result=HARNESS_ERROR
 cleanup() {
-  local rc=$? remaining safe_to_remove=true
+  local rc=$? remaining safe_to_remove=true report_rc
   trap - EXIT
   if [[ ${started:-false} == true ]]; then
     safe_to_remove=false
@@ -200,8 +236,12 @@ cleanup() {
   else
     printf 'Controller absence unverified; preserving guest disks and keys\n' >> "$work/cleanup.log"
   fi
-  if [[ "$rc" -ne 0 && "$result" == PASS ]]; then result=HARNESS_ERROR; fi
-  jq -n --arg distro "$distro" --arg case_id "$case_id" --arg result "$result" --arg source "$source_kind" --argjson rc "$rc" --argjson elapsed "$SECONDS" \
+  if [[ "$rc" -ne 0 && "$result" == PASS && ! ( "$inventory_product_failure" == true && "$rc" == 1 ) ]]; then result=HARNESS_ERROR; fi
+  # The process represents the whole suite; this row represents the lifecycle.
+  # Inventory failures have their own rows and must not manufacture a second bug.
+  report_rc=$rc
+  [[ "$result" != PASS ]] || report_rc=0
+  jq -n --arg distro "$distro" --arg case_id "$case_id" --arg result "$result" --arg source "$source_kind" --argjson rc "$report_rc" --argjson elapsed "$SECONDS" \
     '[{case_id:$case_id,distro:$distro,result:$result,artifact_source:$source,exit_code:$rc,elapsed_seconds:$elapsed}]' > "$work/results.json"
   report_input="$work/results.json"
   if jq --argjson inventory "$report_inventory" '. + $inventory' "$work/results.json" > "$work/sentry-results.json"; then
@@ -256,12 +296,14 @@ if [[ "$arch" == aarch64 && -z "$staged_dir" ]]; then
 fi
 for tool in docker timeout sha256sum; do command -v "$tool" >/dev/null || exit 3; done
 [[ "$benchmark" == false ]] || { command -v python3 >/dev/null || exit 3; }
-[[ -n "$staged_dir" ]] || { command -v gh >/dev/null || exit 3; }
+[[ -n "$staged_dir" || -n "$release_dir" ]] || { command -v gh >/dev/null || exit 3; }
 timeout --kill-after=2s 15s docker version --format '{{.Server.Version}}' > "$work/engine-preflight.log" 2>&1 || exit 3
 { date -u; uname -a; cat /proc/loadavg; grep -E 'MemTotal|MemAvailable|SwapFree' /proc/meminfo; } > "$work/host-metadata.txt"
 archive="omg-${tag}-${arch}-linux-${distro}.tar.gz"
 if [[ -n "$staged_dir" ]]; then
   cp "$staged_dir/$archive" "$staged_dir/$archive.sha256" "$work/release/"
+elif [[ -n "$release_dir" ]]; then
+  cp "$release_dir/$archive" "$release_dir/$archive.sha256" "$work/release/"
 else
   timeout 120 gh release download "$tag" --repo PyRo1121/omg --pattern "$archive" --pattern "$archive.sha256" --dir "$work/release"
 fi
@@ -648,7 +690,7 @@ if [[ -n "$inventory_tiers" && "$rc" == 0 ]]; then
   else
     report_inventory=$(jq -c 'map({case_id,distro,result,exit_code,elapsed_seconds})' <<< "$inventory_snapshot")
     if jq -e 'any(.[]; .result == "FAIL")' <<< "$inventory_snapshot" >/dev/null; then
-      rc=1
+      inventory_product_failure=true
     elif [[ "$inventory_rc" != 0 ]] ||
       ! jq -e '.complete == true' "$work/inventory/summary.json" >/dev/null 2>&1 ||
       ! jq -e --argjson expected "$expected_ids" '
@@ -676,4 +718,5 @@ fi
 # pipeline's own fixture marker; 125/126/127/255 are exec/transport.
 case "$rc" in 0) result=PASS ;; 120|125|126|127|255) result=HARNESS_ERROR ;; *) result=PRODUCT_FAIL ;; esac
 [[ "$inventory_harness_error" == false ]] || result=HARNESS_ERROR
+[[ "$inventory_product_failure" == false ]] || rc=1
 exit "$rc"

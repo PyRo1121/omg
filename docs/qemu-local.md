@@ -81,6 +81,11 @@ identifies the coordinator, not a failed guest; the accompanying context file
 contains job outcomes, commit and workflow URL. Missing secrets are visible
 notices, and delivery failure never converts failed tests into success.
 
+Pull-request jobs do not receive the Sentry secret. Their evidence artifacts and
+CI status remain available; scheduled and manually dispatched runs retain Sentry
+reporting. `GH_TOKEN` is limited to release resolution/download and nightly issue
+filing. The hosted x86 runner grants KVM access only to its job user through an ACL.
+
 Uploaded QEMU evidence includes diagnostic file types only. Private guest keys,
 cloud-init configuration and disks retained after failed cleanup are excluded.
 
@@ -120,8 +125,17 @@ Full QEMU guests (needs KVM + Docker):
 Nightly-equivalent (published release + all safe tiers, x86_64 KVM host):
 
 ```bash
-./scripts/benchmark-qemu.sh --distro all --release vX.Y.Z --inventory-tiers hermetic,qemu,container,network,pty --inventory-allow-mutations
+for distro in arch debian ubuntu fedora; do
+  python3 scripts/prepare-qemu-release.py --tag vX.Y.Z --distro "$distro" --destination "published-$distro"
+  ./scripts/benchmark-qemu.sh --distro "$distro" --release vX.Y.Z --release-dir "published-$distro" --inventory-file "published-$distro/cases.tsv" --inventory-tiers hermetic,qemu,container,network,pty --inventory-allow-mutations
+done
 ```
+
+Published runs use the inventory from the release tag's resolved commit, with its
+revision and SHA-256 recorded in provenance. Staged builds use the current source
+inventory. This avoids testing an older release against commands added later.
+The harness still comes from the selected workflow revision. An inventory failure
+fails the run and reports its own case; it does not overwrite a passing lifecycle.
 
 The package lifecycle also requires a nonempty privileged audit log and runs
 `omg audit verify` against it. Directory modes and verification output are saved
