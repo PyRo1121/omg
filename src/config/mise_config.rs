@@ -43,7 +43,18 @@ fn add_document(
     if seen.contains(&path) {
         return Ok(());
     }
-    let Some(text) = super::mise_env::read_bounded_regular_file(&path)? else {
+    let content = match super::mise_env::read_bounded_regular_file(&path) {
+        Ok(content) => content,
+        Err(error)
+            if error
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|source| source.kind() == std::io::ErrorKind::NotADirectory) =>
+        {
+            return Ok(());
+        }
+        Err(error) => return Err(error),
+    };
+    let Some(text) = content else {
         return Ok(());
     };
     anyhow::ensure!(documents.len() < 256, "Too many mise configuration files");
@@ -76,7 +87,14 @@ fn add_fragments(
 ) -> Result<()> {
     let entries = match std::fs::read_dir(directory) {
         Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+            ) =>
+        {
+            return Ok(());
+        }
         Err(error) => return Err(error).with_context(|| format!("Read {}", directory.display())),
     };
     let mut files = Vec::new();
@@ -190,6 +208,17 @@ mod compatibility {
     use super::super::mise_env::{Strictness, load_mise_env_chain};
     use std::collections::HashMap;
     use std::fs;
+
+    #[test]
+    fn unrelated_files_do_not_block_optional_grouped_discovery() {
+        let root = tempfile::tempdir().unwrap();
+        for filename in [".config", "mise", ".mise"] {
+            fs::write(root.path().join(filename), "not a directory").unwrap();
+        }
+        fs::write(root.path().join("mise.toml"), "[env]\nMODE='base'\n").unwrap();
+        let env = load_mise_env_chain(root.path(), &HashMap::new(), Strictness::Strict).unwrap();
+        assert!(env.set.contains(&("MODE".into(), "base".into())));
+    }
 
     #[test]
     fn selected_environment_overrides_generic_local_configuration() {

@@ -15,7 +15,7 @@ There are two different completion targets: running existing mise projects throu
 
 The environment resolver now reads project-local overrides, comma-separated `MISE_ENV` selections, selected-environment local overrides, grouped project configurations, and sorted `conf.d` fragments. Child project configurations override parent configurations. Each document retains its declaring configuration root for relative directives, and configuration discovery uses bounded regular-file reads without executing project code.
 
-The portable harness compiles the production modules directly: `cargo test --manifest-path tests/mise-compat/Cargo.toml`. Its 28 tests passed on Windows on September 14, 2026. The compatibility cases also run in the normal crate test suite. Hosted Linux and QEMU validation is tracked by the implementation PR; the Windows result alone is not Linux execution evidence.
+The portable harness compiles the production modules directly: `cargo test --manifest-path tests/mise-compat/Cargo.toml`. Its 29 tests passed on Windows on September 14, 2026. The compatibility cases also run in the normal crate test suite. Hosted Linux and QEMU validation is tracked by the implementation PR; the Windows result alone is not Linux execution evidence.
 
 This increment applies to environment resolution. Runtime pin selection and task discovery do not yet consume the shared loader. Global/system configuration, complete upstream template semantics, and backend/plugin parity remain outstanding. No full mise compatibility percentage is claimed.
 
