@@ -111,6 +111,9 @@ pub enum Commands {
         /// Skip refreshing package databases (use the cached view)
         #[arg(long)]
         no_sync: bool,
+        /// Update AUR packages only; skip official database sync and system upgrade (Arch only)
+        #[arg(long, conflicts_with_all = ["fast", "turbo"])]
+        aur_only: bool,
         /// Fast mode: sync + upgrade in single operation (no preview)
         #[arg(short, long)]
         fast: bool,
@@ -1274,6 +1277,28 @@ mod tests {
                 assert_eq!(packages, ["firefox"]);
             }
             other => panic!("expected Install, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn update_accepts_aur_only_and_rejects_fast_paths() {
+        let update = Cli::try_parse_from(["omg", "update", "--aur-only", "--check"])
+            .expect("AUR-only checks must parse");
+        match update.command {
+            Commands::Update {
+                aur_only, check, ..
+            } => {
+                assert!(aur_only);
+                assert!(check);
+            }
+            other => panic!("expected Update, got {other:?}"),
+        }
+
+        for fast_flag in ["--fast", "--turbo"] {
+            assert!(
+                Cli::try_parse_from(["omg", "update", "--aur-only", fast_flag]).is_err(),
+                "--aur-only must conflict with {fast_flag}"
+            );
         }
     }
 

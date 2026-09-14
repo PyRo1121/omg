@@ -23,10 +23,23 @@ pub async fn update_turbo() -> Result<()> {
     }
 }
 
-pub async fn update(check_only: bool, yes: bool, dry_run: bool, no_sync: bool) -> Result<()> {
+#[expect(clippy::fn_params_excessive_bools)] // Maps directly to CLI update flags
+pub async fn update(
+    check_only: bool,
+    yes: bool,
+    dry_run: bool,
+    no_sync: bool,
+    aur_only: bool,
+) -> Result<()> {
     dispatch_backend! {
-        debian: { super::common::update_official_only(check_only, yes, dry_run, no_sync).await },
-        arch: { arch::update(check_only, yes, dry_run, no_sync).await },
-        generic: { super::common::update_official_only(check_only, yes, dry_run, no_sync).await },
+        debian: {
+            if aur_only { anyhow::bail!("--aur-only is supported only on Arch Linux"); }
+            super::common::update_official_only(check_only, yes, dry_run, no_sync).await
+        },
+        arch: { arch::update(check_only, yes, dry_run, no_sync, aur_only).await },
+        generic: {
+            if aur_only { anyhow::bail!("--aur-only is supported only on Arch Linux"); }
+            super::common::update_official_only(check_only, yes, dry_run, no_sync).await
+        },
     }
 }

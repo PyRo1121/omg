@@ -95,7 +95,32 @@ fn screen_aur_updates_against_policy(
     screened
 }
 
-const fn update_phase_context(check_only: bool, dry_run: bool, no_sync: bool) -> &'static str {
+const fn includes_official_updates(aur_only: bool) -> bool {
+    !aur_only
+}
+
+const fn should_sync_official_databases(
+    no_sync: bool,
+    check_only: bool,
+    dry_run: bool,
+    aur_only: bool,
+) -> bool {
+    includes_official_updates(aur_only) && should_sync(no_sync, check_only, dry_run)
+}
+
+const fn update_phase_context(
+    check_only: bool,
+    dry_run: bool,
+    no_sync: bool,
+    aur_only: bool,
+) -> &'static str {
+    if aur_only {
+        return if dry_run {
+            "Dry run · AUR only"
+        } else {
+            "AUR only"
+        };
+    }
     if dry_run {
         if no_sync {
             "Dry run · cached"
@@ -194,19 +219,26 @@ fn history_changes(updates: &[UpdateInfo]) -> Vec<crate::core::history::PackageC
         .collect()
 }
 
-#[expect(clippy::fn_params_excessive_bools)] // Maps to --check / --yes / --dry-run / --no-sync
-pub async fn update(check_only: bool, yes: bool, dry_run: bool, no_sync: bool) -> Result<()> {
+#[expect(clippy::fn_params_excessive_bools)] // Maps directly to CLI update flags
+pub async fn update(
+    check_only: bool,
+    yes: bool,
+    dry_run: bool,
+    no_sync: bool,
+    aur_only: bool,
+) -> Result<()> {
     let pm = get_package_manager()?;
 
-    let needs_deferred_sync = !check_only && !dry_run && !crate::core::caps::can_write_pacman_db();
+    let needs_deferred_sync =
+        !aur_only && !check_only && !dry_run && !crate::core::caps::can_write_pacman_db();
 
     modern_ui::print_phase_header(
         "🔄",
         "Update",
-        update_phase_context(check_only, dry_run, no_sync),
+        update_phase_context(check_only, dry_run, no_sync, aur_only),
     );
 
-    if should_sync(no_sync, check_only, dry_run) {
+    if should_sync_official_databases(no_sync, check_only, dry_run, aur_only) {
         // Do not animate here. `pm.sync()` elevates and the child owns the
         // per-repository lanes; a parent spinner hides the sudo prompt and
         // reprints itself as a second "Syncing package databases" bar.
@@ -220,7 +252,9 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool, no_sync: bool) -
 
     let mut all_updates: Vec<UpdateInfo> = Vec::with_capacity(32);
     let skip_aur = crate::core::paths::test_mode() || crate::core::env::distro::is_debian_like();
-    let check_detail = if skip_aur {
+    let check_detail = if aur_only {
+        "AUR"
+    } else if skip_aur {
         "official repositories"
     } else {
         "official and AUR"
@@ -232,6 +266,9 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool, no_sync: bool) -
     // vs the AUR index or RPC): overlap them instead of paying the sum.
     // Rendering below stays ordered, so output matches the serial run.
     let official_fut = async {
+        if !includes_official_updates(aur_only) {
+            return Ok(Vec::new());
+        }
         match try_daemon_list_updates().await {
             Some(updates) => Ok(updates),
             None => pm.list_updates().await,
@@ -264,7 +301,9 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool, no_sync: bool) -
     };
     let check_elapsed = check_start.elapsed();
     modern_ui::finish_clear(&check_pb);
-    modern_ui::print_source_lane("official", official_updates.len(), check_elapsed);
+    if !aur_only {
+        modern_ui::print_source_lane("official", official_updates.len(), check_elapsed);
+    }
 
     let official_count = official_updates.len();
     all_updates.extend(official_updates);
@@ -324,7 +363,11 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool, no_sync: bool) -
         println!(
             "  {} Run {} to install updates",
             style::dim("→"),
-            style::runtime("omg update")
+            style::runtime(if aur_only {
+                "omg update --aur-only"
+            } else {
+                "omg update"
+            })
         );
         println!();
         return Ok(());
@@ -542,16 +585,21 @@ mod tests {
             "Refreshing catalogs"
         );
         assert_eq!(
-            update_phase_context(false, false, true),
+            update_phase_context(false, false, true, false),
             "Checking for updates · cached"
         );
         assert_eq!(
-            update_phase_context(false, true, false),
+            update_phase_context(false, true, false, false),
             "Dry run · checking for updates"
         );
         assert_eq!(
-            update_phase_context(true, false, false),
+            update_phase_context(true, false, false, false),
             "Checking for updates · cached"
+        );
+        assert_eq!(update_phase_context(false, false, false, true), "AUR only");
+        assert_eq!(
+            update_phase_context(false, true, false, true),
+            "Dry run · AUR only"
         );
     }
 
@@ -561,6 +609,19 @@ mod tests {
         assert!(!should_sync(false, false, true));
         assert!(!should_sync(false, true, false));
         assert!(!should_sync(true, false, false));
+    }
+
+    #[test]
+    fn aur_only_excludes_every_official_update_entry_point() {
+        assert!(!includes_official_updates(true));
+        assert!(!should_sync_official_databases(false, false, false, true));
+        assert!(!should_sync_official_databases(true, false, false, true));
+
+        assert!(includes_official_updates(false));
+        assert!(should_sync_official_databases(false, false, false, false));
+        assert!(!should_sync_official_databases(true, false, false, false));
+        assert!(!should_sync_official_databases(false, true, false, false));
+        assert!(!should_sync_official_databases(false, false, true, false));
     }
 
     #[test]

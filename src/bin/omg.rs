@@ -1193,12 +1193,13 @@ const fn update_execution(fast: bool, turbo: bool, no_sync: bool) -> UpdateExecu
     }
 }
 
-#[expect(clippy::fn_params_excessive_bools)] // Maps directly to CLI flags: --check, --yes, --dry-run, --no-sync, --fast, --turbo
+#[expect(clippy::fn_params_excessive_bools)] // Maps directly to CLI update flags
 async fn handle_update_command(
     check: bool,
     yes: bool,
     dry_run: bool,
     no_sync: bool,
+    aur_only: bool,
     fast: bool,
     turbo: bool,
 ) -> Result<()> {
@@ -1215,7 +1216,7 @@ async fn handle_update_command(
     match update_execution(fast, turbo, no_sync) {
         UpdateExecution::CachedFast => packages::update_turbo().await,
         UpdateExecution::SyncFast => packages::update_fast().await,
-        UpdateExecution::Standard => packages::update(check, yes, dry_run, no_sync).await,
+        UpdateExecution::Standard => packages::update(check, yes, dry_run, no_sync, aur_only).await,
     }
 }
 
@@ -1383,13 +1384,15 @@ async fn dispatch_command(command: &Commands, ctx: &omg_lib::cli::CliContext) ->
             dry_run,
             review,
             no_sync,
+            aur_only,
             fast,
             turbo,
         } => {
             if *review {
                 omg_lib::config::Settings::enable_cli_review_pkgbuild();
             }
-            handle_update_command(*check, *yes, *dry_run, *no_sync, *fast, *turbo).await?;
+            handle_update_command(*check, *yes, *dry_run, *no_sync, *aur_only, *fast, *turbo)
+                .await?;
         }
         Commands::Info { package } => packages::info_with_json(package, ctx.json).await?,
         Commands::Clean {
