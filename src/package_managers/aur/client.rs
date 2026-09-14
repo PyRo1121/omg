@@ -6275,7 +6275,23 @@ mod tests {
     /// the selected identity/hook defect rather than missing architecture.
     fn write_pkg_archive(path: &Path, pkginfo: &str, install: Option<&str>) {
         let pkginfo = format!("arch = any\n{pkginfo}");
-        let mut entries = vec![(".PKGINFO", pkginfo.as_bytes())];
+        let field = |name: &str| {
+            pkginfo
+                .lines()
+                .find_map(|line| line.strip_prefix(&format!("{name} = ")))
+                .unwrap_or_else(|| panic!("fixture is missing {name}"))
+        };
+        let buildinfo = format!(
+            "format = 2\npkgname = {}\npkgbase = {}\npkgver = {}\npkgarch = any\n",
+            field("pkgname"),
+            field("pkgbase"),
+            field("pkgver")
+        );
+        let mut entries = vec![
+            (".PKGINFO", pkginfo.as_bytes()),
+            (".BUILDINFO", buildinfo.as_bytes()),
+            (".MTREE", b"#mtree\n".as_slice()),
+        ];
         if let Some(install) = install {
             entries.push((".INSTALL", install.as_bytes()));
         }
