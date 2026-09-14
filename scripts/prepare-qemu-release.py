@@ -37,10 +37,21 @@ def prepare(tag, distro, destination):
                     '--dir', str(destination)], check=True, timeout=180)
     if api(f'commits/{tag}')['sha'] != revision:
         raise ValueError('Release tag moved during download')
+    # A checksum beside an archive shares its release trust boundary. Require
+    # signed build provenance for the exact repository, tag, commit and workflow
+    # before publishing the inventory that authorizes guest execution.
+    subprocess.run([
+        'gh', 'attestation', 'verify', str(destination / archive),
+        '--repo', REPOSITORY,
+        '--source-digest', revision,
+        '--source-ref', f'refs/tags/{tag}',
+        '--signer-workflow', f'{REPOSITORY}/.github/workflows/release.yml',
+    ], check=True, timeout=180)
     (destination / 'cases.tsv').write_bytes(data)
     (destination / 'inventory-provenance.json').write_text(json.dumps({
         'artifact_tag': tag, 'inventory_revision': revision,
         'inventory_sha256': hashlib.sha256(data).hexdigest(),
+        'artifact_attestation_verified': True,
     }, indent=2) + '\n', encoding='utf-8')
 
 

@@ -360,10 +360,27 @@ if [[ "$1" == uefi ]]; then
   firmware=(-drive if=pflash,format=raw,readonly=on,file="$3" -drive if=pflash,format=raw,file="$vm_vars")
 fi
 "$5" -machine "$6,accel=kvm" -cpu host -smp 2 -m 1536 \
+  -runas 65534:65534 \
+  -sandbox on,obsolete=deny,spawn=deny,resourcecontrol=deny \
+  -monitor none \
   "${firmware[@]}" -display none -serial "file:$vm_serial" \
   -drive "file=$vm_disk,if=virtio,format=qcow2" -drive file=seed.img,if=virtio,format=raw \
   -netdev user,id=n,ipv6=off,hostfwd=tcp:127.0.0.1:2222-:22 -device virtio-net-pci,netdev=n \
   -daemonize -pidfile qemu.pid
+# QEMU 7.2 drops privileges after opening devices and enabling seccomp. Keep
+# setuid available for that drop; verify the resulting process cannot retain
+# root IDs/capabilities or gain privileges through exec. Never fall back to root.
+qemu_pid=$(<qemu.pid)
+[[ "$qemu_pid" =~ ^[0-9]+$ ]] || exit 1
+awk '
+  /^Uid:/ { uid = ($2 == 65534 && $3 == 65534 && $4 == 65534 && $5 == 65534) }
+  /^Gid:/ { gid = ($2 == 65534 && $3 == 65534 && $4 == 65534 && $5 == 65534) }
+  /^CapEff:/ { caps = ($2 ~ /^0+$/) }
+  /^NoNewPrivs:/ { nnp = ($2 == 1) }
+  /^Seccomp:/ { seccomp = ($2 == 2) }
+  END { exit !(uid && gid && caps && nnp && seccomp) }
+' "/proc/$qemu_pid/status" || { printf 'QEMU isolation verification failed\n' >&2; exit 1; }
+printf 'QEMU isolation verified: uid=65534 gid=65534 capabilities=none no_new_privs=1 seccomp=2\n'
 opts=(-i client-key -p 2222 -o BatchMode=yes -o ConnectTimeout=2 -o ServerAliveInterval=5 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=yes -o UserKnownHostsFile=known_hosts)
 wait_ssh() {
   for attempt in {1..120}; do
