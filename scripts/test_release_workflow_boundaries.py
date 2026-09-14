@@ -57,6 +57,15 @@ class ReleaseWorkflowBoundaryTests(unittest.TestCase):
             self.assertIn('JOB_STATUS: ${{ job.status }}', block)
         self.assertNotIn('merge-multiple: true', job_block(text, 'file-issues'))
 
+    def test_pull_requests_never_configure_sentry_credentials(self):
+        text = (WORKFLOWS / 'release-smoke.yml').read_text()
+        for job in ('smoke', 'smoke-macos'):
+            block = job_block(text, job)
+            step = block.split('      - name: Configure smoke Sentry reporting (opt-in)\n', 1)[1]
+            step = step.split('\n      - ', 1)[0]
+            self.assertIn("if: github.event_name != 'pull_request'", step)
+            self.assertIn('OMG_SMOKE_SENTRY_DSN: ${{ secrets.OMG_SMOKE_SENTRY_DSN }}', step)
+
     def test_issue_collection_visits_nested_artifacts_without_merging(self):
         text = (WORKFLOWS / 'release-smoke.yml').read_text()
         script = step_script(job_block(text, 'file-issues'), 'File or update failure issues')

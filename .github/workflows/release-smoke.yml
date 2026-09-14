@@ -82,6 +82,7 @@ jobs:
           persist-credentials: false
 
       - name: Configure smoke Sentry reporting (opt-in)
+        if: github.event_name != 'pull_request'
         env:
           OMG_SMOKE_SENTRY_DSN: ${{ secrets.OMG_SMOKE_SENTRY_DSN }}
         run: python3 scripts/ci-smoke-report.py configure
@@ -139,6 +140,7 @@ jobs:
           persist-credentials: false
 
       - name: Configure smoke Sentry reporting (opt-in)
+        if: github.event_name != 'pull_request'
         env:
           OMG_SMOKE_SENTRY_DSN: ${{ secrets.OMG_SMOKE_SENTRY_DSN }}
         run: python3 scripts/ci-smoke-report.py configure
