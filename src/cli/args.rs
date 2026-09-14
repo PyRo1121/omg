@@ -1295,9 +1295,12 @@ mod tests {
         }
 
         for fast_flag in ["--fast", "--turbo"] {
+            let error = Cli::try_parse_from(["omg", "update", "--aur-only", fast_flag])
+                .expect_err(&format!("--aur-only must conflict with {fast_flag}"));
+            let message = error.to_string();
             assert!(
-                Cli::try_parse_from(["omg", "update", "--aur-only", fast_flag]).is_err(),
-                "--aur-only must conflict with {fast_flag}"
+                message.contains("cannot be used with") && message.contains(fast_flag),
+                "--aur-only vs {fast_flag} must name the clap conflict, got: {message}"
             );
         }
     }
