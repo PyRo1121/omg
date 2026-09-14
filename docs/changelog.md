@@ -11,6 +11,10 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ---
 
 ## [Unreleased]
+### Breaking Changes
+
+- **Mise environments**: Explicit `omg run` and task execution now apply previously ignored local overrides, `MISE_ENV` selections, grouped project configuration, and sorted fragments. These layers participate automatically; no new opt-in flag is required. Ancestor discovery can include a home-directory configuration when the project is below that home directory. Invalid `MISE_ENV` names now fail instead of being ignored. Review existing layers before upgrading; see the [migration steps](mise-compatibility.md#migrating-existing-omg-projects). Automatic shell hooks still do not import project environment directives.
+
 ### ✨ New Features
 
 - **Arch**: Add AUR-only update scope

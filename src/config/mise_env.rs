@@ -29,8 +29,9 @@
 //!   Full Tera is out of scope: any other `{{…}}` is a hard error rather
 //!   than a silently literal string.
 //!
-//! Out of scope: `mise.local.toml` / `MISE_ENV` config environments,
-//! encrypted-secret backends, and per-plugin env directives.
+//! Project configuration includes local overrides, selected `MISE_ENV` layers,
+//! and grouped configuration files. Encrypted-secret backends and per-plugin
+//! env directives remain out of scope.
 
 use std::collections::{HashMap, HashSet};
 use std::io::Read as _;
@@ -494,16 +495,6 @@ pub(crate) fn parse_mise_env(document: &toml::Value, config_root: &Path) -> Resu
     Ok(parsed)
 }
 
-/// Parse `[env]` from a `mise.toml` file on disk.
-pub(crate) fn parse_mise_env_file(file_path: &Path) -> Result<MiseEnv> {
-    let content = read_bounded_regular_file(file_path)?
-        .with_context(|| format!("Missing config file {}", file_path.display()))?;
-    let document: toml::Value = toml::from_str(&content)
-        .with_context(|| format!("Failed to parse {}", file_path.display()))?;
-    let config_root = file_path.parent().unwrap_or_else(|| Path::new("."));
-    parse_mise_env(&document, config_root)
-}
-
 /// Read through one bounded, regular-file descriptor. Nonblocking open prevents
 /// FIFO replacement races; no-follow rejects final-component symlinks. Missing
 /// files remain `None` for the caller's strict/lenient policy.
@@ -906,26 +897,6 @@ pub(crate) fn resolve_task_env(
     )
 }
 
-/// Collect `mise.toml` / `.mise.toml` from `start` up through its ancestors.
-///
-/// Returns `(file, config)` pairs ordered shallow-first so nearer files
-/// override farther ones when merged in order.
-fn chain_files(start: &Path) -> Vec<PathBuf> {
-    let mut files = Vec::new();
-    let mut current = Some(start.to_path_buf());
-    while let Some(dir) = current {
-        for filename in ["mise.toml", ".mise.toml"] {
-            let candidate = dir.join(filename);
-            if candidate.is_file() {
-                files.push(candidate);
-            }
-        }
-        current = dir.parent().map(Path::to_path_buf);
-    }
-    files.reverse();
-    files
-}
-
 /// Merge one [`ResolvedEnv`] into an accumulated chain result: later files
 /// override earlier assignments, removals win over prior assignments, and
 /// path additions, sources, and redactions accumulate in order.
@@ -970,10 +941,11 @@ pub(crate) fn load_mise_env_chain(
     let mut merged = ResolvedEnv::default();
     let mut effective = base.clone();
     let mut patterns: Vec<String> = Vec::new();
-    for file in chain_files(start) {
-        let parsed = parse_mise_env_file(&file)?;
+    for document in super::mise_config::load(start, base)? {
+        let parsed = parse_mise_env(&document.value, &document.root)
+            .with_context(|| format!("Invalid mise environment in {}", document.path.display()))?;
         patterns.extend(parsed.redactions.iter().cloned());
-        let config_root = file.parent().unwrap_or_else(|| Path::new("."));
+        let config_root = &document.root;
         let mut file_pairs = Vec::new();
         for directive in &parsed.files {
             match load_env_file(directive)? {
@@ -1104,9 +1076,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("mise.toml");
         std::fs::write(&path, "#".repeat(1024 * 1024 + 1)).unwrap();
-        assert!(parse_mise_env_file(&path).is_err());
+        assert!(load_mise_env_chain(dir.path(), &HashMap::new(), Strictness::Strict).is_err());
         std::fs::write(&path, "[env]\nLEGITIMATE = 'preserved'\n").unwrap();
-        assert_eq!(parse_mise_env_file(&path).unwrap().entries.len(), 1);
+        let env = load_mise_env_chain(dir.path(), &HashMap::new(), Strictness::Strict).unwrap();
+        assert_eq!(env.set, [("LEGITIMATE".into(), "preserved".into())]);
     }
 
     #[cfg(unix)]
