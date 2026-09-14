@@ -906,26 +906,6 @@ pub(crate) fn resolve_task_env(
     )
 }
 
-/// Collect `mise.toml` / `.mise.toml` from `start` up through its ancestors.
-///
-/// Returns `(file, config)` pairs ordered shallow-first so nearer files
-/// override farther ones when merged in order.
-fn chain_files(start: &Path) -> Vec<PathBuf> {
-    let mut files = Vec::new();
-    let mut current = Some(start.to_path_buf());
-    while let Some(dir) = current {
-        for filename in ["mise.toml", ".mise.toml"] {
-            let candidate = dir.join(filename);
-            if candidate.is_file() {
-                files.push(candidate);
-            }
-        }
-        current = dir.parent().map(Path::to_path_buf);
-    }
-    files.reverse();
-    files
-}
-
 /// Merge one [`ResolvedEnv`] into an accumulated chain result: later files
 /// override earlier assignments, removals win over prior assignments, and
 /// path additions, sources, and redactions accumulate in order.
@@ -970,10 +950,10 @@ pub(crate) fn load_mise_env_chain(
     let mut merged = ResolvedEnv::default();
     let mut effective = base.clone();
     let mut patterns: Vec<String> = Vec::new();
-    for file in chain_files(start) {
-        let parsed = parse_mise_env_file(&file)?;
+    for document in super::mise_config::load(start, base)? {
+        let parsed = parse_mise_env(&document.value, &document.root)?;
         patterns.extend(parsed.redactions.iter().cloned());
-        let config_root = file.parent().unwrap_or_else(|| Path::new("."));
+        let config_root = &document.root;
         let mut file_pairs = Vec::new();
         for directive in &parsed.files {
             match load_env_file(directive)? {

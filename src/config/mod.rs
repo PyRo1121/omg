@@ -1,5 +1,6 @@
 //! Configuration module for OMG
 
+pub(crate) mod mise_config;
 pub(crate) mod mise_env;
 mod settings;
 
