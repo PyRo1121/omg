@@ -3,6 +3,7 @@
 use anyhow::Result;
 use owo_colors::OwoColorize;
 use std::fs;
+use std::io::Write as _;
 
 use crate::cli::style;
 
@@ -130,11 +131,17 @@ fn write_config_file(path: &str, config: &str) -> Result<()> {
         ),
     );
     let config = config.as_str();
-    if let Some(parent) = std::path::Path::new(path).parent() {
-        fs::create_dir_all(parent)?;
-    }
+    ensure_safe_config_parent(std::path::Path::new(path))?;
 
-    if std::path::Path::new(path).exists() {
+    let created = create_new_config_file(std::path::Path::new(path), config)?;
+
+    if created {
+        println!(
+            "  {} Created {}",
+            style::maybe_color("✓", |t| t.green().to_string()),
+            style::maybe_color(path, |t| t.cyan().to_string())
+        );
+    } else {
         println!(
             "  {} {} already exists - not overwriting",
             style::maybe_color("⚠", |t| t.yellow().to_string()),
@@ -142,13 +149,53 @@ fn write_config_file(path: &str, config: &str) -> Result<()> {
         );
         println!("  Here's what we'd generate:\n");
         println!("{}", style::dim(config));
-    } else {
-        fs::write(path, config)?;
-        println!(
-            "  {} Created {}",
-            style::maybe_color("✓", |t| t.green().to_string()),
-            style::maybe_color(path, |t| t.cyan().to_string())
-        );
+    }
+    Ok(())
+}
+
+fn create_new_config_file(path: &std::path::Path, config: &str) -> Result<bool> {
+    match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+    {
+        Ok(mut file) => {
+            file.write_all(config.as_bytes())?;
+            file.sync_all()?;
+            Ok(true)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn ensure_safe_config_parent(path: &std::path::Path) -> Result<()> {
+    use std::path::Component;
+
+    anyhow::ensure!(!path.is_absolute(), "CI config path must be relative");
+    let mut directory = std::path::PathBuf::new();
+    let Some(parent) = path.parent() else {
+        return Ok(());
+    };
+    for component in parent.components() {
+        match component {
+            Component::CurDir => continue,
+            Component::Normal(name) => directory.push(name),
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                anyhow::bail!("CI config path must stay inside the current repository")
+            }
+        }
+        match fs::symlink_metadata(&directory) {
+            Ok(metadata) => anyhow::ensure!(
+                metadata.is_dir() && !metadata.file_type().is_symlink(),
+                "Refusing symlinked or non-directory CI config ancestor: {}",
+                directory.display()
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                fs::create_dir(&directory)?;
+            }
+            Err(error) => return Err(error.into()),
+        }
     }
     Ok(())
 }
@@ -546,6 +593,67 @@ workflows:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn ci_generation_refuses_a_dangling_destination_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir_in(".").expect("relative temp directory");
+        let outside = directory.path().join("outside.yml");
+        let destination = directory.path().join("ci.yml");
+        let outside_absolute = std::fs::canonicalize(directory.path())
+            .expect("canonical fixture directory")
+            .join("outside.yml");
+        symlink(&outside_absolute, &destination).expect("dangling destination symlink");
+
+        let created = create_new_config_file(&destination, "untrusted overwrite")
+            .expect("existing destination is a preview, not an error");
+
+        assert!(!created, "an existing symlink must not be replaced");
+        assert!(!outside.exists(), "writer must not follow the symlink");
+        assert!(
+            destination.is_symlink(),
+            "existing entry must remain intact"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ci_generation_refuses_a_symlinked_parent_directory() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir_in(".").expect("relative temp directory");
+        let outside = directory.path().join("outside");
+        std::fs::create_dir(&outside).expect("outside directory");
+        let outside_absolute = std::fs::canonicalize(&outside).expect("canonical outside");
+        let linked_parent = directory.path().join(".github");
+        symlink(outside_absolute, &linked_parent).expect("linked parent");
+
+        // tempfile returns an absolute path even for tempdir_in("."). Use the
+        // relative fixture path so this reaches ancestor validation rather than
+        // passing accidentally at the absolute-path guard.
+        let destination = std::path::Path::new(directory.path().file_name().expect("fixture name"))
+            .join(".github/workflows/ci.yml");
+        let error =
+            ensure_safe_config_parent(&destination).expect_err("symlinked parent must be refused");
+        assert!(error.to_string().contains("Refusing symlinked"), "{error}");
+        assert!(!outside.join("workflows").exists());
+    }
+
+    #[test]
+    fn ci_generation_creates_a_relative_config_without_overwriting() {
+        let directory = tempfile::tempdir_in(".").expect("fixture directory");
+        let destination = std::path::Path::new(directory.path().file_name().expect("fixture name"))
+            .join(".github/workflows/ci.yml");
+        let path = destination.to_str().expect("UTF-8 fixture path");
+        write_config_file(path, "original config").expect("create config");
+        write_config_file(path, "replacement config").expect("preview existing config");
+        assert_eq!(
+            fs::read_to_string(destination).expect("config"),
+            "original config"
+        );
+    }
 
     #[test]
     fn ci_validation_fails_closed_without_lockfile() {
