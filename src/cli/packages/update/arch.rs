@@ -102,9 +102,7 @@ const fn update_phase_context(check_only: bool, dry_run: bool, no_sync: bool) ->
         } else {
             "Dry run · checking for updates"
         }
-    } else if check_only {
-        "Checking for updates · cached"
-    } else if no_sync {
+    } else if check_only || no_sync {
         "Checking for updates · cached"
     } else {
         "Refreshing catalogs"
