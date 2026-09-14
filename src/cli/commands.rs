@@ -652,7 +652,7 @@ pub fn daemon(foreground: bool) -> Result<()> {
     if foreground {
         // Honor --foreground: run omgd with inherited stdio and wait for it,
         // mirroring running `omgd` directly in the terminal.
-        let mut command = Command::new(resolve_omgd_path());
+        let mut command = Command::new(resolve_omgd_path()?);
         return run_daemon_foreground(&mut command);
     }
 
@@ -666,8 +666,9 @@ pub fn daemon(foreground: bool) -> Result<()> {
 
         // Start daemon in background
         // Prefer the omgd binary next to the current executable
-        // (ensures version match), falling back to PATH.
-        let omgd_path = resolve_omgd_path();
+        // (ensures version match), falling back only to a root-controlled
+        // system path.
+        let omgd_path = resolve_omgd_path()?;
 
         let mut command = Command::new(omgd_path);
         command
@@ -698,11 +699,21 @@ pub fn daemon(foreground: bool) -> Result<()> {
     }
 }
 
-/// Resolve the omgd binary to launch: prefer the sibling of the current
-/// executable so the daemon matches the CLI version, falling back to PATH.
+/// Resolve the omgd binary to launch without consulting the caller's PATH.
 #[cfg(unix)]
-fn resolve_omgd_path() -> std::path::PathBuf {
-    crate::core::paths::sibling_binary("omgd").unwrap_or_else(|| std::path::PathBuf::from("omgd"))
+fn resolve_omgd_path() -> Result<std::path::PathBuf> {
+    resolve_omgd_path_from(crate::core::paths::sibling_binary("omgd"), || {
+        crate::core::privilege::trusted_program("omgd")
+            .context("omgd is not installed beside omg or in a root-controlled system path")
+    })
+}
+
+#[cfg(unix)]
+fn resolve_omgd_path_from(
+    sibling: Option<std::path::PathBuf>,
+    trusted: impl FnOnce() -> Result<std::path::PathBuf>,
+) -> Result<std::path::PathBuf> {
+    sibling.map_or_else(trusted, Ok)
 }
 
 /// Run omgd in the foreground with inherited stdio, blocking until it exits.
@@ -749,9 +760,29 @@ fn daemon_start_result(spawn: Result<(), String>, ready: bool, socket_exists: bo
 #[cfg(all(test, unix))]
 mod daemon_start_tests {
     use super::{
-        daemon_start_result, detach_daemon_process, foreground_exit_result, run_daemon_foreground,
+        daemon_start_result, detach_daemon_process, foreground_exit_result, resolve_omgd_path_from,
+        run_daemon_foreground,
     };
+    use anyhow::anyhow;
+    use std::path::PathBuf;
     use std::process::Command;
+
+    #[test]
+    fn daemon_path_prefers_the_sibling_binary() {
+        let sibling = PathBuf::from("/opt/omg/bin/omgd");
+        let resolved = resolve_omgd_path_from(Some(sibling.clone()), || {
+            Err(anyhow!("trusted lookup must not run"))
+        })
+        .expect("sibling path");
+        assert_eq!(resolved, sibling);
+    }
+
+    #[test]
+    fn daemon_path_fails_closed_when_no_trusted_binary_exists() {
+        let error = resolve_omgd_path_from(None, || Err(anyhow!("no trusted omgd")))
+            .expect_err("ambient PATH must not be used as a fallback");
+        assert!(error.to_string().contains("no trusted omgd"));
+    }
 
     #[test]
     fn daemon_child_starts_in_its_own_process_group() {
