@@ -184,7 +184,7 @@ fn tool_binary_hashes(install_dir: &Path) -> Result<BTreeMap<String, String>> {
         }
         for entry in fs::read_dir(directory)? {
             let path = entry?.path();
-            if is_venv && path.file_name().is_some_and(|name| is_venv_base_tool(name)) {
+            if is_venv && path.file_name().is_some_and(is_venv_base_tool) {
                 continue;
             }
             let metadata = fs::symlink_metadata(&path)?;
@@ -204,7 +204,7 @@ fn tool_binary_hashes(install_dir: &Path) -> Result<BTreeMap<String, String>> {
             }
             let mut file = fs::File::open(&target)?;
             let mut hasher = Sha256::new();
-            let mut buffer = [0_u8; 64 * 1024];
+            let mut buffer = vec![0_u8; 64 * 1024].into_boxed_slice();
             loop {
                 let read = file.read(&mut buffer)?;
                 if read == 0 {
@@ -243,7 +243,7 @@ fn validate_tool_binary_containment(install_dir: &Path) -> Result<()> {
         }
         for entry in fs::read_dir(&directory)? {
             let path = entry?.path();
-            if is_venv && path.file_name().is_some_and(|name| is_venv_base_tool(name)) {
+            if is_venv && path.file_name().is_some_and(is_venv_base_tool) {
                 continue;
             }
             let metadata = fs::symlink_metadata(&path)?;
@@ -1100,10 +1100,10 @@ async fn install_managed(
         return Err(error).context("Failed to activate managed tool; previous version restored");
     }
     cleanup_broken_managed_links(bin_dir, &install_dir)?;
-    if let Some(backup) = backup_dir {
-        if let Err(error) = fs::remove_dir_all(&backup) {
-            tracing::warn!(path = %backup.display(), %error, "failed to remove previous tool backup");
-        }
+    if let Some(backup) = backup_dir
+        && let Err(error) = fs::remove_dir_all(&backup)
+    {
+        tracing::warn!(path = %backup.display(), %error, "failed to remove previous tool backup");
     }
 
     Ok(())
