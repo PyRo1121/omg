@@ -176,6 +176,10 @@ topo_order = false
 sort_commits = "newest"  # Most recent changes first (users care about latest)
 
 # === LINK GENERATION ===
+[remote]
+# Templates use local commits/tags and literal URLs; generation needs no API.
+offline = true
+
 [remote.github]
 owner = "PyRo1121"
 repo = "omg"

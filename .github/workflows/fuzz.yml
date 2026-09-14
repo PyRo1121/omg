@@ -56,14 +56,17 @@ jobs:
           tool: cargo-fuzz@0.13.2
 
       - name: Resolve the reviewed fuzz lockfile
-        run: cargo fetch --manifest-path fuzz/Cargo.toml --locked
+        run: cargo +nightly-2026-08-20 fetch --manifest-path fuzz/Cargo.toml --locked
+
+      - name: Check maintenance workflow contracts
+        run: python3 -m unittest discover -s scripts -p test_maintenance_workflows.py
 
       - name: Run bounded fuzz targets
         env:
           CARGO_NET_OFFLINE: "true"
         run: |
           for target in parse_config ipc_messages package_names; do
-            cargo fuzz run "$target" -- \
+            cargo +nightly-2026-08-20 fuzz run --target x86_64-unknown-linux-gnu "$target" -- \
               -max_total_time=180 \
               -print_final_stats=1
           done
