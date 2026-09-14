@@ -3,6 +3,7 @@
 use anyhow::Result;
 use owo_colors::OwoColorize;
 use std::fs;
+use std::io::Write as _;
 
 use crate::cli::style;
 
@@ -134,7 +135,21 @@ fn write_config_file(path: &str, config: &str) -> Result<()> {
         fs::create_dir_all(parent)?;
     }
 
-    if std::path::Path::new(path).exists() {
+    let created = match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+    {
+        Ok(mut file) => {
+            file.write_all(config.as_bytes())?;
+            file.sync_all()?;
+            true
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => false,
+        Err(error) => return Err(error.into()),
+    };
+
+    if !created {
         println!(
             "  {} {} already exists - not overwriting",
             style::maybe_color("⚠", |t| t.yellow().to_string()),
@@ -143,7 +158,6 @@ fn write_config_file(path: &str, config: &str) -> Result<()> {
         println!("  Here's what we'd generate:\n");
         println!("{}", style::dim(config));
     } else {
-        fs::write(path, config)?;
         println!(
             "  {} Created {}",
             style::maybe_color("✓", |t| t.green().to_string()),
@@ -546,6 +560,29 @@ workflows:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn ci_generation_refuses_a_dangling_destination_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().expect("temp directory");
+        let outside = directory.path().join("outside.yml");
+        let destination = directory.path().join("ci.yml");
+        symlink(&outside, &destination).expect("dangling destination symlink");
+
+        write_config_file(
+            destination.to_str().expect("UTF-8 fixture path"),
+            "untrusted overwrite",
+        )
+        .expect("existing destination is a preview, not an error");
+
+        assert!(!outside.exists(), "writer must not follow the symlink");
+        assert!(
+            destination.is_symlink(),
+            "existing entry must remain intact"
+        );
+    }
 
     #[test]
     fn ci_validation_fails_closed_without_lockfile() {
