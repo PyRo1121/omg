@@ -551,11 +551,11 @@ fn dockerfile_node_versions_map_to_nodesource_major_channels() {
 fn dockerfile_go_latest_resolves_to_pinned_go_version() {
     let latest = dockerfile_for("ubuntu:24.04", &[("go", "latest")]);
     assert!(
-        latest.contains("ENV GO_VERSION=1.22\n"),
-        "'latest' go must resolve to GO_VERSION=1.22, got:\n{latest}"
+        latest.contains("ENV GO_VERSION=1.22.0\n"),
+        "'latest' go must resolve to GO_VERSION=1.22.0, got:\n{latest}"
     );
     assert!(
-        latest.contains("-o /tmp/omg-go.tar.gz https://go.dev/dl/go1.22.linux-amd64.tar.gz")
+        latest.contains("-o /tmp/omg-go.tar.gz https://go.dev/dl/go1.22.0.linux-amd64.tar.gz")
             && latest.contains("tar -C /usr/local -xzf /tmp/omg-go.tar.gz"),
         "go tarball must be downloaded before extraction, got:\n{latest}"
     );
