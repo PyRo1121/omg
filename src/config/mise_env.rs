@@ -495,16 +495,6 @@ pub(crate) fn parse_mise_env(document: &toml::Value, config_root: &Path) -> Resu
     Ok(parsed)
 }
 
-/// Parse `[env]` from a `mise.toml` file on disk.
-pub(crate) fn parse_mise_env_file(file_path: &Path) -> Result<MiseEnv> {
-    let content = read_bounded_regular_file(file_path)?
-        .with_context(|| format!("Missing config file {}", file_path.display()))?;
-    let document: toml::Value = toml::from_str(&content)
-        .with_context(|| format!("Failed to parse {}", file_path.display()))?;
-    let config_root = file_path.parent().unwrap_or_else(|| Path::new("."));
-    parse_mise_env(&document, config_root)
-}
-
 /// Read through one bounded, regular-file descriptor. Nonblocking open prevents
 /// FIFO replacement races; no-follow rejects final-component symlinks. Missing
 /// files remain `None` for the caller's strict/lenient policy.
@@ -1086,9 +1076,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("mise.toml");
         std::fs::write(&path, "#".repeat(1024 * 1024 + 1)).unwrap();
-        assert!(parse_mise_env_file(&path).is_err());
+        assert!(load_mise_env_chain(dir.path(), &HashMap::new(), Strictness::Strict).is_err());
         std::fs::write(&path, "[env]\nLEGITIMATE = 'preserved'\n").unwrap();
-        assert_eq!(parse_mise_env_file(&path).unwrap().entries.len(), 1);
+        let env = load_mise_env_chain(dir.path(), &HashMap::new(), Strictness::Strict).unwrap();
+        assert_eq!(env.set, [("LEGITIMATE".into(), "preserved".into())]);
     }
 
     #[cfg(unix)]
