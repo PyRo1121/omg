@@ -17,7 +17,17 @@ The environment resolver now reads project-local overrides, comma-separated `MIS
 
 The portable harness compiles the production modules directly: `cargo test --manifest-path tests/mise-compat/Cargo.toml`. Its 29 tests passed on Windows on September 14, 2026. The compatibility cases also run in the normal crate test suite. Hosted Linux and QEMU validation is tracked by the implementation PR; the Windows result alone is not Linux execution evidence.
 
-This increment applies to environment resolution. Runtime pin selection and task discovery do not yet consume the shared loader. Global/system configuration, complete upstream template semantics, and backend/plugin parity remain outstanding. No full mise compatibility percentage is claimed.
+The follow-up project-workflow increment also feeds runtime pins and task discovery through the shared loader. Global/system configuration, complete upstream template semantics, and backend/plugin parity remain outstanding. No full mise compatibility percentage is claimed.
+
+### Native project workflows
+
+Runtime pins now consume local, selected-environment, grouped, and fragment configurations. Later mise layers replace earlier pins after native alias normalization (`nodejs` → `node`, for example). Dedicated version files still win within the same directory; the nearest directory wins across ancestors. A malformed ancestor mise configuration is reported and skipped during hook pin discovery, while malformed current-directory configuration fails. Hook discovery never reads environment files or executes source scripts.
+
+Tasks use the same ordered project documents, including ancestor tasks. OMG supports shorthand string tasks, string/array `run`, plain-name `depends`, dependency-only tasks, task environments, and literal task directories. The complete dependency graph is validated before execution: missing dependencies and cycles fail before any task starts. Shared dependencies run once, sequentially in declared dependency order; failure stops the remaining plan. Additional command-line arguments go only to the requested task, and task-local environment values do not flow into its dependencies.
+
+Tasks default to their declaring config root; a relative `dir` resolves from that root. Runtime selection and project environment layers use the invocation project, while each task's environment templates use its declaring root. No process-global directory change is needed. These semantics follow the pinned [task configuration reference](https://github.com/jdx/mise/blob/0db3fbe9efcee1944bc4990434c1a5ebcb480fca/docs/tasks/task-configuration.md), with sequential execution as an explicit OMG limitation.
+
+Unsupported execution-affecting task properties and `task_config` now produce an error during task discovery instead of being ignored. This includes post-dependencies, conditional execution, custom shells, sandbox controls, file tasks, dependency arguments/objects/patterns, and run/directory templates. Description and hide metadata are accepted; task-list visibility is not yet matched to mise. Namespaced dependencies can reference a declared task, but the existing OMG CLI task-name rules still limit directly requested names. The portable harness now has 37 passing tests; new actual-process regressions require the hosted Unix suite and are not covered by that Windows result.
 
 ## Migrating existing OMG projects
 
@@ -32,7 +42,7 @@ Before upgrading:
 3. Move environment directives you do not want OMG to consume out of the discovered configuration layers. Keep intended shared assignments in the desired project configuration and check child/local precedence. There is no compatibility switch that restores the former two-file-only environment resolver.
 4. Validate a benign explicit command in the project before running tasks with side effects. Review `_.source` directives first: discovery does not execute them, but explicit command/task environment resolution can.
 
-Automatic shell hooks continue selecting installed runtimes without importing project environment directives. This change does not make tool-pin selection or task discovery consume the additional layers. The release notes classify this migration as a breaking behavior change; the implementation branch does not itself publish or replace a tagged release.
+Automatic shell hooks continue selecting installed runtimes without importing project environment directives. The project-workflow increment also applies the additional layers to pins and task discovery. Review local/selected pins and ancestor tasks before upgrading: previously ignored pins can select a different runtime, dependencies now execute before their parent, and unsupported task controls now fail visibly. Tasks found from a subdirectory run from their declaring root by default. The release notes classify this migration as a breaking behavior change; the implementation branch does not itself publish or replace a tagged release.
 
 ## Baseline native project support (before this increment)
 

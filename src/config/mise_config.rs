@@ -4,6 +4,8 @@ use anyhow::{Context, Result};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+pub(crate) const MAX_CONFIG_FILES: usize = 256;
+
 #[derive(Debug, Clone)]
 pub(crate) struct Document {
     pub path: PathBuf,
@@ -57,7 +59,10 @@ fn add_document(
     let Some(text) = content else {
         return Ok(());
     };
-    anyhow::ensure!(documents.len() < 256, "Too many mise configuration files");
+    anyhow::ensure!(
+        documents.len() < MAX_CONFIG_FILES,
+        "Too many mise configuration files"
+    );
     let value: toml::Value = toml::from_str(&text)
         .with_context(|| format!("Failed to parse mise configuration {}", path.display()))?;
     // mise's legacy `.config/mise/mise*.toml` aliases resolve relative
@@ -127,80 +132,79 @@ pub(crate) fn load(start: &Path, env: &HashMap<String, String>) -> Result<Vec<Do
     let mut documents = Vec::new();
     let mut seen = HashSet::new();
     for root in roots {
-        // Pinned upstream LOCAL_CONFIG_FILENAMES order, with overlays applied
-        // at each directory rather than above the complete project hierarchy.
-        for group in [".config/mise", ".mise", "mise"] {
-            add_fragments(
-                &mut documents,
-                &mut seen,
-                &root.join(group).join("conf.d"),
-                root,
-            )?;
-            add_document(
-                &mut documents,
-                &mut seen,
-                root.join(group).join("config.toml"),
-                root,
-            )?;
-            if group == ".config/mise" {
-                add_document(
-                    &mut documents,
-                    &mut seen,
-                    root.join(".config/mise/mise.toml"),
-                    root,
-                )?;
-                add_document(
-                    &mut documents,
-                    &mut seen,
-                    root.join(".config/mise.toml"),
-                    root,
-                )?;
-            }
-        }
-        for name in ["mise.toml", ".mise.toml"] {
-            add_document(&mut documents, &mut seen, root.join(name), root)?;
-        }
-        let stems = [
-            ".config/mise/config",
-            ".config/mise",
-            "mise/config",
-            "mise",
-            ".mise/config",
-            ".mise",
-        ];
-        for name in [
-            ".config/mise/config.local.toml",
-            ".config/mise/mise.local.toml",
-            ".config/mise.local.toml",
-            ".mise/config.local.toml",
-            "mise/config.local.toml",
-            "mise.local.toml",
-            ".mise.local.toml",
-        ] {
-            add_document(&mut documents, &mut seen, root.join(name), root)?;
-        }
-        // Upstream appends each selected environment, including its local
-        // overrides, after the entire ordinary/local configuration list.
-        for selected_env in &selected {
-            for stem in stems {
-                add_document(
-                    &mut documents,
-                    &mut seen,
-                    root.join(format!("{stem}.{selected_env}.toml")),
-                    root,
-                )?;
-            }
-            for stem in stems {
-                add_document(
-                    &mut documents,
-                    &mut seen,
-                    root.join(format!("{stem}.{selected_env}.local.toml")),
-                    root,
-                )?;
-            }
-        }
+        append_directory(root, &selected, &mut documents, &mut seen)?;
     }
     Ok(documents)
+}
+
+/// Load only this directory's layers so callers can preserve their ancestor policy.
+pub(crate) fn load_directory(root: &Path, env: &HashMap<String, String>) -> Result<Vec<Document>> {
+    let selected = selected_environments(env)?;
+    let mut documents = Vec::new();
+    let mut seen = HashSet::new();
+    append_directory(root, &selected, &mut documents, &mut seen)?;
+    Ok(documents)
+}
+
+fn append_directory(
+    root: &Path,
+    selected: &[String],
+    documents: &mut Vec<Document>,
+    seen: &mut HashSet<PathBuf>,
+) -> Result<()> {
+    // Pinned upstream LOCAL_CONFIG_FILENAMES order, with overlays applied
+    // at each directory rather than above the complete project hierarchy.
+    for group in [".config/mise", ".mise", "mise"] {
+        add_fragments(documents, seen, &root.join(group).join("conf.d"), root)?;
+        add_document(documents, seen, root.join(group).join("config.toml"), root)?;
+        if group == ".config/mise" {
+            add_document(documents, seen, root.join(".config/mise/mise.toml"), root)?;
+            add_document(documents, seen, root.join(".config/mise.toml"), root)?;
+        }
+    }
+    for name in ["mise.toml", ".mise.toml"] {
+        add_document(documents, seen, root.join(name), root)?;
+    }
+    let stems = [
+        ".config/mise/config",
+        ".config/mise",
+        "mise/config",
+        "mise",
+        ".mise/config",
+        ".mise",
+    ];
+    for name in [
+        ".config/mise/config.local.toml",
+        ".config/mise/mise.local.toml",
+        ".config/mise.local.toml",
+        ".mise/config.local.toml",
+        "mise/config.local.toml",
+        "mise.local.toml",
+        ".mise.local.toml",
+    ] {
+        add_document(documents, seen, root.join(name), root)?;
+    }
+    // Upstream appends each selected environment, including its local
+    // overrides, after the entire ordinary/local configuration list.
+    for selected_env in selected {
+        for stem in stems {
+            add_document(
+                documents,
+                seen,
+                root.join(format!("{stem}.{selected_env}.toml")),
+                root,
+            )?;
+        }
+        for stem in stems {
+            add_document(
+                documents,
+                seen,
+                root.join(format!("{stem}.{selected_env}.local.toml")),
+                root,
+            )?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -208,6 +212,20 @@ mod compatibility {
     use super::super::mise_env::{Strictness, load_mise_env_chain};
     use std::collections::HashMap;
     use std::fs;
+
+    #[test]
+    fn directory_loader_does_not_read_ancestor_configuration() {
+        let root = tempfile::tempdir().unwrap();
+        let child = root.path().join("child");
+        fs::create_dir(&child).unwrap();
+        fs::write(root.path().join("mise.toml"), "invalid toml = [").unwrap();
+        fs::write(child.join("mise.toml"), "[tools]\nnode='20'\n").unwrap();
+        fs::write(child.join("mise.local.toml"), "[tools]\nnode='22'\n").unwrap();
+        let documents = super::load_directory(&child, &HashMap::new()).unwrap();
+        assert_eq!(documents.len(), 2);
+        assert_eq!(documents[0].value["tools"]["node"].as_str(), Some("20"));
+        assert_eq!(documents[1].value["tools"]["node"].as_str(), Some("22"));
+    }
 
     #[test]
     fn unrelated_files_do_not_block_optional_grouped_discovery() {

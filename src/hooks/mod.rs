@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::config::mise_tools::normalize_runtime_name;
 use crate::core::paths;
 use crate::runtimes::rust::{RustManager, RustToolchainSpec};
 use anyhow::{Context, Result};
@@ -51,23 +52,7 @@ const VERSION_FILES: &[(&str, &str)] = &[
     // Universal
     (".tool-versions", "multi"),
     ("package.json", "multi"),
-    // mise parity: project-local tool pins live in `mise.toml` under
-    // `[tools]`; OMG reads them natively instead of shelling out to mise.
-    ("mise.toml", "mise"),
-    (".mise.toml", "mise"),
 ];
-
-/// Normalize runtime name aliases to canonical names
-fn normalize_runtime_name(name: &str) -> String {
-    match name.to_lowercase().as_str() {
-        "nodejs" | "node" => "node".to_string(),
-        "bun" | "bunjs" => "bun".to_string(),
-        "python3" | "python" => "python".to_string(),
-        "golang" | "go" => "go".to_string(),
-        "rustlang" | "rust" => "rust".to_string(),
-        other => other.to_string(),
-    }
-}
 
 #[derive(Deserialize)]
 struct PackageJsonVersions {
@@ -397,45 +382,6 @@ fn parse_simple_version_file(
     Ok(())
 }
 
-/// Parse a `mise.toml`/`.mise.toml` `[tools]` table into version pins.
-///
-/// Values may be plain strings (`ripgrep = "14"`) or inline tables with a
-/// `version` key (`node = { version = "20" }`); backend prefixes such as
-/// `github:owner/repo` cannot map to a native manager and are skipped.
-/// Entries are lowest priority: existing pins from dedicated files win.
-fn parse_mise_toml_file(file_path: &Path, versions: &mut HashMap<String, String>) -> Result<()> {
-    let Some(content) = read_pin_file(file_path)? else {
-        return Ok(());
-    };
-    let document: toml::Value = toml::from_str(&content)
-        .with_context(|| format!("Failed to parse {}", file_path.display()))?;
-    let Some(tools) = document.get("tools").and_then(toml::Value::as_table) else {
-        return Ok(());
-    };
-    for (name, spec) in tools {
-        // Skip backend-qualified entries (`github:…`, `cargo:…`) and option
-        // tables without a plain version: they need a backend OMG does not
-        // implement rather than a version OMG can resolve.
-        if name.contains(':') {
-            continue;
-        }
-        let version = match spec {
-            toml::Value::String(version) => Some(version.clone()),
-            toml::Value::Table(table) => table
-                .get("version")
-                .and_then(toml::Value::as_str)
-                .map(str::to_owned),
-            _ => None,
-        };
-        if let Some(version) = version.filter(|version| !version.trim().is_empty()) {
-            versions
-                .entry(normalize_runtime_name(name))
-                .or_insert_with(|| version.trim().to_owned());
-        }
-    }
-    Ok(())
-}
-
 fn try_parse_version_file(
     filename: &str,
     file_path: &Path,
@@ -445,7 +391,6 @@ fn try_parse_version_file(
 ) -> Result<()> {
     match filename {
         ".tool-versions" => parse_tool_versions_file(file_path, versions)?,
-        "mise.toml" | ".mise.toml" => parse_mise_toml_file(file_path, versions)?,
         "global.json" => parse_global_json_file(file_path, versions)?,
         "rust-toolchain.toml" => parse_rust_toolchain_file(file_path, runtime, versions)?,
         "package.json" => {
@@ -466,6 +411,19 @@ fn try_parse_version_file(
 
 /// Detect version files in directory and parents
 pub fn detect_versions(start: &Path) -> Result<HashMap<String, String>> {
+    let selection = std::env::var("MISE_ENV")
+        .ok()
+        .map(|value| ("MISE_ENV".to_owned(), value))
+        .into_iter()
+        .collect();
+    detect_versions_with_env(start, &selection)
+}
+
+fn detect_versions_with_env(
+    start: &Path,
+    selection: &HashMap<String, String>,
+) -> Result<HashMap<String, String>> {
+    let mut mise_documents_read = 0;
     let mut versions = HashMap::new();
     let mut current = Some(start.to_path_buf());
     let mut is_start_directory = true;
@@ -492,6 +450,27 @@ pub fn detect_versions(start: &Path) -> Result<HashMap<String, String>> {
                     );
                 }
             }
+        }
+
+        // Each directory's dedicated pins win over its mise layers. Processing
+        // directories nearest-first also preserves child mise pins over parent
+        // dedicated files, while aliases are merged inside the layer resolver.
+        match crate::config::mise_config::load_directory(&dir, selection) {
+            Ok(documents) => {
+                mise_documents_read += documents.len();
+                anyhow::ensure!(
+                    mise_documents_read <= crate::config::mise_config::MAX_CONFIG_FILES,
+                    "Too many mise configuration files"
+                );
+                for (runtime, version) in crate::config::mise_tools::native_pins(&documents) {
+                    versions.entry(runtime).or_insert(version);
+                }
+            }
+            Err(error) if is_start_directory => return Err(error),
+            Err(error) => tracing::warn!(
+                "Ignoring invalid ancestor mise pins in {}: {error:#}",
+                dir.display()
+            ),
         }
 
         current = dir.parent().map(std::path::Path::to_path_buf);
@@ -2026,8 +2005,8 @@ path = "hostile"
             "[tools]\nnode = \"20\"\nripgrep = { version = \"14\" }\n\"cargo:exa\" = \"0.10\"\nempty = \"\"\n",
         )
         .unwrap();
-        let mut versions = HashMap::from([("node".to_string(), "18".to_string())]);
-        parse_mise_toml_file(&dir.path().join("mise.toml"), &mut versions).unwrap();
+        fs::write(dir.path().join(".node-version"), "18").unwrap();
+        let versions = detect_versions_with_env(dir.path(), &HashMap::new()).unwrap();
         // Dedicated pin files win over mise.toml.
         assert_eq!(versions.get("node").map(String::as_str), Some("18"));
         assert_eq!(versions.get("ripgrep").map(String::as_str), Some("14"));
@@ -2037,9 +2016,52 @@ path = "hostile"
         // Missing [tools] table is a no-op, not an error.
         let bare = tempdir().unwrap();
         fs::write(bare.path().join("mise.toml"), "[env]\nFOO = \"1\"\n").unwrap();
-        let mut empty = HashMap::new();
-        parse_mise_toml_file(&bare.path().join("mise.toml"), &mut empty).unwrap();
+        let empty = detect_versions_with_env(bare.path(), &HashMap::new()).unwrap();
         assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn mise_layers_preserve_nearest_directory_and_dedicated_pin_priority() {
+        let root = tempdir().unwrap();
+        let child = root.path().join("project");
+        fs::create_dir(&child).unwrap();
+        fs::write(root.path().join(".python-version"), "3.12").unwrap();
+        fs::write(root.path().join("mise.toml"), "[tools]\nnode='18'\n").unwrap();
+        fs::write(
+            child.join("mise.toml"),
+            "[tools]\nnodejs='20'\npython3='3.13'\n",
+        )
+        .unwrap();
+        fs::write(child.join("mise.local.toml"), "[tools]\nnode='22'\n").unwrap();
+
+        let pins = detect_versions_with_env(&child, &HashMap::new()).unwrap();
+        assert_eq!(pins.get("node").map(String::as_str), Some("22"));
+        assert_eq!(pins.get("python").map(String::as_str), Some("3.13"));
+
+        fs::write(child.join(".node-version"), "24").unwrap();
+        let pins = detect_versions_with_env(&child, &HashMap::new()).unwrap();
+        assert_eq!(pins.get("node").map(String::as_str), Some("24"));
+    }
+
+    #[test]
+    fn mise_selected_pins_do_not_import_environment_directives() {
+        let root = tempdir().unwrap();
+        fs::write(root.path().join("mise.local.toml"), "[tools]\nnode='20'\n").unwrap();
+        fs::write(root.path().join("mise.test.toml"), "[tools]\nnodejs='22'\n[env._]\nfile='missing.env'\nsource='missing.sh'\npath='hostile'\n").unwrap();
+        let selection = HashMap::from([("MISE_ENV".into(), "test".into())]);
+        let pins = detect_versions_with_env(root.path(), &selection).unwrap();
+        assert_eq!(pins, HashMap::from([("node".into(), "22".into())]));
+    }
+
+    #[test]
+    fn malformed_ancestor_mise_configuration_does_not_discard_child_pins() {
+        let root = tempdir().unwrap();
+        let child = root.path().join("project");
+        fs::create_dir(&child).unwrap();
+        fs::write(root.path().join("mise.toml"), "[tools\ninvalid").unwrap();
+        fs::write(child.join("mise.local.toml"), "[tools]\nnode='22'\n").unwrap();
+        let pins = detect_versions_with_env(&child, &HashMap::new()).unwrap();
+        assert_eq!(pins.get("node").map(String::as_str), Some("22"));
     }
 
     #[test]

@@ -2,6 +2,8 @@
 
 pub(crate) mod mise_config;
 pub(crate) mod mise_env;
+pub(crate) mod mise_tasks;
+pub(crate) mod mise_tools;
 mod settings;
 
 pub use settings::{AurBuildMethod, Settings};
