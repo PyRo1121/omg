@@ -19,6 +19,19 @@ The portable harness compiles the production modules directly: `cargo test --man
 
 This increment applies to environment resolution. Runtime pin selection and task discovery do not yet consume the shared loader. Global/system configuration, complete upstream template semantics, and backend/plugin parity remain outstanding. No full mise compatibility percentage is claimed.
 
+## Migrating existing OMG projects
+
+Applying previously ignored environment layers is an intentional behavior change for explicit `omg run` and task execution. Existing local files or a pre-existing `MISE_ENV` selection can change assignments, PATH additions, required-value validation, and explicitly sourced scripts after upgrading. This support does not require a new opt-in flag.
+
+Before upgrading:
+
+1. Review project and ancestor `mise.local.toml`, `.mise.local.toml`, selected-environment files, and grouped `.config/mise`, `.mise`, and `mise` configurations. Projects beneath your home directory can inherit its grouped configuration too; this is ancestor discovery, not an independent global/system configuration search.
+2. Check `MISE_ENV` in the invoking environment. Comma-separated selections are processed in order, with the final duplicate retained. Names accept ASCII letters, digits, underscores, and hyphens; other characters now cause an error. Unset `MISE_ENV` for commands that must not select named layers. That does not disable ordinary local overrides or fragments.
+3. Move environment directives you do not want OMG to consume out of the discovered configuration layers. Keep intended shared assignments in the desired project configuration and check child/local precedence. There is no compatibility switch that restores the former two-file-only environment resolver.
+4. Validate a benign explicit command in the project before running tasks with side effects. Review `_.source` directives first: discovery does not execute them, but explicit command/task environment resolution can.
+
+Automatic shell hooks continue selecting installed runtimes without importing project environment directives. This change does not make tool-pin selection or task discovery consume the additional layers. The release notes classify this migration as a breaking behavior change; the implementation branch does not itself publish or replace a tagged release.
+
 ## Baseline native project support (before this increment)
 
 | Area | Evidence in OMG | Remaining compatibility work |
