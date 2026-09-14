@@ -113,6 +113,15 @@ class QemuWorkflowTests(unittest.TestCase):
 
 
 class ReportingIntegrationTests(unittest.TestCase):
+    def test_published_guests_resolve_contract_before_running_without_token(self):
+        prepare = step('Prepare published release')
+        self.assertIn("if: needs.prepare.outputs.staged != 'true'", prepare)
+        self.assertIn('prepare-qemu-release.py', prepare)
+        run = step('Run disposable guest lifecycle + read benchmarks + inventory rows')
+        self.assertIn('--release-dir published', run)
+        self.assertIn('--inventory-file published/cases.tsv', run)
+        self.assertNotIn('GH_TOKEN:', run)
+
     def test_guests_configure_reporter_and_preserve_delivery_logs(self):
         for job in ('guest', 'guest-arm'):
             body = TEXT.split('\n  ' + job + ':\n', 1)[1].split('\n  #', 1)[0]
@@ -139,6 +148,28 @@ class ReportingIntegrationTests(unittest.TestCase):
 
 
 class SecurityBoundaryTests(unittest.TestCase):
+    def test_pr_jobs_never_receive_sentry_secrets(self):
+        blocks = re.split(r'(?=^      - )', TEXT, flags=re.M)
+        secret_blocks = [block for block in blocks if 'OMG_SMOKE_SENTRY_DSN:' in block]
+        self.assertEqual(len(secret_blocks), 3)
+        for block in secret_blocks:
+            self.assertIn("        if: github.event_name != 'pull_request'", block)
+
+    def test_github_token_is_step_scoped(self):
+        self.assertNotRegex(TEXT, r'(?m)^  GH_TOKEN:')
+        for block in re.split(r'(?=^      - )', TEXT, flags=re.M):
+            if 'GH_TOKEN:' in block:
+                self.assertTrue(any(name in block for name in (
+                    '- name: Resolve selection', '- name: Prepare published release',
+                    '- name: File or update failure issues')), block)
+                self.assertIn("github.event_name != 'pull_request'", block)
+
+    def test_kvm_access_is_user_scoped_and_mandatory(self):
+        block = step('Open KVM device permissions')
+        self.assertNotIn('chmod 666', block)
+        self.assertNotIn('|| true', block)
+        self.assertIn('setfacl -m "u:$(id -u):rw" /dev/kvm', block)
+
     def test_pull_requests_cannot_select_configurable_arm_runners(self):
         bash = os.environ.get('OMG_TEST_BASH') or shutil.which('bash')
         if not bash:
