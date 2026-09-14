@@ -1,10 +1,12 @@
 # OMG on Omarchy
 
-**Package and developer-tool installation with security checks built into the workflow.**
+**Safer installation defaults, with fewer security settings to assemble yourself.**
 
 OMG existed before its creator switched to Omarchy. Omarchy became his daily driver, and using it every day made the needs of people arriving from Windows and macOS particularly relevant: finding software, selecting runtimes, and understanding what an installation is allowed to do.
 
 OMG brings those tasks into one CLI. Its case for Omarchy is concrete: apply installation controls consistently so users have fewer security settings to discover and assemble themselves. Omarchy should continue to own operating-system updates, migrations, and recovery.
+
+A user should not need to remember which command disables install scripts, when to verify downloaded packages, or how to separate a tool's dependencies from the rest of the machine. OMG applies those decisions on its managed installation paths. Experienced users benefit from consistency too: the same checks run again when they install or update another tool.
 
 This is a proposal for evaluation, not an announcement of Omarchy adoption or endorsement.
 
@@ -41,6 +43,21 @@ The managed-tool defaults and exception handling are visible in [`src/cli/tool.r
 For an npm-distributed command-line tool, OMG's managed installer first materializes the dependency tree with `--ignore-scripts`. It then runs `npm audit signatures` and refuses activation if that check fails, unless the user explicitly allows an unverified installation for that package. An approved script phase runs after verification. [Verification ordering commit](https://github.com/PyRo1121/omg/commit/d356fee5)
 
 That is a specific advantage over an install performed without those controls. It builds on npm's capabilities and makes their application part of OMG's workflow. Signature verification authenticates evidence about packages; it does not establish that signed code is harmless.
+
+### Compare the actual defaults
+
+The baseline matters. These comparisons use upstream documentation checked on September 13, 2026, and the OMG implementation linked above. They describe specific behaviors, not a measured percentage reduction in compromise risk.
+
+| Underlying tool | Documented baseline | OMG's managed workflow |
+| --- | --- | --- |
+| npm 11.19.1 | Unreviewed dependency scripts can run with a notice unless strict script policy or script suppression is configured. | Suppresses lifecycle scripts during the initial install and checks signatures before activation or an explicitly allowed script phase. |
+| npm 12 | Unapproved dependency scripts are already blocked with a warning. Script blocking alone is therefore not an exclusive OMG advantage. | Combines script suppression with a required signature-check step before activation, controlled manager configuration, staging, and policy receipts. |
+| pip | Can install source distributions; `--only-binary=:all:` is an available option that rejects them. | Applies that option by default for managed Python tools, in a dedicated virtual environment, unless explicitly overridden. |
+| Cargo | `cargo install` normally ignores a packaged lockfile and resolves dependencies again. | Supplies `--locked` by default. This constrains dependency drift, but a lockfile can also retain older dependencies; it is not a vulnerability verdict. |
+
+Sources: [npm 11 script policy](https://docs.npmjs.com/cli/v11/using-npm/config/#strict-allow-scripts), [npm 12 script policy](https://docs.npmjs.com/cli/v12/using-npm/config/#strict-allow-scripts), [npm signature verification](https://docs.npmjs.com/verifying-registry-signatures/), [pip binary-only option](https://pip.pypa.io/en/stable/cli/pip_install/#cmdoption-only-binary), and [Cargo lockfile behavior](https://doc.rust-lang.org/cargo/commands/cargo-install.html#dealing-with-the-lockfile).
+
+The practical benefit is reduced reliance on remembering and configuring these controls separately. A knowledgeable user can reproduce many of them with native tools. OMG makes their application repeatable on its managed paths and adds installation handoff and activation controls. Commit links establish inspectable implementation; neither commit volume nor these comparisons establish that OMG is safer than every possible native-tool configuration.
 
 This applies to `omg tool install`'s managed npm path. Selecting Node through `omg use node` puts its vendor tools on PATH; subsequent direct `npm install` commands are not intercepted or automatically hardened by OMG. Project tasks also execute project code. See [runtime management](runtimes.md).
 
