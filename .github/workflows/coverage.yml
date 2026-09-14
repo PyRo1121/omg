@@ -89,11 +89,26 @@ jobs:
             coverage-target-${{ steps.lockfile.outputs.hash }}-
             coverage-target-
 
+      - name: Prepare unprivileged coverage user
+        run: |
+          useradd --create-home --shell /bin/bash omg-coverage
+          coverage_cargo_home="${CARGO_HOME:-$HOME/.cargo}"
+          coverage_rustup_home="${RUSTUP_HOME:-$HOME/.rustup}"
+          chown -R omg-coverage:omg-coverage "$GITHUB_WORKSPACE" "$coverage_cargo_home"
+          chmod o+x "$HOME"
+          printf 'CARGO_HOME=%s\nRUSTUP_HOME=%s\n' \
+            "$coverage_cargo_home" "$coverage_rustup_home" >> "$GITHUB_ENV"
+
       # Run tests once with --no-report, then generate reports separately
       # This avoids running the full test suite 3 times
       - name: Run tests with coverage instrumentation
         run: |
-          cargo llvm-cov nextest \
+          # Production root execution intentionally ignores fixture overrides.
+          # Run the complete suite with the normal user configuration contract.
+          runuser -u omg-coverage -- env \
+            HOME=/home/omg-coverage \
+            CARGO_HOME="$CARGO_HOME" RUSTUP_HOME="$RUSTUP_HOME" PATH="$PATH" \
+            cargo llvm-cov nextest \
             --features arch,pgp,license \
             --locked \
             --no-fail-fast \

@@ -352,10 +352,12 @@ async fn mirror_git_repository(url: &str, destination: &Path) -> Result<()> {
         .output()
         .await
         .context("Failed to run git clone --mirror")?;
+    let stderr =
+        crate::cli::style::sanitize_terminal_text(&String::from_utf8_lossy(&output.stderr));
     anyhow::ensure!(
         output.status.success(),
         "git clone --mirror failed for {url}: {}",
-        String::from_utf8_lossy(&output.stderr).trim()
+        stderr.trim()
     );
 
     tokio::fs::rename(&staging_path, destination)

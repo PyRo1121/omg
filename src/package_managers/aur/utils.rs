@@ -162,20 +162,38 @@ pub fn original_user_home() -> anyhow::Result<Option<PathBuf>> {
     require_account_home(&user, account.map(|account| account.dir)).map(Some)
 }
 
+pub(crate) fn sudo_as_user_program(user: &str, program: &str) -> Result<std::process::Command> {
+    anyhow::ensure!(
+        !user.is_empty() && !user.starts_with('-') && !user.chars().any(char::is_control),
+        "Invalid original user name"
+    );
+    let account = nix::unistd::User::from_name(user)
+        .with_context(|| format!("Failed to resolve original user '{user}'"))?
+        .with_context(|| format!("Original user '{user}' has no system account"))?;
+    anyhow::ensure!(
+        account.uid.as_raw() != 0,
+        "Refusing to de-escalate a command to the root account"
+    );
+
+    let program = crate::core::privilege::trusted_program(program)?;
+    let mut command = crate::core::privilege::system_command("sudo")?;
+    command.args(["-H", "-u", user, "--"]).arg(program);
+    Ok(command)
+}
+
 fn sudo_as_user_command(
     user: &str,
     program: &str,
     flags: &[&str],
     path: &Path,
 ) -> Result<std::process::Command> {
-    let mut command = crate::core::privilege::system_command("sudo")?;
-    command
-        .arg("-u")
-        .arg(user)
-        .arg(program)
-        .args(flags)
-        .arg("--")
-        .arg(path.as_os_str());
+    anyhow::ensure!(
+        path.is_absolute() && path.parent().is_some_and(|parent| parent != path),
+        "Refusing unsafe user-owned path: {}",
+        path.display()
+    );
+    let mut command = sudo_as_user_program(user, program)?;
+    command.args(flags).arg("--").arg(path.as_os_str());
     Ok(command)
 }
 
@@ -270,16 +288,10 @@ mod tests {
     }
 
     #[test]
-    fn sudo_as_user_command_always_separates_path_from_options() {
-        let command = sudo_as_user_command("builder", "rm", &["-rf"], Path::new("-cache")).unwrap();
-        assert_eq!(
-            command.get_program(),
-            crate::core::privilege::trusted_program("sudo").unwrap()
-        );
-        assert_eq!(
-            command.get_args().collect::<Vec<_>>(),
-            ["-u", "builder", "rm", "-rf", "--", "-cache"]
-        );
+    fn sudo_as_user_command_rejects_unsafe_identity_and_paths() {
+        assert!(sudo_as_user_program("-n", "rm").is_err());
+        assert!(sudo_as_user_command("builder", "rm", &["-rf"], Path::new("-cache")).is_err());
+        assert!(sudo_as_user_command("builder", "rm", &["-rf"], Path::new("/")).is_err());
     }
 
     #[test]

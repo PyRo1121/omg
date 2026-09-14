@@ -554,11 +554,16 @@ fn apt_install_error(output: &std::process::Output) -> anyhow::Error {
     let code = output.status.code().unwrap_or(1);
     let stderr = String::from_utf8_lossy(&output.stderr);
     let lines: Vec<&str> = stderr.lines().collect();
-    let tail = if lines.len() > MAX_TAIL_LINES {
-        lines[lines.len() - MAX_TAIL_LINES..].join("\n")
+    let tail_lines = if lines.len() > MAX_TAIL_LINES {
+        &lines[lines.len() - MAX_TAIL_LINES..]
     } else {
-        lines.join("\n")
+        &lines[..]
     };
+    let tail = tail_lines
+        .iter()
+        .map(|line| crate::cli::style::sanitize_terminal_text(line))
+        .collect::<Vec<_>>()
+        .join("\n");
     anyhow!(
         "apt-get failed to install Debian packages with exit code {code}; apt reported:\n{tail}"
     )
@@ -780,5 +785,20 @@ mod tests {
         assert!(message.contains("final diagnosis"));
         assert!(!message.contains("progress line 0"));
         assert!(message.contains("progress line 29"));
+    }
+
+    #[test]
+    fn install_error_sanitizes_terminal_controls_from_repository_text() {
+        let message = apt_install_error(&failed_output(
+            b"repository package \x1b]52;c;secret\x07 failed\nnext line\n",
+        ))
+        .to_string();
+        assert!(
+            !message
+                .chars()
+                .any(|character| character != '\n' && character.is_control())
+        );
+        assert!(message.contains("repository package ]52;c;secret failed"));
+        assert!(message.contains("\nnext line"));
     }
 }

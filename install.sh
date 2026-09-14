@@ -135,6 +135,10 @@ install_binary() {
     return 1
   fi
 
+  if [[ -d "$dst" && ! -L "$dst" ]]; then
+    error "Refusing to install over a directory: $dst"
+  fi
+
   if ! staging_dir=$(mktemp -d "$(dirname "$dst")/omg-install.XXXXXX"); then
     error "Failed to create a private staging directory in $(dirname "$dst")"
   fi
@@ -145,11 +149,25 @@ install_binary() {
     error "Failed to copy $(basename "$src") to $INSTALL_DIR"
   fi
   chmod +x "$tmp_dst"
-  if ! mv -f "$tmp_dst" "$dst"; then
+  if ! rename_install_binary "$tmp_dst" "$dst"; then
     rm -rf "$staging_dir"
     error "Failed to install $dst"
   fi
   rmdir "$staging_dir" 2>/dev/null || rm -rf "$staging_dir"
+}
+
+rename_install_binary() {
+  # Destination is always a rename target, even if it became a directory
+  # after staging began. BSD mv -h still makes a racy directory decision.
+  if [[ $(uname -s) == Darwin ]]; then
+    if [[ ! -x /usr/bin/perl ]]; then
+      warn "Secure binary installation requires /usr/bin/perl on macOS"
+      return 1
+    fi
+    /usr/bin/perl -e 'rename($ARGV[0], $ARGV[1]) or die "Binary rename failed: $!\n"' -- "$1" "$2"
+  else
+    mv -fT "$1" "$2"
+  fi
 }
 
 check_runtime_dependencies() {

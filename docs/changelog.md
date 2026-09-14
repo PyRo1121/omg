@@ -1,5 +1,48 @@
 # Changelog
 
+## Unreleased
+
+### Tool supply-chain hardening
+
+- Isolate npm, Cargo, pip, and Go tool installations from ambient environment
+  credentials and package-manager configuration.
+- Replace the caller-controlled executable search path with root-controlled
+  system directories during Linux tool installations.
+- Retain only the resolved manager's executable directory for user-managed
+  runtimes and reject manager executables resolved from the current project.
+- Run secured manager commands from the Linux filesystem root, isolate
+  `CARGO_HOME`, disable Cargo's Git CLI delegation, and disable pip configuration
+  files to prevent parent/config-based source substitution.
+- Apply manager-specific package grammar so npm GitHub shorthands, local paths,
+  Git sources, and other alternate-source specifications cannot cross the
+  registry-only tool-install boundary.
+- Disable npm lifecycle scripts by default and verify registry signatures and
+  provenance before activating an installed tool.
+- When npm scripts are explicitly approved, install inertly and verify the
+  dependency tree before running the lifecycle-script rebuild phase.
+- Require Python wheels, Cargo lockfiles, and Go's public checksum database by
+  default, with exact package-scoped compatibility overrides documented in the
+  CLI reference.
+- Disable CGO and automatic Go toolchain downloads during tool installation by
+  default, with independent package-scoped exceptions.
+- Close managed installer standard input and set Linux `no_new_privs` before
+  execution so build hooks cannot request terminal credentials or gain
+  privileges through setuid, setgid, or file-capability programs. This follows
+  the Linux kernel
+  [`no_new_privs` contract](https://docs.kernel.org/userspace-api/no_new_privs.html).
+- Support private registry workflows through independently scoped environment,
+  script/build, lockfile, and signature-verification exceptions.
+- Print every matching package-scoped security exception before starting an
+  install or update so persisted overrides cannot weaken policy silently.
+- Persist `.omg-security-receipt.json` with every managed tool so audits can
+  inspect the effective source, verification, script/build, and runtime policy.
+- Bind each receipt to the published executable and script targets with
+  streaming SHA-256 hashes and stable relative paths.
+- Resolve and contain-check tool binary entries before activation and again
+  while linking, rejecting package symlinks that target host files.
+- Keep the previous managed tool until shared-bin activation completes and
+  restore its directory and command links when activation fails.
+
 All notable changes to OMG are documented here.
 
 OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm, pyenv, rustup, and more with a single tool.

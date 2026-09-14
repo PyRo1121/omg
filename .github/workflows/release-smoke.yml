@@ -6,7 +6,11 @@ on:
       - ".github/workflows/release-smoke.yml"
       - "scripts/release-smoke.sh"
       - "scripts/test-release-smoke.sh"
+      - "scripts/test-release-provenance.sh"
       - "scripts/report-smoke-sentry.sh"
+      - "scripts/ci-smoke-report.py"
+      - "scripts/test_ci_smoke_report.py"
+      - "scripts/test_release_workflow_boundaries.py"
       - "tests/cli_behavior_inventory.tsv"
   workflow_dispatch:
     inputs:
@@ -39,7 +43,32 @@ jobs:
       - name: Test release smoke coordinator
         run: ./scripts/test-release-smoke.sh
 
+      - name: Test native release provenance gate
+        run: bash scripts/test-release-provenance.sh
+
+  resolve-release:
+    name: Resolve release once
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      release_tag: ${{ steps.release.outputs.release_tag }}
+    steps:
+      - name: Resolve one release tag
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ inputs.release_tag || 'latest' }}
+        run: |
+          set -euo pipefail
+          tag="$RELEASE_TAG"
+          if [[ "$tag" == latest ]]; then
+            tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
+          fi
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Invalid release tag"; exit 1; }
+          echo "release_tag=$tag" >> "$GITHUB_OUTPUT"
+
   smoke:
+    needs: [runner-fixtures, resolve-release]
     name: "Smoke ${{ matrix.distro }}"
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -53,29 +82,37 @@ jobs:
           persist-credentials: false
 
       - name: Configure smoke Sentry reporting (opt-in)
-        # Without this file report-smoke-sentry.sh exits 0 silently, so a
-        # missing secret must be a visible notice, not a quiet no-op.
-        run: |
-          if [[ -n "${{ secrets.OMG_SMOKE_SENTRY_DSN }}" ]]; then
-            dsn='${{ secrets.OMG_SMOKE_SENTRY_DSN }}'
-            [[ "$dsn" =~ ^https://[A-Za-z0-9]+@[a-z0-9.-]+\.sentry\.io/[0-9]+$ ]] || { echo "::error::OMG_SMOKE_SENTRY_DSN has an unexpected shape"; exit 1; }
-            mkdir -p ~/.config/omg-smoke
-            jq -Rn --arg dsn "$dsn" '{dsn:$dsn}' > ~/.config/omg-smoke/sentry.json
-            chmod 600 ~/.config/omg-smoke/sentry.json
-            echo "Sentry smoke reporting enabled"
-          else
-            echo "Sentry smoke reporting disabled: OMG_SMOKE_SENTRY_DSN secret is not set"
-          fi
+        env:
+          OMG_SMOKE_SENTRY_DSN: ${{ secrets.OMG_SMOKE_SENTRY_DSN }}
+        run: python3 scripts/ci-smoke-report.py configure
 
       - name: Run release artifact smoke test
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ inputs.release_tag || 'latest' }}
+          RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
         run: |
           ./scripts/release-smoke.sh \
             --release "$RELEASE_TAG" \
             --distro "${{ matrix.distro }}" \
             --evidence-dir release-smoke-evidence
+
+      - name: Preserve setup failure and surface reporting
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+          DISTRO: ${{ matrix.distro }}
+          OMG_SMOKE_ENVIRONMENT: release-smoke
+          OMG_SMOKE_RELEASE: ${{ needs.resolve-release.outputs.release_tag }}
+        run: |
+          evidence="release-smoke-evidence"
+          if [[ "$JOB_STATUS" == failure ]] && ! find "$evidence" -name results.json -type f -print -quit 2>/dev/null | grep -q .; then
+            python3 scripts/ci-smoke-report.py status --distro "$DISTRO" \
+              --case-id "smoke-$DISTRO-setup" --status failure \
+              --evidence-dir "$evidence/run-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          fi
+          if [[ -d "$evidence" ]]; then
+            find "$evidence" -name reporting.log -type f -exec cat {} +
+          fi
 
       - name: Upload per-case evidence
         if: always()
@@ -86,6 +123,7 @@ jobs:
           if-no-files-found: warn
 
   smoke-macos:
+    needs: [runner-fixtures, resolve-release]
     name: "Smoke macos (native)"
     runs-on: macos-14
     timeout-minutes: 30
@@ -101,19 +139,9 @@ jobs:
           persist-credentials: false
 
       - name: Configure smoke Sentry reporting (opt-in)
-        # Same opt-in as the container legs; without this file
-        # report-smoke-sentry.sh exits 0 silently.
-        run: |
-          if [[ -n "${{ secrets.OMG_SMOKE_SENTRY_DSN }}" ]]; then
-            dsn='${{ secrets.OMG_SMOKE_SENTRY_DSN }}'
-            [[ "$dsn" =~ ^https://[A-Za-z0-9]+@[a-z0-9.-]+\.sentry\.io/[0-9]+$ ]] || { echo "::error::OMG_SMOKE_SENTRY_DSN has an unexpected shape"; exit 1; }
-            mkdir -p ~/.config/omg-smoke
-            jq -Rn --arg dsn "$dsn" '{dsn:$dsn}' > ~/.config/omg-smoke/sentry.json
-            chmod 600 ~/.config/omg-smoke/sentry.json
-            echo "Sentry smoke reporting enabled"
-          else
-            echo "Sentry smoke reporting disabled: OMG_SMOKE_SENTRY_DSN secret is not set"
-          fi
+        env:
+          OMG_SMOKE_SENTRY_DSN: ${{ secrets.OMG_SMOKE_SENTRY_DSN }}
+        run: python3 scripts/ci-smoke-report.py configure
 
       - name: Install GNU timeout
         run: brew install coreutils
@@ -126,17 +154,11 @@ jobs:
         # GitHub computes server-side from the uploaded bytes instead.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ inputs.release_tag || 'latest' }}
+          RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
         run: |
           set -euo pipefail
           repo="$GITHUB_REPOSITORY"
-          if [[ "$RELEASE_TAG" == "latest" ]]; then
-            # Resolve exactly as release-smoke.sh does so the pins match the
-            # assets it will download.
-            tag="$(gh release view --repo "$repo" --json tagName --jq .tagName)"
-          else
-            tag="$RELEASE_TAG"
-          fi
+          tag="$RELEASE_TAG"
           release_json="$(gh api "repos/${repo}/releases/tags/${tag}")"
           total="$(jq '[.assets[] | select(.name | endswith(".tar.gz"))] | length' <<<"$release_json")"
           pins="$(jq -r '.assets[] | select(.name | endswith(".tar.gz")) | select(.digest != null) | "\(.digest | sub("^sha256:"; ""))  \(.name)"' <<<"$release_json")"
@@ -151,13 +173,31 @@ jobs:
       - name: Run release artifact smoke test (native)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ inputs.release_tag || 'latest' }}
+          RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
           OMG_SMOKE_DIGEST_PIN_FILE: ${{ github.workspace }}/smoke-digest-pins.txt
         run: |
           ./scripts/release-smoke.sh \
             --release "$RELEASE_TAG" \
             --distro macos --executor native \
             --evidence-dir release-smoke-evidence-macos
+
+      - name: Preserve setup failure and surface reporting
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+          DISTRO: macos
+          OMG_SMOKE_ENVIRONMENT: release-smoke
+          OMG_SMOKE_RELEASE: ${{ needs.resolve-release.outputs.release_tag }}
+        run: |
+          evidence="release-smoke-evidence-macos"
+          if [[ "$JOB_STATUS" == failure ]] && ! find "$evidence" -name results.json -type f -print -quit 2>/dev/null | grep -q .; then
+            python3 scripts/ci-smoke-report.py status --distro "$DISTRO" \
+              --case-id "smoke-$DISTRO-setup" --status failure \
+              --evidence-dir "$evidence/run-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          fi
+          if [[ -d "$evidence" ]]; then
+            find "$evidence" -name reporting.log -type f -exec cat {} +
+          fi
 
       - name: Upload per-case evidence
         if: always()
@@ -170,7 +210,7 @@ jobs:
   #########################################################################
   # File/update one issue per QA failure (nightly only).
   # One-time bootstrap: create the `qa-failure` label in repo settings.
-  # continue-on-error: filing must never fail the build.
+  # Filing failures remain visible; test conclusions are retained separately.
   #########################################################################
   file-issues:
     name: "File QA issues"
@@ -181,7 +221,6 @@ jobs:
       issues: write
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    continue-on-error: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -191,14 +230,16 @@ jobs:
         with:
           pattern: release-smoke-*
           path: evidence/
-          merge-multiple: true
+          merge-multiple: false
 
       - name: File or update failure issues
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-          shopt -s nullglob
-          for results in evidence/**/results.json; do
+          shopt -s nullglob globstar
+          reports=(evidence/**/results.json)
+          (( ${#reports[@]} > 0 )) || { echo "::error::No smoke reports downloaded"; exit 1; }
+          for results in "${reports[@]}"; do
             ./scripts/qa-file-issue.sh "$results" --run-url "$run_url" --source release-smoke
           done

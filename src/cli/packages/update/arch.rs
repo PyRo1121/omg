@@ -95,18 +95,22 @@ fn screen_aur_updates_against_policy(
     screened
 }
 
-const fn update_phase_context(dry_run: bool, no_sync: bool) -> &'static str {
+const fn update_phase_context(check_only: bool, dry_run: bool, no_sync: bool) -> &'static str {
     if dry_run {
         if no_sync {
             "Dry run · cached"
         } else {
             "Dry run · checking for updates"
         }
-    } else if no_sync {
+    } else if check_only || no_sync {
         "Checking for updates · cached"
     } else {
         "Refreshing catalogs"
     }
+}
+
+const fn should_sync(no_sync: bool, check_only: bool, dry_run: bool) -> bool {
+    !no_sync && !check_only && !dry_run
 }
 
 pub async fn update_fast() -> Result<()> {
@@ -196,9 +200,13 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool, no_sync: bool) -
 
     let needs_deferred_sync = !check_only && !dry_run && !crate::core::caps::can_write_pacman_db();
 
-    modern_ui::print_phase_header("🔄", "Update", update_phase_context(dry_run, no_sync));
+    modern_ui::print_phase_header(
+        "🔄",
+        "Update",
+        update_phase_context(check_only, dry_run, no_sync),
+    );
 
-    if !no_sync {
+    if should_sync(no_sync, check_only, dry_run) {
         // Do not animate here. `pm.sync()` elevates and the child owns the
         // per-repository lanes; a parent spinner hides the sudo prompt and
         // reprints itself as a second "Syncing package databases" bar.
@@ -529,15 +537,30 @@ mod tests {
 
     #[test]
     fn update_phase_context_keeps_check_wording() {
-        assert_eq!(update_phase_context(false, false), "Refreshing catalogs");
         assert_eq!(
-            update_phase_context(false, true),
+            update_phase_context(false, false, false),
+            "Refreshing catalogs"
+        );
+        assert_eq!(
+            update_phase_context(false, false, true),
             "Checking for updates · cached"
         );
         assert_eq!(
-            update_phase_context(true, false),
+            update_phase_context(false, true, false),
             "Dry run · checking for updates"
         );
+        assert_eq!(
+            update_phase_context(true, false, false),
+            "Checking for updates · cached"
+        );
+    }
+
+    #[test]
+    fn previews_and_checks_never_refresh_package_databases() {
+        assert!(should_sync(false, false, false));
+        assert!(!should_sync(false, false, true));
+        assert!(!should_sync(false, true, false));
+        assert!(!should_sync(true, false, false));
     }
 
     #[test]

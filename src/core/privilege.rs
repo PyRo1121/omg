@@ -65,6 +65,9 @@ pub fn system_command(program: &str) -> anyhow::Result<std::process::Command> {
     for name in PRIVILEGED_ENV_SCRUB {
         command.env_remove(name);
     }
+    for name in dangerous_prefixed_env_names() {
+        command.env_remove(name);
+    }
     Ok(command)
 }
 
@@ -72,14 +75,113 @@ pub fn sudo_command() -> anyhow::Result<tokio::process::Command> {
     Ok(system_command("sudo")?.into())
 }
 
-/// Linux keeps the executing inode pinned, even if ~/.local/bin/omg is replaced.
-/// Never canonicalize this proc path back to the mutable installation pathname.
+/// Effective identity of the account that initiated an elevated process.
+///
+/// Numeric `SUDO_UID` is intentionally ignored: permissive sudoers `SETENV`
+/// rules can preserve caller-selected numeric values. `sudo` and `doas`
+/// establish an invoking user name; resolving that name through the system
+/// account database gives ownership checks and audit records one consistent
+/// identity source.
+pub fn invoking_uid() -> anyhow::Result<u32> {
+    use anyhow::Context;
+
+    let effective_uid = rustix::process::geteuid().as_raw();
+    if effective_uid != 0 {
+        return Ok(effective_uid);
+    }
+    let valid_user = |user: &String| {
+        !user.is_empty() && !user.starts_with('-') && !user.chars().any(char::is_control)
+    };
+    let Some(user) = std::env::var("SUDO_USER")
+        .ok()
+        .filter(valid_user)
+        .or_else(|| std::env::var("DOAS_USER").ok().filter(valid_user))
+    else {
+        return Ok(0);
+    };
+    let account = nix::unistd::User::from_name(&user)
+        .with_context(|| format!("Failed to resolve invoking account '{user}'"))?
+        .with_context(|| format!("Invoking account '{user}' does not exist"))?;
+    Ok(account.uid.as_raw())
+}
+
+#[cfg(target_os = "linux")]
+struct ElevationPathEntry {
+    owner: u32,
+    mode: u32,
+    is_file: bool,
+    is_directory: bool,
+    device: u64,
+    inode: u64,
+}
+
+/// Validate the namespace from root outward, establishing each trusted parent
+/// before looking at its child. Unlike system-program lookup, symlinks are not
+/// canonicalized: a candidate must name the running inode in a namespace that
+/// an unprivileged account cannot replace. Root-admin replacement remains within
+/// the trusted administrative boundary.
+#[cfg(target_os = "linux")]
+fn root_controlled_elevation_path(
+    candidate: &std::path::Path,
+    running_identity: (u64, u64),
+    mut inspect: impl FnMut(&std::path::Path) -> std::io::Result<ElevationPathEntry>,
+) -> bool {
+    use std::path::{Component, PathBuf};
+
+    if !candidate.is_absolute() {
+        return false;
+    }
+    let mut prefix = PathBuf::new();
+    let mut components = candidate.components().peekable();
+    while let Some(component) = components.next() {
+        if !matches!(component, Component::RootDir | Component::Normal(_)) {
+            return false;
+        }
+        prefix.push(component);
+        let Ok(entry) = inspect(&prefix) else {
+            return false;
+        };
+        if entry.owner != 0 || entry.mode & 0o022 != 0 {
+            return false;
+        }
+        if components.peek().is_none() {
+            return entry.is_file
+                && entry.mode & 0o111 != 0
+                && (entry.device, entry.inode) == running_identity;
+        }
+        if !entry.is_directory {
+            return false;
+        }
+    }
+    false
+}
+
+/// Root-controlled Linux installations can re-exec directly in containers that
+/// deny cross-UID procfs access. Mutable installations retain the pinned proc
+/// inode. Selection happens before sudo, never as a retry after payload failure.
 fn elevation_executable() -> anyhow::Result<std::path::PathBuf> {
     #[cfg(target_os = "linux")]
     {
-        let path = std::path::PathBuf::from(format!("/proc/{}/exe", std::process::id()));
-        std::fs::metadata(&path)?;
-        Ok(path)
+        use std::os::unix::fs::MetadataExt;
+
+        let pinned = std::path::PathBuf::from(format!("/proc/{}/exe", std::process::id()));
+        let running = std::fs::metadata(&pinned)?;
+        if let Ok(candidate) = std::fs::read_link(&pinned)
+            && root_controlled_elevation_path(&candidate, (running.dev(), running.ino()), |path| {
+                let metadata = std::fs::symlink_metadata(path)?;
+                Ok(ElevationPathEntry {
+                    owner: metadata.uid(),
+                    mode: metadata.mode(),
+                    is_file: metadata.is_file(),
+                    is_directory: metadata.is_dir(),
+                    device: metadata.dev(),
+                    inode: metadata.ino(),
+                })
+            })
+        {
+            return Ok(candidate);
+        }
+        Ok(pinned)
     }
     #[cfg(not(target_os = "linux"))]
     trusted_executable_path(&std::env::current_exe()?)
@@ -90,6 +192,9 @@ fn elevation_executable() -> anyhow::Result<std::path::PathBuf> {
 const PRIVILEGED_ENV_SCRUB: &[&str] = &[
     // Package-manager configuration can define root-executed transaction hooks.
     "APT_CONFIG",
+    "DPKG_ROOT",
+    "DPKG_ADMINDIR",
+    "RPM_CONFIGDIR",
     "OMG_PACMAN_CONF",
     "OMG_PACMAN_ROOT",
     "OMG_PACMAN_DB_DIR",
@@ -175,6 +280,21 @@ fn scrub_privileged_env(command: &mut tokio::process::Command) {
     for name in PRIVILEGED_ENV_SCRUB {
         command.env_remove(name);
     }
+    for name in dangerous_prefixed_env_names() {
+        command.env_remove(name);
+    }
+}
+
+/// DNF repository files may interpolate arbitrary `DNF_VAR_*` names. Remove
+/// every inherited instance because an exact-name denylist cannot cover them.
+fn dangerous_prefixed_env_names() -> Vec<std::ffi::OsString> {
+    std::env::vars_os()
+        .filter_map(|(name, _)| {
+            name.to_str()
+                .is_some_and(|name| name.starts_with("DNF_VAR_"))
+                .then_some(name)
+        })
+        .collect()
 }
 ///
 /// Elevation marker traveling through argv.
@@ -1036,6 +1156,23 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn system_command_removes_dynamic_dnf_repository_variables() {
+        temp_env::with_var(
+            "DNF_VAR_OMG_MIRROR",
+            Some("https://attacker.invalid"),
+            || {
+                let command = super::system_command("printenv").unwrap();
+                assert!(
+                    command
+                        .get_envs()
+                        .any(|(name, value)| { name == "DNF_VAR_OMG_MIRROR" && value.is_none() })
+                );
+            },
+        );
+    }
+
     #[tokio::test]
     async fn elevation_bails_in_dev_mode_instead_of_exiting() {
         // Contract: dev-mode elevation surfaces an error and RETURNS rather
@@ -1257,15 +1394,148 @@ mod trusted_program_tests {
     #[test]
     fn elevation_uses_the_running_inode() -> anyhow::Result<()> {
         use std::os::unix::fs::MetadataExt;
-        let pinned = elevation_executable()?;
+        let selected = std::fs::metadata(elevation_executable()?)?;
+        let running = std::fs::metadata(format!("/proc/{}/exe", std::process::id()))?;
         assert_eq!(
-            pinned,
-            std::path::PathBuf::from(format!("/proc/{}/exe", std::process::id()))
-        );
-        assert_eq!(
-            std::fs::metadata(pinned)?.ino(),
-            std::fs::metadata(std::env::current_exe()?)?.ino()
+            (selected.dev(), selected.ino()),
+            (running.dev(), running.ino())
         );
         Ok(())
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod elevation_path_tests {
+    use super::{ElevationPathEntry, root_controlled_elevation_path};
+    use std::path::Path;
+
+    const EXECUTABLE: &str = "/usr/local/bin/omg";
+    const IDENTITY: (u64, u64) = (12, 34);
+
+    fn trusted_entry(path: &Path) -> std::io::Result<ElevationPathEntry> {
+        let is_file = path == Path::new(EXECUTABLE);
+        if !is_file
+            && !["/", "/usr", "/usr/local", "/usr/local/bin"].contains(&path.to_str().unwrap())
+        {
+            return Err(std::io::ErrorKind::NotFound.into());
+        }
+        Ok(ElevationPathEntry {
+            owner: 0,
+            mode: 0o755,
+            is_file,
+            is_directory: !is_file,
+            device: IDENTITY.0,
+            inode: IDENTITY.1,
+        })
+    }
+
+    #[test]
+    fn matching_root_controlled_executable_is_checked_from_root_outward() {
+        let mut inspected = Vec::new();
+        assert!(root_controlled_elevation_path(
+            Path::new(EXECUTABLE),
+            IDENTITY,
+            |path| {
+                inspected.push(path.to_path_buf());
+                trusted_entry(path)
+            }
+        ));
+        assert_eq!(
+            inspected,
+            ["/", "/usr", "/usr/local", "/usr/local/bin", EXECUTABLE].map(std::path::PathBuf::from)
+        );
+    }
+
+    #[test]
+    fn writable_or_nonroot_file_and_ancestors_are_rejected() {
+        for target in [EXECUTABLE, "/usr/local", "/"] {
+            for (owner, mode) in [(1000, 0o755), (0, 0o775), (0, 0o757), (0, 0o1777)] {
+                let mut inspected = Vec::new();
+                let accepted =
+                    root_controlled_elevation_path(Path::new(EXECUTABLE), IDENTITY, |path| {
+                        inspected.push(path.to_path_buf());
+                        let mut entry = trusted_entry(path)?;
+                        if path == Path::new(target) {
+                            entry.owner = owner;
+                            entry.mode = mode;
+                        }
+                        Ok(entry)
+                    });
+                assert!(
+                    !accepted,
+                    "accepted {target} owned by {owner} with mode {mode:o}"
+                );
+                assert_eq!(
+                    inspected.last().unwrap(),
+                    Path::new(target),
+                    "must stop before inspecting children of an untrusted ancestor"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn symlink_leaf_and_ancestors_are_rejected_without_following_them() {
+        for target in [EXECUTABLE, "/usr/local"] {
+            assert!(!root_controlled_elevation_path(
+                Path::new(EXECUTABLE),
+                IDENTITY,
+                |path| {
+                    let mut entry = trusted_entry(path)?;
+                    if path == Path::new(target) {
+                        // symlink_metadata reports neither a regular file nor directory.
+                        entry.is_file = false;
+                        entry.is_directory = false;
+                    }
+                    Ok(entry)
+                }
+            ));
+        }
+    }
+
+    #[test]
+    fn replaced_or_different_device_executable_is_rejected() {
+        for identity in [(IDENTITY.0, IDENTITY.1 + 1), (IDENTITY.0 + 1, IDENTITY.1)] {
+            assert!(!root_controlled_elevation_path(
+                Path::new(EXECUTABLE),
+                identity,
+                trusted_entry
+            ));
+        }
+    }
+
+    #[test]
+    fn missing_deleted_relative_and_parent_paths_are_rejected() {
+        for candidate in [
+            "/usr/local/bin/missing",
+            "/usr/local/bin/omg (deleted)",
+            "usr/local/bin/omg",
+            "/usr/../usr/local/bin/omg",
+        ] {
+            assert!(!root_controlled_elevation_path(
+                Path::new(candidate),
+                IDENTITY,
+                trusted_entry
+            ));
+        }
+    }
+
+    #[test]
+    fn directories_and_nonexecutable_files_are_rejected() {
+        for (is_file, is_directory, mode) in [(false, true, 0o755), (true, false, 0o644)] {
+            assert!(!root_controlled_elevation_path(
+                Path::new(EXECUTABLE),
+                IDENTITY,
+                |path| {
+                    let mut entry = trusted_entry(path)?;
+                    if path == Path::new(EXECUTABLE) {
+                        entry.is_file = is_file;
+                        entry.is_directory = is_directory;
+                        entry.mode = mode;
+                    }
+                    Ok(entry)
+                }
+            ));
+        }
     }
 }

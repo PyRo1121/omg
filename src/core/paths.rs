@@ -542,6 +542,52 @@ pub fn validate_socket_parent(socket_path: &std::path::Path) -> std::io::Result<
             ),
         ));
     }
+    // A private leaf does not help when another uid can rename an ancestor.
+    // Validate every symlink expansion, not just the final canonical path:
+    // intermediate target directories can otherwise hide an attacker owner.
+    validate_socket_ancestor_chain(&std::path::absolute(parent)?, expected_uid, 0)
+}
+
+#[cfg(unix)]
+fn validate_socket_ancestor_chain(
+    path: &std::path::Path,
+    expected_uid: u32,
+    depth: usize,
+) -> std::io::Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    if depth > 40 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "too many runtime directory symlinks",
+        ));
+    }
+    for ancestor in path.ancestors() {
+        let entry = std::fs::symlink_metadata(ancestor)?;
+        let trusted_owner = entry.uid() == expected_uid || entry.uid() == 0;
+        let mode = entry.mode();
+        let protected_directory = entry.is_dir() && (mode & 0o022 == 0 || mode & 0o1000 != 0);
+        if !trusted_owner || !(entry.file_type().is_symlink() || protected_directory) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!(
+                    "daemon runtime ancestor can be replaced by another user: {}",
+                    ancestor.display()
+                ),
+            ));
+        }
+        if entry.file_type().is_symlink() {
+            let target = std::fs::read_link(ancestor)?;
+            let target = if target.is_absolute() {
+                target
+            } else {
+                ancestor
+                    .parent()
+                    .unwrap_or_else(|| std::path::Path::new("/"))
+                    .join(target)
+            };
+            validate_socket_ancestor_chain(&target, expected_uid, depth + 1)?;
+        }
+    }
     Ok(())
 }
 

@@ -3,6 +3,7 @@
 //! A pathname or an open ordinary file is insufficient: the owner can rewrite
 //! it during sudo authentication. Linux sealed memfds pin the reviewed bytes;
 //! the root consumer copies those bytes into its own private staging directory.
+//! File sealing semantics: https://man7.org/linux/man-pages/man2/memfd_create.2.html
 
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
@@ -104,15 +105,7 @@ impl ArchiveSnapshot {
             .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK)
             .open(&canonical)?;
         let metadata = source.metadata()?;
-        let uid = rustix::process::geteuid().as_raw();
-        let invoking_uid = if uid == 0 {
-            std::env::var("SUDO_UID")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(0)
-        } else {
-            uid
-        };
+        let invoking_uid = crate::core::privilege::invoking_uid()?;
         anyhow::ensure!(
             (metadata.uid() == 0 || metadata.uid() == invoking_uid) && metadata.mode() & 0o022 == 0,
             "Untrusted package file ownership or permissions"
@@ -152,6 +145,18 @@ impl ArchiveSnapshot {
 
     pub fn reader(&self) -> Result<File> {
         Ok(File::open(self.path())?)
+    }
+
+    /// Re-hash the sealed descriptor so callers can bind parsed metadata to
+    /// the exact bytes retained across elevation.
+    pub fn verify_sha256(&self, expected: &str) -> Result<()> {
+        let mut reader = self.reader()?;
+        let actual = digest(&mut reader)?;
+        anyhow::ensure!(
+            actual.eq_ignore_ascii_case(expected),
+            "sealed archive hash mismatch"
+        );
+        Ok(())
     }
 
     pub fn handoff(&self) -> String {
@@ -335,6 +340,8 @@ mod tests {
         let path = dir.path().join("example.pkg.tar.zst");
         std::fs::write(&path, b"approved")?;
         let snapshot = ArchiveSnapshot::capture(&path)?;
+        snapshot.verify_sha256(&snapshot.digest)?;
+        assert!(snapshot.verify_sha256(&"0".repeat(64)).is_err());
         std::fs::write(&path, b"hostile")?;
         let replacement = dir.path().join("replacement");
         std::fs::write(&replacement, b"replaced")?;

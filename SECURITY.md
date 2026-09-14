@@ -59,6 +59,16 @@ OMG includes built-in security features:
 
 ### System Security
 
+Automatic shell hooks select installed runtimes but do not import project
+environment assignments or scripts. Use explicit `omg run` or tasks when
+project environment behavior is intended. Pin/config reads are bounded and
+reject symlinks and special files.
+
+AUR builds use private per-invocation output, source and compiler-cache
+directories. Legacy persistent build artifacts are not reused because source
+hash markers do not authenticate archive payloads. Install-hook review must
+render the complete accepted hook before authorization.
+
 - **Privilege Separation:** Minimal sudo usage with sudoloop
 - **Sandbox Support:** AUR builds can use bubblewrap/chroot
 - **Secret Scanning:** Detects leaked credentials before commit

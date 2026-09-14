@@ -139,9 +139,7 @@ async fn main() -> Result<()> {
     // RAII cleanup: removes the socket file on every exit path from here on
     // (graceful shutdown, fatal accept error, or panic caught below), so a
     // dead daemon never leaves a stale socket behind.
-    let _socket_guard = SocketCleanup {
-        socket_path: socket_path.clone(),
-    };
+    let _socket_guard = SocketCleanup::new(socket_path.clone())?;
     tracing::info!("Listening on {:?}", socket_path);
 
     // Set socket permissions (user only)
@@ -208,10 +206,38 @@ fn remove_stale_socket(socket_path: &std::path::Path) -> Result<()> {
 #[must_use = "the socket file is removed when this guard drops; discard the binding only at shutdown"]
 struct SocketCleanup {
     socket_path: PathBuf,
+    device: u64,
+    inode: u64,
+}
+
+impl SocketCleanup {
+    fn new(socket_path: PathBuf) -> Result<Self> {
+        use std::os::unix::fs::MetadataExt;
+        let metadata = fs::symlink_metadata(&socket_path)?;
+        Ok(Self {
+            socket_path,
+            device: metadata.dev(),
+            inode: metadata.ino(),
+        })
+    }
 }
 
 impl Drop for SocketCleanup {
     fn drop(&mut self) {
+        use std::os::unix::fs::{FileTypeExt, MetadataExt};
+        if paths::validate_socket_parent(&self.socket_path).is_err() {
+            tracing::warn!("Skipping cleanup of an insecure daemon socket path");
+            return;
+        }
+        let Ok(metadata) = fs::symlink_metadata(&self.socket_path) else {
+            return;
+        };
+        if !metadata.file_type().is_socket()
+            || metadata.dev() != self.device
+            || metadata.ino() != self.inode
+        {
+            return;
+        }
         if let Err(error) = std::fs::remove_file(&self.socket_path)
             && error.kind() != std::io::ErrorKind::NotFound
         {
@@ -242,7 +268,9 @@ fn daemon_lock_path(socket_path: &std::path::Path) -> PathBuf {
 }
 
 fn claim_daemon_lock(socket_path: &std::path::Path) -> Result<DaemonClaim> {
-    use std::os::unix::fs::OpenOptionsExt;
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+
+    paths::validate_socket_parent(socket_path)?;
 
     let lock_path = daemon_lock_path(socket_path);
     let mut lock_file = fs::OpenOptions::new()
@@ -251,8 +279,17 @@ fn claim_daemon_lock(socket_path: &std::path::Path) -> Result<DaemonClaim> {
         .create(true)
         .truncate(false)
         .mode(0o600)
+        .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK)
         .open(&lock_path)
         .with_context(|| format!("Failed to open daemon lock file {}", lock_path.display()))?;
+
+    let metadata = lock_file.metadata()?;
+    anyhow::ensure!(
+        metadata.is_file()
+            && metadata.uid() == nix::unistd::getuid().as_raw()
+            && metadata.nlink() == 1,
+        "Daemon lock must be an owned regular file with one link"
+    );
 
     use std::os::unix::io::AsFd as _;
 
@@ -286,6 +323,61 @@ fn claim_daemon_lock(socket_path: &std::path::Path) -> Result<DaemonClaim> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lock_claim_rejects_symlink_and_preserves_target() {
+        let directory = tempfile::tempdir().expect("directory");
+        let socket = directory.path().join("omg.sock");
+        let target = directory.path().join("target");
+        fs::write(&target, "preserved").expect("target");
+        std::os::unix::fs::symlink(&target, daemon_lock_path(&socket)).expect("link");
+        assert!(claim_daemon_lock(&socket).is_err());
+        assert_eq!(fs::read_to_string(target).expect("read"), "preserved");
+    }
+
+    #[test]
+    fn custom_socket_rejects_replaceable_ancestor() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().expect("directory");
+        let shared = directory.path().join("shared");
+        fs::create_dir(&shared).expect("shared");
+        fs::set_permissions(&shared, fs::Permissions::from_mode(0o777)).expect("mode");
+        let private = shared.join("private");
+        fs::create_dir(&private).expect("private");
+        fs::set_permissions(&private, fs::Permissions::from_mode(0o700)).expect("mode");
+        assert!(paths::validate_socket_parent(&private.join("omg.sock")).is_err());
+    }
+
+    #[test]
+    fn cleanup_preserves_replacement_node() {
+        let directory = tempfile::tempdir().expect("directory");
+        let path = directory.path().join("omg.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&path).expect("socket");
+        let guard = SocketCleanup::new(path.clone()).expect("guard");
+        fs::remove_file(&path).expect("remove original");
+        fs::write(&path, "replacement").expect("replacement");
+        drop(guard);
+        assert_eq!(fs::read_to_string(path).expect("read"), "replacement");
+        drop(listener);
+    }
+
+    #[test]
+    fn socket_parent_rejects_hidden_replaceable_symlink_target() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let directory = tempfile::tempdir().expect("directory");
+        let safe = directory.path().join("safe");
+        let shared = directory.path().join("shared");
+        fs::create_dir_all(safe.join("private")).expect("safe");
+        fs::set_permissions(safe.join("private"), fs::Permissions::from_mode(0o700)).expect("mode");
+        fs::create_dir(&shared).expect("shared");
+        fs::set_permissions(&shared, fs::Permissions::from_mode(0o777)).expect("mode");
+        symlink(&safe, shared.join("jump")).expect("jump");
+        symlink(shared.join("jump"), directory.path().join("link")).expect("link");
+        let socket = directory.path().join("link/private/omg.sock");
+        assert!(paths::validate_socket_parent(&socket).is_err());
+        fs::set_permissions(&shared, fs::Permissions::from_mode(0o700)).expect("mode");
+        assert!(paths::validate_socket_parent(&socket).is_ok());
+    }
 
     #[test]
     fn stale_socket_cleanup_rejects_non_socket_paths() {

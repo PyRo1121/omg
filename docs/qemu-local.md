@@ -24,6 +24,66 @@ once enabled, PRs) that agents work while you iterate.
 
 ## What to run
 
+### ARM runner configuration
+
+The workflow repository variable `OMG_QEMU_ARM_RUNNER` selects a single runner
+label for both the ARM health job and ARM guests. When unset it defaults to
+`ubuntu-24.04-arm`. The three ARM guest jobs in run `34778845877` lacked
+`/dev/kvm` on that default label; a label does not establish KVM availability.
+Do not configure a replacement label until a matching runner is available.
+
+The selected runner must run native Linux aarch64, provide Docker, Bash,
+Python 3, jq and the existing harness prerequisites, and let its job user open
+`/dev/kvm` read/write with KVM API version 12. Every runner matching the label
+must satisfy this contract: health and guest jobs may land on different
+machines. Use disposable isolated runners suitable for executing PR-controlled
+code with Docker and KVM access.
+
+The rollout plan is to provision and verify the ARM runner, assign its single
+label to `OMG_QEMU_ARM_RUNNER` in repository Actions variables, then manually
+dispatch a staged ARM run and inspect the health result and all selected guest
+evidence. The checked-in pull-request selection excludes this configurable
+runner. This editable workflow condition is not a runner authorization boundary:
+before registering self-hosted capacity, restrict which workflows and actors may
+use it through runner policy. A pull request can change workflow conditions.
+The health job checks architecture, device access and the KVM API before ARM
+builds begin. It does not change device permissions or enable emulation. ARM
+builds still use the existing hosted CPU runner labels; ARM guest jobs use the
+configured KVM runner label and repeat their own device checks. The summary
+requires both ARM health and selected guests to succeed. Missing, skipped or
+failed selected ARM health cannot produce a passing matrix.
+
+ARM health is independent of x64 jobs. A manually dispatched staged `arch=all` run can therefore
+produce x64 evidence while failing visibly for unavailable ARM capacity. A
+staged `arch=x64` run requests only x64 coverage and skips ARM health and builds.
+
+### Dispatch and evidence
+
+The hosted `QEMU Matrix` workflow is also a supported verification route when
+the workstation has no Linux/KVM environment. Push the candidate to a review
+branch, then dispatch that branch with `staged=true`, `distro=all`, and
+`arch=all`. Staged jobs build and run library and binary unit tests from the
+selected commit before booting guests. Coordinator, issue-filing and reporting
+fixtures must pass before guest builds begin. A published-release run checks the
+published binaries, not uncommitted workstation changes.
+
+The workflow resolves its tag once, records source and artifact provenance,
+and rejects skipped selected guest jobs. Download the per-distro evidence and
+inspect inventory skips as well as the final job result. The main CI sandbox
+lane additionally requires explicit namespace, isolation and root-handoff
+regressions; QEMU lifecycle success is not a substitute for that lane.
+
+Hosted Sentry configuration uses `OMG_SMOKE_SENTRY_DSN` through an environment
+variable and a private runner-temporary file. Guest reporting logs show intake
+acceptance or failure. A separate `qemu-matrix-workflow` fallback reports failed
+builds and other failures before guest reporting can run. Its `ubuntu` distro
+identifies the coordinator, not a failed guest; the accompanying context file
+contains job outcomes, commit and workflow URL. Missing secrets are visible
+notices, and delivery failure never converts failed tests into success.
+
+Uploaded QEMU evidence includes diagnostic file types only. Private guest keys,
+cloud-init configuration and disks retained after failed cleanup are excluded.
+
 Audit pins without booting anything (fast, always works):
 
 ```bash

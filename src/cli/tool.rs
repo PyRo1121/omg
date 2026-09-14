@@ -2,13 +2,401 @@ use crate::cli::{CliContext, LocalCommandRunner, ToolCommands};
 use anyhow::{Context, Result};
 use console::user_attended;
 use dialoguer::{Select, theme::ColorfulTheme};
+use sha2::{Digest as _, Sha256};
+use std::collections::BTreeMap;
 use std::fs;
+use std::io::Read as _;
 #[cfg(unix)]
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::cli::style;
+
+const ALLOW_NPM_SCRIPTS_ENV: &str = "OMG_TOOL_DANGEROUSLY_ALLOW_ALL_NPM_SCRIPTS";
+const ALLOW_PIP_SDISTS_ENV: &str = "OMG_TOOL_ALLOW_PIP_SDISTS";
+const ALLOW_CARGO_UNLOCKED_ENV: &str = "OMG_TOOL_ALLOW_CARGO_UNLOCKED";
+const ALLOW_HOST_ENV: &str = "OMG_TOOL_ALLOW_HOST_ENV";
+const ALLOW_UNVERIFIED_ENV: &str = "OMG_TOOL_ALLOW_UNVERIFIED";
+const ALLOW_GO_CGO_ENV: &str = "OMG_TOOL_ALLOW_GO_CGO";
+const ALLOW_GO_TOOLCHAIN_ENV: &str = "OMG_TOOL_ALLOW_GO_TOOLCHAIN_DOWNLOAD";
+
+#[cfg(unix)]
+const TOOL_SYSTEM_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+
+fn package_is_allowed(variable: &str, package: &str) -> bool {
+    std::env::var(variable).is_ok_and(|value| {
+        value
+            .split(',')
+            .map(str::trim)
+            .any(|allowed| !allowed.is_empty() && allowed == package)
+    })
+}
+
+fn host_environment_is_allowed(manager: &str, package: &str) -> bool {
+    package_is_allowed(ALLOW_HOST_ENV, &format!("{manager}:{package}"))
+}
+
+fn restrict_manager_process(command: &mut Command) {
+    // Package-manager builds are non-interactive children of OMG. Closing
+    // stdin prevents publisher-controlled install hooks from borrowing the
+    // caller's terminal to request credentials or sudo authentication.
+    command.stdin(std::process::Stdio::null());
+}
+
+#[cfg(target_os = "linux")]
+fn restricted_manager_command(
+    program: impl AsRef<std::ffi::OsStr>,
+    staging_dir: &Path,
+) -> Result<Command> {
+    let mut command = manager_command(
+        crate::core::privilege::trusted_program("setpriv")?,
+        staging_dir,
+    );
+    command
+        .arg("--no-new-privs")
+        .arg("--")
+        .arg(program.as_ref());
+    Ok(command)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn restricted_manager_command(
+    program: impl AsRef<std::ffi::OsStr>,
+    staging_dir: &Path,
+) -> Result<Command> {
+    Ok(manager_command(program, staging_dir))
+}
+
+fn validate_managed_package(manager: &str, package: &str) -> Result<()> {
+    crate::core::security::validate_package_name(package)?;
+    let registry_name = |value: &str| {
+        !value.is_empty()
+            && value
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || "-_.+".contains(character))
+    };
+    let valid = match manager {
+        "npm" => {
+            package
+                .strip_prefix('@')
+                .and_then(|value| value.split_once('/'))
+                .is_some_and(|(scope, name)| registry_name(scope) && registry_name(name))
+                || (!package.contains('/') && !package.contains('@') && registry_name(package))
+        }
+        "cargo" | "pip" | "pacman" => {
+            !package.contains('/') && !package.contains('@') && registry_name(package)
+        }
+        "go" => {
+            let (module, version) = package
+                .rsplit_once('@')
+                .map_or((package, None), |(module, version)| (module, Some(version)));
+            module.split('/').all(registry_name)
+                && version
+                    .is_none_or(|version| crate::core::security::validate_version(version).is_ok())
+        }
+        _ => false,
+    };
+    if !valid {
+        anyhow::bail!(
+            "Invalid {manager} registry package '{package}': paths, URLs, Git shorthands, and alternate sources are not accepted by omg tool"
+        );
+    }
+    Ok(())
+}
+
+fn active_security_overrides(manager: &str, package: &str) -> Vec<&'static str> {
+    let mut active = Vec::new();
+    if manager == "npm" && package_is_allowed(ALLOW_NPM_SCRIPTS_ENV, package) {
+        active.push(ALLOW_NPM_SCRIPTS_ENV);
+    }
+    if manager == "pip" && package_is_allowed(ALLOW_PIP_SDISTS_ENV, package) {
+        active.push(ALLOW_PIP_SDISTS_ENV);
+    }
+    if manager == "cargo" && package_is_allowed(ALLOW_CARGO_UNLOCKED_ENV, package) {
+        active.push(ALLOW_CARGO_UNLOCKED_ENV);
+    }
+    if manager == "go" && package_is_allowed(ALLOW_GO_CGO_ENV, package) {
+        active.push(ALLOW_GO_CGO_ENV);
+    }
+    if manager == "go" && package_is_allowed(ALLOW_GO_TOOLCHAIN_ENV, package) {
+        active.push(ALLOW_GO_TOOLCHAIN_ENV);
+    }
+    if host_environment_is_allowed(manager, package) {
+        active.push(ALLOW_HOST_ENV);
+    }
+    if package_is_allowed(ALLOW_UNVERIFIED_ENV, &format!("{manager}:{package}")) {
+        active.push(ALLOW_UNVERIFIED_ENV);
+    }
+    active
+}
+
+fn write_security_receipt(staging_dir: &Path, manager: &str, package: &str) -> Result<()> {
+    let host_environment = host_environment_is_allowed(manager, package);
+    let unverified = package_is_allowed(ALLOW_UNVERIFIED_ENV, &format!("{manager}:{package}"));
+    let npm_scripts_disabled =
+        (manager == "npm").then(|| !package_is_allowed(ALLOW_NPM_SCRIPTS_ENV, package));
+    let npm_signatures_verified = (manager == "npm").then_some(!unverified);
+    let pip_binary_only =
+        (manager == "pip").then(|| !package_is_allowed(ALLOW_PIP_SDISTS_ENV, package));
+    let cargo_locked =
+        (manager == "cargo").then(|| !package_is_allowed(ALLOW_CARGO_UNLOCKED_ENV, package));
+    let go_checksum_database = (manager == "go").then_some(!host_environment);
+    let go_cgo_disabled = (manager == "go").then(|| !package_is_allowed(ALLOW_GO_CGO_ENV, package));
+    let go_local_toolchain_only =
+        (manager == "go").then(|| !package_is_allowed(ALLOW_GO_TOOLCHAIN_ENV, package));
+    let executable_hashes = tool_binary_hashes(staging_dir)?;
+    let receipt = serde_json::json!({
+        "format_version": 1,
+        "manager": manager,
+        "package": package,
+        "source_policy": if host_environment { "host-configured" } else { "pinned-public" },
+        "active_overrides": active_security_overrides(manager, package),
+        "executable_sha256": executable_hashes,
+        "protections": {
+            "isolated_environment": !host_environment,
+            "installer_stdin_closed": true,
+            "linux_no_new_privs": cfg!(target_os = "linux"),
+            "npm_scripts_disabled": npm_scripts_disabled,
+            "npm_signatures_verified": npm_signatures_verified,
+            "pip_binary_only": pip_binary_only,
+            "cargo_locked": cargo_locked,
+            "go_checksum_database": go_checksum_database,
+            "go_cgo_disabled": go_cgo_disabled,
+            "go_local_toolchain_only": go_local_toolchain_only,
+        }
+    });
+    let content = serde_json::to_vec_pretty(&receipt).context("Serialize tool security receipt")?;
+    crate::core::safe_ops::atomic_write_file_sync(
+        staging_dir.join(".omg-security-receipt.json"),
+        content,
+    )
+    .context("Write tool security receipt")
+}
+
+fn tool_binary_hashes(install_dir: &Path) -> Result<BTreeMap<String, String>> {
+    let canonical_install = fs::canonicalize(install_dir)?;
+    let is_venv = install_dir.join("pyvenv.cfg").is_file();
+    let mut hashes = BTreeMap::new();
+    for directory in tool_binary_dirs(install_dir) {
+        if !crate::runtimes::common::is_valid_version_dir(&directory) {
+            continue;
+        }
+        for entry in fs::read_dir(directory)? {
+            let path = entry?.path();
+            if is_venv && path.file_name().is_some_and(is_venv_base_tool) {
+                continue;
+            }
+            let metadata = fs::symlink_metadata(&path)?;
+            if !metadata.is_file() && !metadata.is_symlink() {
+                continue;
+            }
+            let target = fs::canonicalize(&path)?;
+            if !target.starts_with(&canonical_install) || !target.is_file() {
+                anyhow::bail!("Cannot hash uncontained tool binary: {}", path.display());
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt as _;
+                if fs::metadata(&target)?.permissions().mode() & 0o111 == 0 {
+                    continue;
+                }
+            }
+            let mut file = fs::File::open(&target)?;
+            let mut hasher = Sha256::new();
+            let mut buffer = vec![0_u8; 64 * 1024].into_boxed_slice();
+            loop {
+                let read = file.read(&mut buffer)?;
+                if read == 0 {
+                    break;
+                }
+                hasher.update(&buffer[..read]);
+            }
+            let relative = path.strip_prefix(install_dir).unwrap_or(&path);
+            hashes.insert(
+                relative.to_string_lossy().replace('\\', "/"),
+                hex::encode(hasher.finalize()),
+            );
+        }
+    }
+    Ok(hashes)
+}
+
+fn tool_binary_dirs(install_dir: &Path) -> [PathBuf; 2] {
+    [
+        install_dir.join("bin"),
+        install_dir.join("node_modules").join(".bin"),
+    ]
+}
+
+fn validate_tool_binary_containment(install_dir: &Path) -> Result<()> {
+    let canonical_install = fs::canonicalize(install_dir).with_context(|| {
+        format!(
+            "Failed to resolve staged tool directory {}",
+            install_dir.display()
+        )
+    })?;
+    let is_venv = install_dir.join("pyvenv.cfg").is_file();
+    for directory in tool_binary_dirs(install_dir) {
+        if !crate::runtimes::common::is_valid_version_dir(&directory) {
+            continue;
+        }
+        for entry in fs::read_dir(&directory)? {
+            let path = entry?.path();
+            if is_venv && path.file_name().is_some_and(is_venv_base_tool) {
+                continue;
+            }
+            let metadata = fs::symlink_metadata(&path)?;
+            if !metadata.is_file() && !metadata.is_symlink() {
+                continue;
+            }
+            let target = fs::canonicalize(&path).with_context(|| {
+                format!("Tool binary entry cannot be resolved: {}", path.display())
+            })?;
+            if !target.starts_with(&canonical_install) {
+                anyhow::bail!(
+                    "Refusing tool binary entry outside its installation: {} -> {}",
+                    path.display(),
+                    target.display()
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Construct a package-manager command with a minimal environment.
+///
+/// Package build and lifecycle scripts inherit their manager's environment.
+/// Clearing it here prevents an untrusted package from reading ambient registry,
+/// Git, SSH, cloud, and CI credentials. Private registries can opt out for one
+/// exact manager/package pair through `OMG_TOOL_ALLOW_HOST_ENV`.
+fn secured_manager_command(
+    program: impl AsRef<std::ffi::OsStr>,
+    staging_dir: &Path,
+    manager: &str,
+    package: &str,
+) -> Result<Command> {
+    let allow_host_environment = host_environment_is_allowed(manager, package);
+
+    let requested_program = Path::new(program.as_ref());
+    let resolved_program = if requested_program.components().count() == 1 {
+        which::which(requested_program).with_context(|| {
+            format!(
+                "Failed to resolve {manager} executable '{}'",
+                requested_program.display()
+            )
+        })?
+    } else {
+        requested_program.to_path_buf()
+    };
+    let manager_bin = resolved_program
+        .parent()
+        .context("Package-manager executable has no parent directory")?;
+    if let Ok(project_dir) = std::env::current_dir() {
+        let is_project = [
+            ".git",
+            "package.json",
+            "Cargo.toml",
+            "pyproject.toml",
+            "go.mod",
+        ]
+        .iter()
+        .any(|marker| project_dir.join(marker).exists());
+        if is_project
+            && manager_bin.starts_with(&project_dir)
+            && !manager_bin.starts_with(staging_dir)
+        {
+            anyhow::bail!(
+                "Refusing project-local {manager} executable: {}",
+                resolved_program.display()
+            );
+        }
+    }
+    let mut command = restricted_manager_command(&resolved_program, staging_dir)?;
+    if allow_host_environment {
+        restrict_manager_process(&mut command);
+        return Ok(command);
+    }
+    #[cfg(unix)]
+    command.current_dir("/");
+
+    let home = staging_dir.join(".manager-home");
+    let config = home.join("config");
+    let cache = home.join("cache");
+    let data = home.join("data");
+    let temp = home.join("tmp");
+    for directory in [&home, &config, &cache, &data, &temp] {
+        fs::create_dir_all(directory)?;
+    }
+
+    command.env_clear();
+    #[cfg(unix)]
+    {
+        let mut paths = vec![manager_bin.to_path_buf()];
+        paths.extend(std::env::split_paths(TOOL_SYSTEM_PATH));
+        command.env(
+            "PATH",
+            std::env::join_paths(paths).context("Manager executable path is not representable")?,
+        );
+    }
+    #[cfg(windows)]
+    if let Some(path) = std::env::var_os("PATH") {
+        // Windows development builds need the discovered manager and its
+        // runtime on PATH. Production OMG package installs run on Unix, where
+        // the fixed root-controlled path above is enforced.
+        command.env("PATH", path);
+    }
+    for variable in ["SystemRoot", "WINDIR", "PATHEXT"] {
+        if let Some(value) = std::env::var_os(variable) {
+            command.env(variable, value);
+        }
+    }
+    command
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .env("XDG_CONFIG_HOME", &config)
+        .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_DATA_HOME", &data)
+        .env("TMPDIR", &temp)
+        .env("TMP", &temp)
+        .env("TEMP", &temp)
+        .env("LC_ALL", "C.UTF-8")
+        .env("LANG", "C.UTF-8");
+
+    if manager == "cargo" {
+        command
+            .env("CARGO_HOME", home.join(".cargo"))
+            .env("CARGO_NET_GIT_FETCH_WITH_CLI", "false")
+            .env("CARGO_REGISTRIES_CRATES_IO_PROTOCOL", "sparse");
+    }
+    if manager == "pip" {
+        #[cfg(unix)]
+        command.env("PIP_CONFIG_FILE", "/dev/null");
+        #[cfg(windows)]
+        command.env("PIP_CONFIG_FILE", "NUL");
+    }
+
+    // A rustup-installed `cargo` is a proxy and still needs the existing
+    // toolchain store. Cargo configuration remains isolated in the staged
+    // HOME; only rustup's immutable toolchain location crosses the boundary.
+    if manager == "cargo" {
+        let rustup_home = std::env::var_os("RUSTUP_HOME")
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("HOME")
+                    .or_else(|| std::env::var_os("USERPROFILE"))
+                    .map(PathBuf::from)
+                    .map(|home| home.join(".rustup"))
+            });
+        if let Some(rustup_home) = rustup_home.filter(|path| path.is_absolute()) {
+            command.env("RUSTUP_HOME", rustup_home);
+        }
+    }
+
+    restrict_manager_process(&mut command);
+    Ok(command)
+}
 
 /// A resolved registry entry: `(manager, package, description)`.
 type RegistryEntry = (&'static str, &'static str, &'static str);
@@ -424,6 +812,7 @@ async fn install_managed(
     bin_dir: &Path,
 ) -> Result<()> {
     crate::core::security::validate_package_name(install_name)?;
+    validate_managed_package(manager, pkg)?;
     // Keep storage flat and keyed by the user-facing registry name. Package
     // identifiers such as Go module paths are installer inputs, not paths.
     let install_dir = tools_dir.join(manager).join(install_name);
@@ -452,6 +841,13 @@ async fn install_managed(
         return crate::cli::packages::install(&[pkg.to_string()], false, false, false).await;
     }
 
+    for variable in active_security_overrides(manager, pkg) {
+        eprintln!(
+            "{} {variable} weakens install security for {manager}:{pkg}",
+            style::warning("Security override:")
+        );
+    }
+
     // Stage the new version in a hidden sibling directory so a failed install
     // never destroys the previously working tool (W4-A-01): the old install is
     // only replaced after the package manager has succeeded.
@@ -468,33 +864,82 @@ async fn install_managed(
     let run_install = || -> Result<()> {
         match manager {
             "npm" => {
-                // npm install --prefix <dir> <pkg>
+                // Lifecycle scripts are publisher-controlled code. Keep them
+                // disabled unless this exact package is explicitly approved.
                 let install_path = staging_dir
                     .to_str()
                     .context("Install directory path contains invalid UTF-8")?;
-                let status = manager_command("npm", &staging_dir)
-                    .args(["install", "--prefix", install_path, "--", pkg])
+                let allow_scripts = package_is_allowed(ALLOW_NPM_SCRIPTS_ENV, pkg);
+                let allow_host_environment = host_environment_is_allowed(manager, pkg);
+                let mut command = secured_manager_command("npm", &staging_dir, manager, pkg)?;
+                command.args(["install", "--prefix", install_path]);
+                if !allow_host_environment {
+                    command.arg("--registry=https://registry.npmjs.org/");
+                }
+                // Download and materialize the tree without executing it. An
+                // approved script phase happens only after signature checks.
+                command.arg("--ignore-scripts");
+                let status = command
+                    .args(["--", pkg])
                     .stdout(std::process::Stdio::null())
                     .stderr(std::process::Stdio::inherit())
                     .status()?;
 
                 if !status.success() {
-                    anyhow::bail!("NPM install of '{pkg}' failed. Try: npm install -g {pkg}");
+                    anyhow::bail!(
+                        "NPM install of '{pkg}' failed. If the reviewed package requires lifecycle scripts, retry with {ALLOW_NPM_SCRIPTS_ENV}={pkg}"
+                    );
+                }
+                if !package_is_allowed(ALLOW_UNVERIFIED_ENV, &format!("npm:{pkg}")) {
+                    let mut verification =
+                        secured_manager_command("npm", &staging_dir, manager, pkg)?;
+                    verification.args(["audit", "signatures", "--prefix", install_path]);
+                    if !allow_host_environment {
+                        verification.arg("--registry=https://registry.npmjs.org/");
+                    }
+                    let signature_status = verification
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::inherit())
+                        .status()?;
+                    if !signature_status.success() {
+                        anyhow::bail!(
+                            "NPM signature/provenance verification failed for '{pkg}'; refusing to activate it. A trusted private registry without signature support can be scoped with {ALLOW_UNVERIFIED_ENV}=npm:{pkg}"
+                        );
+                    }
+                }
+                if allow_scripts {
+                    let rebuild_status =
+                        secured_manager_command("npm", &staging_dir, manager, pkg)?
+                            .args(["rebuild", "--prefix", install_path])
+                            .stdout(std::process::Stdio::null())
+                            .stderr(std::process::Stdio::inherit())
+                            .status()?;
+                    if !rebuild_status.success() {
+                        anyhow::bail!(
+                            "NPM lifecycle-script rebuild failed for '{pkg}'; refusing to activate it"
+                        );
+                    }
                 }
                 Ok(())
             }
             "cargo" => {
-                // cargo install --root <dir> <pkg>
                 let install_path = staging_dir
                     .to_str()
                     .context("Install directory path contains invalid UTF-8")?;
-                let status = manager_command("cargo", &staging_dir)
-                    .args(["install", "--root", install_path, "--", pkg])
+                let mut command = secured_manager_command("cargo", &staging_dir, manager, pkg)?;
+                command.args(["install", "--root", install_path]);
+                if !package_is_allowed(ALLOW_CARGO_UNLOCKED_ENV, pkg) {
+                    command.arg("--locked");
+                }
+                let status = command
+                    .args(["--", pkg])
                     .stdout(std::process::Stdio::null()) // Cargo is noisy
                     .status()?;
 
                 if !status.success() {
-                    anyhow::bail!("Cargo install of '{pkg}' failed. Try: cargo install {pkg}");
+                    anyhow::bail!(
+                        "Cargo install of '{pkg}' failed. If the reviewed crate does not publish Cargo.lock, retry with {ALLOW_CARGO_UNLOCKED_ENV}={pkg}"
+                    );
                 }
                 Ok(())
             }
@@ -503,9 +948,10 @@ async fn install_managed(
                 let install_path = staging_dir
                     .to_str()
                     .context("Install directory path contains invalid UTF-8")?;
-                let status_venv = manager_command(python_binary(), &staging_dir)
-                    .args(["-m", "venv", "--", install_path])
-                    .status()?;
+                let status_venv =
+                    secured_manager_command(python_binary(), &staging_dir, manager, pkg)?
+                        .args(["-m", "venv", "--", install_path])
+                        .status()?;
 
                 if !status_venv.success() {
                     anyhow::bail!("Failed to create python venv at '{install_path}'");
@@ -513,13 +959,23 @@ async fn install_managed(
 
                 // 2. Install into venv
                 let pip_path = staging_dir.join("bin").join("pip");
-                let status_install = manager_command(&pip_path, &staging_dir)
-                    .args(["install", "--", pkg])
+                let mut command = secured_manager_command(&pip_path, &staging_dir, manager, pkg)?;
+                command.args(["install", "--disable-pip-version-check"]);
+                if !host_environment_is_allowed(manager, pkg) {
+                    command.args(["--index-url", "https://pypi.org/simple"]);
+                }
+                if !package_is_allowed(ALLOW_PIP_SDISTS_ENV, pkg) {
+                    command.arg("--only-binary=:all:");
+                }
+                let status_install = command
+                    .args(["--", pkg])
                     .stdout(std::process::Stdio::null())
                     .status()?;
 
                 if !status_install.success() {
-                    anyhow::bail!("Pip install of '{pkg}' failed. Try: pip install {pkg}");
+                    anyhow::bail!(
+                        "Pip install of '{pkg}' failed. If the reviewed package has no wheel, retry with {ALLOW_PIP_SDISTS_ENV}={pkg}"
+                    );
                 }
                 Ok(())
             }
@@ -535,15 +991,32 @@ async fn install_managed(
                 let go_bin = staging_dir.join("bin");
                 fs::create_dir_all(&go_bin)?;
 
-                let status = manager_command("go", &staging_dir)
+                let mut command = secured_manager_command("go", &staging_dir, manager, pkg)?;
+                command
                     .arg("install")
                     .args(["--", &target])
-                    .env("GOBIN", &go_bin)
-                    .stdout(std::process::Stdio::null())
-                    .status()?;
+                    .env("GOBIN", &go_bin);
+                if !host_environment_is_allowed(manager, pkg) {
+                    command
+                        .env("GOPROXY", "https://proxy.golang.org")
+                        .env("GOSUMDB", "sum.golang.org")
+                        .env("GOPRIVATE", "")
+                        .env("GONOPROXY", "")
+                        .env("GONOSUMDB", "")
+                        .env("GOENV", "off");
+                }
+                if !package_is_allowed(ALLOW_GO_CGO_ENV, pkg) {
+                    command.env("CGO_ENABLED", "0");
+                }
+                if !package_is_allowed(ALLOW_GO_TOOLCHAIN_ENV, pkg) {
+                    command.env("GOTOOLCHAIN", "local");
+                }
+                let status = command.stdout(std::process::Stdio::null()).status()?;
 
                 if !status.success() {
-                    anyhow::bail!("Go install of '{pkg}' failed. Try: go install {target}");
+                    anyhow::bail!(
+                        "Go install of '{pkg}' failed. Reviewed packages may opt into CGO with {ALLOW_GO_CGO_ENV}={pkg} or toolchain downloads with {ALLOW_GO_TOOLCHAIN_ENV}={pkg}"
+                    );
                 }
                 Ok(())
             }
@@ -560,25 +1033,36 @@ async fn install_managed(
         return Err(error);
     }
 
-    // Swap the staged install into place: move the previous install aside,
-    // promote the staging directory, then drop the backup. If promotion fails,
-    // the previous install is restored.
+    if let Err(error) = validate_tool_binary_containment(&staging_dir) {
+        pb.finish_and_clear();
+        let _ = fs::remove_dir_all(&staging_dir);
+        return Err(error);
+    }
+    if let Err(error) = write_security_receipt(&staging_dir, manager, pkg) {
+        pb.finish_and_clear();
+        let _ = fs::remove_dir_all(&staging_dir);
+        return Err(error);
+    }
+
+    // Keep the backup until shared-bin activation also succeeds. Directory
+    // promotion and command linking are one logical transaction.
+    let mut backup_dir = None;
     if has_previous_install {
-        let backup_dir = tools_dir.join(manager).join(format!(
+        let backup = tools_dir.join(manager).join(format!(
             ".{install_name}.backup-{}",
             unique_install_suffix()
         ));
-        fs::rename(&install_dir, &backup_dir).with_context(|| {
+        fs::rename(&install_dir, &backup).with_context(|| {
             format!("Failed to move previous install of '{install_name}' aside")
         })?;
         if let Err(error) = fs::rename(&staging_dir, &install_dir) {
-            let _ = fs::rename(&backup_dir, &install_dir);
+            let _ = fs::rename(&backup, &install_dir);
             let _ = fs::remove_dir_all(&staging_dir);
             pb.finish_and_clear();
             return Err(error)
                 .with_context(|| format!("Failed to promote staged install of '{install_name}'"));
         }
-        let _ = fs::remove_dir_all(&backup_dir);
+        backup_dir = Some(backup);
     } else if let Err(error) = fs::rename(&staging_dir, &install_dir) {
         let _ = fs::remove_dir_all(&staging_dir);
         pb.finish_and_clear();
@@ -595,7 +1079,32 @@ async fn install_managed(
     // the shared bin dir where they would shadow system Python/pip.
     // https://peps.python.org/pep-0405/
     let is_venv = install_dir.join("pyvenv.cfg").is_file();
-    link_binaries(&install_dir, bin_dir, tools_dir, is_venv)?;
+    if let Err(error) = link_binaries(&install_dir, bin_dir, is_venv) {
+        let failed_dir = tools_dir.join(manager).join(format!(
+            ".{install_name}.failed-{}",
+            unique_install_suffix()
+        ));
+        fs::rename(&install_dir, &failed_dir)
+            .context("Managed tool activation failed and rollback could not move it aside")?;
+        if let Some(backup) = &backup_dir {
+            fs::rename(backup, &install_dir).context(
+                "Managed tool activation failed and the previous version could not be restored",
+            )?;
+            cleanup_broken_managed_links(bin_dir, &install_dir)?;
+            let previous_is_venv = install_dir.join("pyvenv.cfg").is_file();
+            let _ = link_binaries(&install_dir, bin_dir, previous_is_venv);
+        } else {
+            cleanup_broken_managed_links(bin_dir, &install_dir)?;
+        }
+        let _ = fs::remove_dir_all(&failed_dir);
+        return Err(error).context("Failed to activate managed tool; previous version restored");
+    }
+    cleanup_broken_managed_links(bin_dir, &install_dir)?;
+    if let Some(backup) = backup_dir
+        && let Err(error) = fs::remove_dir_all(&backup)
+    {
+        tracing::warn!(path = %backup.display(), %error, "failed to remove previous tool backup");
+    }
 
     Ok(())
 }
@@ -604,15 +1113,22 @@ async fn install_managed(
 ///
 /// The shared bin directory is exposed on PATH via the omg shell hook, so a
 /// tool install must never replace commands it does not own: only symlinks
-/// that point back into OMG's managed tools directory are ours to swap.
+/// that point back into this package's install directory are ours to swap.
 /// Regular files (the user's own scripts or real system-style installs) and
 /// links into other locations are left untouched.
-fn is_managed_link(dest: &Path, tools_dir: &Path) -> bool {
+fn is_managed_link(dest: &Path, install_dir: &Path) -> bool {
     #[cfg(unix)]
     {
         fs::symlink_metadata(dest).is_ok_and(|metadata| {
             metadata.is_symlink()
-                && fs::read_link(dest).is_ok_and(|target| target.starts_with(tools_dir))
+                && fs::read_link(dest).is_ok_and(|target| {
+                    target.strip_prefix(install_dir).is_ok_and(|relative| {
+                        relative.components().next().is_some()
+                            && relative
+                                .components()
+                                .all(|part| matches!(part, std::path::Component::Normal(_)))
+                    })
+                })
         })
     }
     #[cfg(not(unix))]
@@ -624,19 +1140,29 @@ fn is_managed_link(dest: &Path, tools_dir: &Path) -> bool {
     }
 }
 
-fn link_binaries(
-    install_dir: &Path,
-    bin_dir: &Path,
-    tools_dir: &Path,
-    skip_venv_base_tools: bool,
-) -> Result<()> {
+fn cleanup_broken_managed_links(bin_dir: &Path, install_dir: &Path) -> Result<()> {
+    #[cfg(unix)]
+    if let Ok(entries) = fs::read_dir(bin_dir) {
+        for entry in entries {
+            let path = entry?.path();
+            if is_managed_link(&path, install_dir) && !path.exists() {
+                fs::remove_file(path)?;
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = (bin_dir, install_dir);
+    Ok(())
+}
+
+fn link_binaries(install_dir: &Path, bin_dir: &Path, skip_venv_base_tools: bool) -> Result<()> {
     println!("  {} Linking binaries...", style::dim("→"));
 
     // Find binaries in standard locations within the isolated install dir
     // Standard locations: /bin, /node_modules/.bin (npm)
 
-    let mut search_dirs = vec![install_dir.join("bin")];
-    search_dirs.push(install_dir.join("node_modules").join(".bin")); // NPM structure
+    let search_dirs = tool_binary_dirs(install_dir);
+    let canonical_install = fs::canonicalize(install_dir)?;
 
     let mut linked = 0;
 
@@ -650,6 +1176,20 @@ fn link_binaries(
             let path = entry.path();
 
             if path.is_file() {
+                let Some(filename) = path.file_name() else {
+                    continue;
+                };
+                if skip_venv_base_tools && is_venv_base_tool(filename) {
+                    continue;
+                }
+                let target = fs::canonicalize(&path)?;
+                if !target.starts_with(&canonical_install) {
+                    anyhow::bail!(
+                        "Refusing tool binary entry outside its installation: {} -> {}",
+                        path.display(),
+                        target.display()
+                    );
+                }
                 // Check if executable (heuristic)
                 #[cfg(unix)]
                 {
@@ -661,19 +1201,13 @@ fn link_binaries(
                     }
                 }
 
-                let Some(filename) = path.file_name() else {
-                    continue;
-                };
-                if skip_venv_base_tools && is_venv_base_tool(filename) {
-                    continue;
-                }
                 let dest = bin_dir.join(filename);
 
                 // Remove existing link only if it is one of ours
                 if dest.symlink_metadata().is_ok() {
-                    if !is_managed_link(&dest, tools_dir) {
+                    if !is_managed_link(&dest, install_dir) {
                         println!(
-                            "    {} Refusing to replace existing command {} (not managed by omg tool)",
+                            "    {} Refusing to replace existing command {} (not owned by this tool)",
                             style::warning("⚠"),
                             filename.to_string_lossy()
                         );
@@ -1004,9 +1538,216 @@ mod tests {
         }
     }
 
-    /// Tool installs may only swap links OMG itself created. Symlinks into
-    /// other locations (and plain files) in the shared bin directory belong
-    /// to the user or to other tools and must survive an install.
+    #[test]
+    fn package_exceptions_require_an_exact_comma_delimited_match() {
+        temp_env::with_var(
+            ALLOW_NPM_SCRIPTS_ENV,
+            Some("eslint,@scope/tool, exact "),
+            || {
+                assert!(package_is_allowed(ALLOW_NPM_SCRIPTS_ENV, "eslint"));
+                assert!(package_is_allowed(ALLOW_NPM_SCRIPTS_ENV, "@scope/tool"));
+                assert!(package_is_allowed(ALLOW_NPM_SCRIPTS_ENV, "exact"));
+                assert!(!package_is_allowed(ALLOW_NPM_SCRIPTS_ENV, "es"));
+                assert!(!package_is_allowed(ALLOW_NPM_SCRIPTS_ENV, "tool"));
+            },
+        );
+    }
+
+    #[test]
+    fn managed_package_grammar_rejects_alternate_sources() {
+        for (manager, package) in [
+            ("npm", "owner/repository"),
+            ("npm", "@scope/name/extra"),
+            ("pip", "relative/package"),
+            ("cargo", "relative/crate"),
+        ] {
+            assert!(
+                validate_managed_package(manager, package).is_err(),
+                "{manager} accepted {package}"
+            );
+        }
+        for (manager, package) in [
+            ("npm", "eslint"),
+            ("npm", "@angular/cli"),
+            ("pip", "yt-dlp"),
+            ("cargo", "cargo-audit"),
+            ("go", "github.com/rakyll/hey"),
+            ("go", "github.com/rakyll/hey@v0.1.4"),
+        ] {
+            validate_managed_package(manager, package)
+                .unwrap_or_else(|error| panic!("{manager} rejected {package}: {error}"));
+        }
+    }
+
+    #[test]
+    fn host_environment_exception_is_scoped_to_manager_and_package() {
+        temp_env::with_var(ALLOW_HOST_ENV, Some("npm:private-cli"), || {
+            assert!(host_environment_is_allowed("npm", "private-cli"));
+            assert!(!host_environment_is_allowed("cargo", "private-cli"));
+            assert!(!host_environment_is_allowed("npm", "other"));
+        });
+    }
+
+    #[test]
+    fn active_overrides_report_only_the_matching_manager_and_package() {
+        temp_env::with_vars(
+            [
+                (ALLOW_NPM_SCRIPTS_ENV, Some("reviewed")),
+                (ALLOW_PIP_SDISTS_ENV, Some("reviewed")),
+                (ALLOW_HOST_ENV, Some("npm:reviewed")),
+                (ALLOW_UNVERIFIED_ENV, Some("npm:reviewed")),
+                (ALLOW_GO_CGO_ENV, Some("reviewed")),
+                (ALLOW_GO_TOOLCHAIN_ENV, Some("reviewed")),
+            ],
+            || {
+                assert_eq!(
+                    active_security_overrides("npm", "reviewed"),
+                    vec![ALLOW_NPM_SCRIPTS_ENV, ALLOW_HOST_ENV, ALLOW_UNVERIFIED_ENV]
+                );
+                assert_eq!(
+                    active_security_overrides("pip", "reviewed"),
+                    vec![ALLOW_PIP_SDISTS_ENV]
+                );
+                assert_eq!(
+                    active_security_overrides("go", "reviewed"),
+                    vec![ALLOW_GO_CGO_ENV, ALLOW_GO_TOOLCHAIN_ENV]
+                );
+                assert!(active_security_overrides("npm", "other").is_empty());
+            },
+        );
+    }
+
+    #[test]
+    fn security_receipt_records_effective_policy() {
+        let staging = tempfile::tempdir().expect("staging directory");
+        fs::create_dir_all(staging.path().join("bin")).expect("bin directory");
+        fs::write(staging.path().join("bin/tool"), b"verified executable").expect("tool fixture");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            fs::set_permissions(
+                staging.path().join("bin/tool"),
+                fs::Permissions::from_mode(0o755),
+            )
+            .expect("executable fixture");
+        }
+        temp_env::with_vars(
+            [
+                (ALLOW_GO_CGO_ENV, Some("example.com/tool")),
+                (ALLOW_GO_TOOLCHAIN_ENV, None),
+                (ALLOW_HOST_ENV, None),
+            ],
+            || {
+                write_security_receipt(staging.path(), "go", "example.com/tool")
+                    .expect("security receipt");
+            },
+        );
+        let receipt: serde_json::Value = serde_json::from_slice(
+            &fs::read(staging.path().join(".omg-security-receipt.json"))
+                .expect("read security receipt"),
+        )
+        .expect("parse security receipt");
+        assert_eq!(receipt["manager"], "go");
+        assert_eq!(receipt["source_policy"], "pinned-public");
+        assert_eq!(receipt["protections"]["go_checksum_database"], true);
+        assert_eq!(receipt["protections"]["go_cgo_disabled"], false);
+        assert_eq!(receipt["protections"]["go_local_toolchain_only"], true);
+        assert_eq!(receipt["protections"]["installer_stdin_closed"], true);
+        assert_eq!(
+            receipt["protections"]["linux_no_new_privs"],
+            cfg!(target_os = "linux")
+        );
+        assert_eq!(
+            receipt["executable_sha256"]["bin/tool"],
+            hex::encode(Sha256::digest(b"verified executable"))
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn binary_preflight_rejects_links_outside_the_installation() {
+        let staging = tempfile::tempdir().expect("staging directory");
+        let external = tempfile::NamedTempFile::new().expect("external file fixture");
+        let bin = staging.path().join("bin");
+        fs::create_dir_all(&bin).expect("bin directory");
+        symlink(external.path(), bin.join("escaped")).expect("external link fixture");
+        let error = validate_tool_binary_containment(staging.path())
+            .expect_err("external binary link must fail closed");
+        assert!(
+            error.to_string().contains("outside its installation"),
+            "unexpected rejection: {error:#}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rollback_cleanup_removes_only_broken_links_owned_by_the_tool() {
+        let temp = tempfile::tempdir().expect("temp directory");
+        let install = temp.path().join("tools/npm/example");
+        let bin = temp.path().join("bin");
+        fs::create_dir_all(&bin).expect("bin directory");
+        symlink(install.join("bin/new-only"), bin.join("new-only")).expect("managed broken link");
+        symlink("/missing/foreign", bin.join("foreign")).expect("foreign broken link");
+
+        cleanup_broken_managed_links(&bin, &install).expect("cleanup");
+
+        assert!(fs::symlink_metadata(bin.join("new-only")).is_err());
+        assert!(fs::symlink_metadata(bin.join("foreign")).is_ok());
+    }
+
+    #[test]
+    fn secured_commands_use_an_isolated_home() {
+        let staging = tempfile::tempdir().expect("staging directory");
+        let executable = staging.path().join("bin/manager");
+        fs::create_dir_all(executable.parent().expect("manager parent"))
+            .expect("manager directory");
+        fs::write(&executable, b"fixture").expect("manager fixture");
+        let command = secured_manager_command(&executable, staging.path(), "npm", "eslint")
+            .expect("secured command");
+        let variables: std::collections::HashMap<_, _> = command
+            .get_envs()
+            .filter_map(|(name, value)| value.map(|value| (name.to_owned(), value.to_owned())))
+            .collect();
+        assert_eq!(
+            variables.get(std::ffi::OsStr::new("HOME")),
+            Some(&staging.path().join(".manager-home").into_os_string())
+        );
+        assert!(!variables.contains_key(std::ffi::OsStr::new("NPM_TOKEN")));
+        assert!(!variables.contains_key(std::ffi::OsStr::new("SSH_AUTH_SOCK")));
+        assert!(!variables.contains_key(std::ffi::OsStr::new("AWS_SECRET_ACCESS_KEY")));
+        #[cfg(unix)]
+        {
+            assert_eq!(command.get_current_dir(), Some(Path::new("/")));
+            let path = variables
+                .get(std::ffi::OsStr::new("PATH"))
+                .expect("isolated PATH");
+            let entries: Vec<_> = std::env::split_paths(path).collect();
+            assert_eq!(entries.first().map(PathBuf::as_path), executable.parent());
+            assert!(entries.contains(&PathBuf::from("/usr/bin")));
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn secured_commands_close_stdin_and_forbid_new_privileges() {
+        let staging = tempfile::tempdir().expect("staging directory");
+        let assert_restricted = || {
+            let status = secured_manager_command("/bin/sh", staging.path(), "npm", "eslint")
+                .expect("secured command")
+                .args([
+                    "-c",
+                    "grep -Eq '^NoNewPrivs:[[:space:]]+1$' /proc/self/status && ! read value",
+                ])
+                .status()
+                .expect("execute secured command");
+            assert!(status.success());
+        };
+        assert_restricted();
+        temp_env::with_var(ALLOW_HOST_ENV, Some("npm:eslint"), assert_restricted);
+    }
+
+    /// Tool installs may only swap their own package's links. Other packages,
+    /// foreign symlinks and plain files must survive an install.
     #[cfg(unix)]
     #[test]
     fn linking_never_replaces_commands_omg_does_not_manage() {
@@ -1034,6 +1775,7 @@ mod tests {
         executable(&install_dir.join("bin").join("foreign"), b"new");
         executable(&install_dir.join("bin").join("userfile"), b"new");
         executable(&install_dir.join("bin").join("fresh"), b"new");
+        executable(&install_dir.join("bin").join("upgrade"), b"upgraded");
 
         let previous_install = tools_dir.join("cargo").join("previous");
         fs::create_dir_all(previous_install.join("bin")).expect("previous fixture");
@@ -1045,15 +1787,20 @@ mod tests {
             bin_dir.join("ours"),
         )
         .expect("managed link fixture");
+        symlink(
+            install_dir.join("bin").join("upgrade"),
+            bin_dir.join("upgrade"),
+        )
+        .expect("same package link fixture");
         symlink("/etc/hostname", bin_dir.join("foreign")).expect("foreign link fixture");
         fs::write(bin_dir.join("userfile"), b"user data").expect("user file fixture");
 
-        link_binaries(&install_dir, &bin_dir, &tools_dir, false).expect("linking");
+        link_binaries(&install_dir, &bin_dir, false).expect("linking");
 
-        // Managed link: replaced with the new install's binary.
+        // Another managed package owns this name and must survive installation.
         assert_eq!(
-            fs::read_link(bin_dir.join("ours")).expect("managed link replaced"),
-            install_dir.join("bin").join("ours")
+            fs::read_link(bin_dir.join("ours")).expect("other package link preserved"),
+            previous_install.join("bin").join("ours")
         );
         // Foreign symlink and user file: untouched.
         assert_eq!(
@@ -1069,6 +1816,27 @@ mod tests {
             fs::read_link(bin_dir.join("fresh")).expect("fresh link created"),
             install_dir.join("bin").join("fresh")
         );
+        assert_eq!(
+            fs::read(bin_dir.join("upgrade")).expect("same package upgrade available"),
+            b"upgraded"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn link_replacement_requires_the_same_package_and_contained_target() {
+        let temp = tempfile::tempdir().expect("temp directory");
+        let install = temp.path().join("tools/cargo/package");
+        let dest = temp.path().join("command");
+        for (target, replaceable) in [
+            (install.join("bin/command"), true),
+            (install.join("../other/bin/command"), false),
+            (temp.path().join("tools/npm/package/bin/command"), false),
+        ] {
+            symlink(target, &dest).expect("link fixture");
+            assert_eq!(is_managed_link(&dest, &install), replaceable);
+            fs::remove_file(&dest).expect("remove fixture");
+        }
     }
 
     #[test]

@@ -1715,6 +1715,23 @@ macro_rules! impl_runtime_common {
 }
 pub(crate) use impl_runtime_common;
 
+/// Run newly downloaded runtime code without exposing the caller's credentials,
+/// agents, language hooks, or package-manager configuration.
+pub(crate) fn harden_untrusted_runtime_command(
+    command: &mut std::process::Command,
+    isolated_home: &Path,
+) {
+    command
+        .env_clear()
+        .env(
+            "PATH",
+            "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        )
+        .env("HOME", isolated_home)
+        .env("LANG", "C.UTF-8")
+        .env("LC_ALL", "C.UTF-8");
+}
+
 #[cfg(test)]
 #[expect(clippy::unwrap_used, clippy::expect_used)] // Idiomatic in tests: panics on failure with clear error context
 mod tests {

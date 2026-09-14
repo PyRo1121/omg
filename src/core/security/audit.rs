@@ -1874,8 +1874,7 @@ pub fn record_operation(operation: &str, targets: &[String], outcome: &str) -> a
     } else {
         AuditLogger::new()?
     };
-    let actor = std::env::var("SUDO_UID")
-        .unwrap_or_else(|_| rustix::process::getuid().as_raw().to_string());
+    let actor = crate::core::privilege::invoking_uid()?.to_string();
     let event = match operation.to_ascii_lowercase().as_str() {
         "install" | "install_blocking" => AuditEventType::PackageInstall,
         "remove" | "remove_blocking" => AuditEventType::PackageRemove,

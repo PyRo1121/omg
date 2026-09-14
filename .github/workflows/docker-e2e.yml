@@ -30,6 +30,7 @@ on:
   schedule:
     # Run nightly to catch regressions
     - cron: "0 2 * * *"
+  workflow_dispatch:
 
 concurrency:
   group: docker-e2e-${{ github.ref }}
@@ -65,13 +66,20 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-docker-e2e-
 
       - name: Run Docker E2E Tests
-        run: OMG_RUN_DOCKER_TESTS=1 cargo test --no-default-features --features pgp,license --test docker_e2e --locked -- --ignored --test-threads=1
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/docker-e2e-evidence"
+          OMG_RUN_DOCKER_TESTS=1 cargo test --no-default-features --features pgp,license --test docker_e2e --locked -- --ignored --test-threads=1 \
+            2>&1 | tee "$RUNNER_TEMP/docker-e2e-evidence/tests.log"
         env:
           RUST_BACKTRACE: 1
 
       - name: Upload test results
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: docker-e2e-results
-          path: target/debug/
+          path: ${{ runner.temp }}/docker-e2e-evidence/
+          retention-days: 14
+          if-no-files-found: warn

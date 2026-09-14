@@ -46,6 +46,8 @@ pub enum PgpError {
     },
     #[error("Keyring '{path}' contains no certificates")]
     KeyringEmpty { path: String },
+    #[error("Keyring '{path}' contains none of the allowed signing fingerprints")]
+    KeyringNoAllowedFingerprint { path: String },
     #[error("Failed to parse keyring '{path}'")]
     KeyringParse {
         path: String,
@@ -161,6 +163,32 @@ impl PgpVerifier {
             policy: StandardPolicy::new(),
             certs,
         })
+    }
+
+    /// Load only certificates whose primary fingerprint is explicitly allowed.
+    /// This turns a remotely refreshed key bundle into a pinned trust root.
+    pub fn from_keyring_with_allowed_fingerprints(
+        path: impl AsRef<Path>,
+        allowed: &[&str],
+    ) -> Result<Self, PgpError> {
+        let path = path.as_ref();
+        let path_text = path.display().to_string();
+        let mut verifier = Self::from_keyring(path)?;
+        verifier.certs.retain(|cert| {
+            let fingerprint = cert.fingerprint().to_hex().to_ascii_uppercase();
+            allowed.iter().any(|allowed| {
+                allowed
+                    .chars()
+                    .filter(|character| !character.is_ascii_whitespace())
+                    .collect::<String>()
+                    .to_ascii_uppercase()
+                    == fingerprint
+            })
+        });
+        if verifier.certs.is_empty() {
+            return Err(PgpError::KeyringNoAllowedFingerprint { path: path_text });
+        }
+        Ok(verifier)
     }
 
     /// Verify a file against a detached signature using the loaded keyring.
@@ -535,6 +563,39 @@ mod tests {
             "corrupt keyring must fail closed",
         );
         assert!(matches!(err, PgpError::KeyringParse { .. }), "got: {err}");
+    }
+
+    #[test]
+    fn fingerprint_allowlist_filters_downloaded_keyrings() {
+        use openpgp::cert::prelude::CertBuilder;
+        use openpgp::serialize::Serialize as _;
+
+        let (allowed, _) = CertBuilder::general_purpose(Some("allowed@example.invalid"))
+            .generate()
+            .unwrap();
+        let (injected, _) = CertBuilder::general_purpose(Some("injected@example.invalid"))
+            .generate()
+            .unwrap();
+        let allowed_fingerprint = allowed.fingerprint().to_hex();
+        let mut keyring = NamedTempFile::new().unwrap();
+        allowed.serialize(&mut keyring).unwrap();
+        injected.serialize(&mut keyring).unwrap();
+        keyring.flush().unwrap();
+
+        let verifier = PgpVerifier::from_keyring_with_allowed_fingerprints(
+            keyring.path(),
+            &[&allowed_fingerprint],
+        )
+        .unwrap();
+        assert_eq!(verifier.certs.len(), 1);
+        assert_eq!(verifier.certs[0].fingerprint(), allowed.fingerprint());
+        assert!(matches!(
+            PgpVerifier::from_keyring_with_allowed_fingerprints(
+                keyring.path(),
+                &["0000000000000000000000000000000000000000"],
+            ),
+            Err(PgpError::KeyringNoAllowedFingerprint { .. })
+        ));
     }
 
     #[test]

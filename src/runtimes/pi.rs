@@ -59,6 +59,7 @@ impl PiManager {
                     "--ignore-scripts",
                     "--audit=false",
                     "--fund=false",
+                    "--registry=https://registry.npmjs.org/",
                     "--prefix",
                 ])
                 .arg(&prefix)
@@ -66,6 +67,12 @@ impl PiManager {
                 .env_remove("NODE_OPTIONS")
                 .env_remove("NPM_CONFIG_PREFIX")
                 .env_remove("npm_config_prefix")
+                .env_remove("NPM_CONFIG_REGISTRY")
+                .env_remove("npm_config_registry")
+                .env_remove("NPM_CONFIG_USERCONFIG")
+                .env_remove("npm_config_userconfig")
+                .env_remove("NPM_CONFIG_GLOBALCONFIG")
+                .env_remove("npm_config_globalconfig")
                 .output()
         })
         .await
@@ -73,7 +80,9 @@ impl PiManager {
         .with_context(|| format!("Failed to execute npm at {}", self.npm.display()))?;
 
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stderr =
+                crate::cli::style::sanitize_terminal_text(&String::from_utf8_lossy(&output.stderr));
+            let stderr: String = stderr.chars().take(500).collect();
             anyhow::bail!(
                 "npm failed to install Pi {version} ({}): {}",
                 output.status,
@@ -204,6 +213,11 @@ mod tests {
                 .any(|argument| argument == "--ignore-scripts")
         );
         assert!(arguments.lines().any(|argument| argument == "--global"));
+        assert!(
+            arguments
+                .lines()
+                .any(|argument| argument == "--registry=https://registry.npmjs.org/")
+        );
         assert!(
             arguments
                 .lines()

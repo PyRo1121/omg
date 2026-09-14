@@ -53,31 +53,34 @@ fn ensure_docker_image() -> bool {
 
 /// Run a single command in a fresh Docker container
 fn run_in_docker(cmd: &[&str]) -> (bool, String, String) {
+    run_in_docker_with_options(&[], cmd)
+}
+
+fn run_in_docker_with_options(options: &[&str], cmd: &[&str]) -> (bool, String, String) {
     let output = Command::new("docker")
-        .args(["run", "--rm", "omg-arch-e2e"])
+        .args(["run", "--rm"])
+        .args(options)
+        .arg("omg-arch-e2e")
         .args(cmd)
         .output()
         .expect("Failed to run Docker command");
 
-    (
-        output.status.success(),
-        String::from_utf8_lossy(&output.stdout).to_string(),
-        String::from_utf8_lossy(&output.stderr).to_string(),
-    )
+    let success = output.status.success();
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    if !success {
+        eprintln!(
+            "Docker command {cmd:?} (options {options:?}) failed with {}\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}",
+            output.status
+        );
+    }
+
+    (success, stdout, stderr)
 }
 
 /// Run a shell script in a single Docker container (preserves state between commands)
 fn run_script_in_docker(script: &str) -> (bool, String, String) {
-    let output = Command::new("docker")
-        .args(["run", "--rm", "omg-arch-e2e", "sh", "-c", script])
-        .output()
-        .expect("Failed to run Docker command");
-
-    (
-        output.status.success(),
-        String::from_utf8_lossy(&output.stdout).to_string(),
-        String::from_utf8_lossy(&output.stderr).to_string(),
-    )
+    run_in_docker(&["sh", "-c", script])
 }
 
 /// Strip ANSI escape codes from text for reliable string matching
@@ -174,16 +177,19 @@ fn test_docker_update_check() {
     require_docker_tests();
     assert!(ensure_docker_image(), "Docker image not ready");
 
+    // Dockerfile.arch-e2e installs a root-owned executable under root-controlled
+    // ancestors, then runs as testuser. Self-elevation must work in plain Docker
+    // without granting SYS_PTRACE or weakening protection for writable installs.
     let (success, stdout, _stderr) = run_in_docker(&["omg", "update", "--check"]);
 
     assert!(success, "Update check should succeed");
     // Contract: arch::update check_only path prints a phase header announcing
-    // its catalog-refresh check phase
+    // that it checks the cached package databases without refreshing them
     // (src/cli/packages/update/arch.rs update_phase_context). The transient
     // "Checking" spinner is cleared and never reaches non-TTY stdout.
     let plain = strip_ansi(&stdout);
     assert!(
-        plain.contains("Refreshing catalogs"),
+        plain.contains("Checking for updates · cached"),
         "update --check must announce its check phase, got: {plain}"
     );
 }

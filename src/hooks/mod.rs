@@ -99,12 +99,8 @@ struct PyProjectSection {
 }
 
 fn read_pin_file(path: &Path) -> Result<Option<String>> {
-    match fs::read_to_string(path) {
-        Ok(content) => Ok(Some(content)),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error)
-            .with_context(|| format!("Failed to read version pin file {}", path.display())),
-    }
+    crate::config::mise_env::read_bounded_regular_file(path)
+        .with_context(|| format!("Failed to read version pin file {}", path.display()))
 }
 
 fn read_package_json_versions(dir: &Path) -> Result<Option<HashMap<String, String>>> {
@@ -249,152 +245,37 @@ pub fn hook_env(shell: &str) -> Result<()> {
     }
 
     let cwd = std::env::current_dir()?;
-
-    // Detect version files in current directory and parents
-    let versions = detect_versions_for_hook(&cwd);
-
-    // Build PATH modifications. An empty result is meaningful to the
-    // generated hooks, which reset PATH to the user's base PATH first.
-    let path_additions = build_path_additions(&versions)?;
-
-    // mise `[env]` parity: project variables ride along with the tool PATHs.
-    // Lenient by design: hook-env runs on every prompt, so a deleted `.env`
-    // or an unset required variable warns and is skipped instead of failing
-    // the prompt. `_.source` scripts are refused outright (below) and
-    // project `_.path` entries are never prepended (see
-    // `automatic_hook_additions`): both are untrusted repo input.
-    let base: HashMap<String, String> = std::env::vars().collect();
-    let overlaid = crate::config::mise_env::with_path_overlay(&base, &path_additions);
-    let env = crate::config::mise_env::load_mise_env_chain(
-        &cwd,
-        &overlaid,
-        crate::config::mise_env::Strictness::Lenient,
-    )?;
-    anyhow::ensure!(
-        env.sources.is_empty(),
-        "Automatic hooks refuse mise _.source scripts without project trust; run the task explicitly instead"
-    );
-
-    let restore = environment_restore(shell, &env, &base)?;
-
-    let (all_additions, ignored_project_paths) =
-        automatic_hook_additions(path_additions, &env.path_additions);
-    if ignored_project_paths > 0 {
-        use std::sync::atomic::{AtomicBool, Ordering};
-        static WARNED_PROJECT_PATH: AtomicBool = AtomicBool::new(false);
-        if !WARNED_PROJECT_PATH.swap(true, Ordering::Relaxed) {
-            tracing::warn!(
-                "Ignoring {ignored_project_paths} mise `_.path` entr{} in automatic hooks: project directories are never prepended to the interactive shell PATH",
-                if ignored_project_paths == 1 {
-                    "y"
-                } else {
-                    "ies"
-                }
-            );
-        }
-    }
-
-    if all_additions.is_empty()
-        && env.set.is_empty()
-        && env.unset.is_empty()
-        && env.sources.is_empty()
-    {
-        return Ok(());
-    }
-
-    // Output shell-specific environment modification
-    //
-    // SECURITY: every interpolated value is single-quoted and every variable
-    // name was validated as `[A-Za-z_][A-Za-z0-9_]*` at parse time, so no
-    // component can break out via `"`, `$(`, or backticks. The generated
-    // hooks reset PATH before evaluating this output. The fallback keeps
-    // direct `eval "$(omg hook-env ...)"` calls safe too.
-    match shell.to_lowercase().as_str() {
-        "zsh" | "bash" => {
-            println!("_OMG_ENV_RESTORE={}", posix_single_quoted(&restore));
-            if !all_additions.is_empty() {
-                let additions = all_additions
-                    .iter()
-                    .map(|path| posix_single_quoted(path))
-                    .collect::<Vec<_>>()
-                    .join(":");
-                println!("export PATH={additions}:\"${{_OMG_PATH_BASE:-$PATH}}\"");
-            }
-            for (name, value) in &env.set {
-                println!("export {name}={}", posix_single_quoted(value));
-            }
-            for name in &env.unset {
-                println!("unset {name}");
-            }
-        }
-        "fish" => {
-            println!("set -g _OMG_ENV_RESTORE {}", fish_single_quoted(&restore));
-            // `fish_add_path` prepends: emit in reverse so the first
-            // directory keeps the highest precedence.
-            for path in all_additions.iter().rev() {
-                println!("fish_add_path -g {}", fish_single_quoted(path));
-            }
-            for (name, value) in &env.set {
-                println!("set -gx {name} {}", fish_single_quoted(value));
-            }
-            for name in &env.unset {
-                println!("set -e {name}");
-            }
-        }
-        _ => {}
-    }
-
+    print!("{}", hook_env_output(shell, &cwd)?);
     Ok(())
 }
 
-/// Decide which PATH additions an automatic hook may apply.
-///
-/// SECURITY (daybreak csf_62033e8 / csf_e757fdf / csf_f6e23cc): project
-/// `_.path` entries from `mise.toml` are untrusted repo input. Automatic
-/// hooks run on every prompt, so prepending them would let merely entering
-/// a repository silently hijack command resolution with
-/// attacker-controlled executables. Hooks prepend only tool-managed bin
-/// dirs (each validated against OMG's versions tree); explicit `omg run`
-/// and task execution still honor project `_.path`. Returns the additions
-/// to apply plus how many project entries were refused (for warn-once).
-fn automatic_hook_additions(
-    tool_paths: Vec<String>,
-    project_paths: &[String],
-) -> (Vec<String>, usize) {
-    (tool_paths, project_paths.len())
-}
-
-fn environment_restore(
-    shell: &str,
-    env: &crate::config::mise_env::ResolvedEnv,
-    base: &HashMap<String, String>,
-) -> Result<String> {
-    let mut names: Vec<&str> = env
-        .set
-        .iter()
-        .map(|(name, _)| name.as_str())
-        .chain(env.unset.iter().map(String::as_str))
-        .collect();
-    names.sort_unstable();
-    names.dedup();
+/// Automatic prompts only select installed runtimes. Project environment
+/// assignments (including prompt/loader variables), files, paths and scripts
+/// require explicit `omg run` or task execution, where their semantics remain.
+fn hook_env_output(shell: &str, cwd: &Path) -> Result<String> {
     use std::fmt::Write as _;
-    let mut restore = String::new();
-    for name in names {
-        anyhow::ensure!(
-            !name.starts_with("_OMG_"),
-            "Project environment cannot replace reserved hook variable {name}"
-        );
-        crate::config::mise_env::validate_env_name(name)?;
-        match (shell.to_ascii_lowercase().as_str(), base.get(name)) {
-            ("fish", Some(value)) => {
-                writeln!(restore, "set -gx {name} {};", fish_single_quoted(value))
+    let versions = detect_versions_for_hook(cwd);
+    let additions = build_path_additions(&versions)?;
+    let mut output = String::new();
+    match shell.to_ascii_lowercase().as_str() {
+        "bash" | "zsh" => {
+            if !additions.is_empty() {
+                let paths = additions
+                    .iter()
+                    .map(|p| posix_single_quoted(p))
+                    .collect::<Vec<_>>()
+                    .join(":");
+                writeln!(output, "export PATH={paths}:\"${{_OMG_PATH_BASE:-$PATH}}\"")?;
             }
-            ("fish", None) => writeln!(restore, "set -e {name};"),
-            (_, Some(value)) => writeln!(restore, "export {name}={};", posix_single_quoted(value)),
-            (_, None) => writeln!(restore, "unset {name};"),
-        }?;
+        }
+        "fish" => {
+            for path in additions.iter().rev() {
+                writeln!(output, "fish_add_path -g {}", fish_single_quoted(path))?;
+            }
+        }
+        _ => anyhow::bail!("Unsupported shell: {shell}"),
     }
-    Ok(restore)
+    Ok(output)
 }
 
 /// Detect version files for the shell hook, degrading gracefully when the
@@ -1260,62 +1141,52 @@ mod tests {
     }
 
     #[test]
-    fn project_environment_delta_restores_values_and_absence() {
-        let env = crate::config::mise_env::ResolvedEnv {
-            set: vec![
-                ("PROJECT_ONLY".into(), "secret".into()),
-                ("EXISTING".into(), "project".into()),
-            ],
-            unset: vec!["REMOVED".into()],
-            ..Default::default()
-        };
-        let base = HashMap::from([
-            ("EXISTING".into(), "original ' quoted\nvalue".into()),
-            ("REMOVED".into(), "restored".into()),
-        ]);
-        for shell in ["bash", "zsh"] {
-            let restore = environment_restore(shell, &env, &base).unwrap();
-            let script = format!(
-                "export PROJECT_ONLY=secret EXISTING=project; unset REMOVED; {restore} printf '%s|%s|%s' \"${{PROJECT_ONLY-unset}}\" \"$EXISTING\" \"$REMOVED\""
-            );
-            let output = std::process::Command::new("sh")
-                .args(["-c", &script])
-                .output()
-                .unwrap();
-            assert!(output.status.success());
-            assert_eq!(
-                String::from_utf8(output.stdout).unwrap(),
-                "unset|original ' quoted\nvalue|restored"
-            );
+    fn automatic_hooks_ignore_all_project_environment() {
+        let root = tempdir().unwrap();
+        let child = root.path().join("child");
+        fs::create_dir(&child).unwrap();
+        fs::write(
+            root.path().join("mise.toml"),
+            r#"
+[env]
+PROMPT_COMMAND = "touch hook-executed"
+PS1 = "$(touch hook-executed)"
+PATH = "/hostile"
+BASH_ENV = "/hostile/script"
+SHELL = false
+[env._]
+file = "missing.env"
+source = "missing.sh"
+path = "hostile"
+"#,
+        )
+        .unwrap();
+        for shell in ["bash", "zsh", "fish"] {
+            assert!(hook_env_output(shell, &child).unwrap().is_empty());
         }
-    }
-
-    #[test]
-    fn project_environment_cannot_replace_hook_restore_code() {
-        let env = crate::config::mise_env::ResolvedEnv {
-            set: vec![("_OMG_ENV_RESTORE".into(), "unexpected command".into())],
-            ..Default::default()
-        };
-        assert!(environment_restore("bash", &env, &HashMap::new()).is_err());
-    }
-
-    /// Automatic hooks must never prepend project `_.path` directories:
-    /// they are untrusted repo input and would let entering a repository
-    /// silently hijack command resolution with attacker executables.
-    #[test]
-    fn automatic_hooks_refuse_project_path_additions() {
-        let tool = vec!["/data/omg/versions/node/22.0.0/bin".to_string()];
-        let hostile = vec![
-            "/tmp/evil/repo/node_modules/.bin".to_string(),
-            "/tmp/evil/repo/bin".to_string(),
-        ];
-        let (additions, ignored) = automatic_hook_additions(tool.clone(), &hostile);
-        assert_eq!(additions, tool, "tool-managed bin dirs still apply");
-        assert_eq!(ignored, 2, "every project entry is refused");
-
-        let (additions, ignored) = automatic_hook_additions(Vec::new(), &[]);
-        assert!(additions.is_empty());
-        assert_eq!(ignored, 0);
+        let output = hook_env_output("bash", &child).unwrap();
+        let script = format!("{output}\nprintf '%s' preserved");
+        let result = std::process::Command::new("bash")
+            .args(["--noprofile", "--norc", "-c", &script])
+            .current_dir(&child)
+            .output()
+            .unwrap();
+        assert!(result.status.success());
+        assert_eq!(result.stdout, b"preserved");
+        assert!(!child.join("hook-executed").exists());
+        fs::write(
+            root.path().join("hostile.env"),
+            "PROMPT_COMMAND=touch hook-executed\nPS1=$(touch hook-executed)\nPATH=/hostile\n",
+        )
+        .unwrap();
+        fs::write(
+            root.path().join("mise.toml"),
+            "[env._]\nfile = 'hostile.env'\n",
+        )
+        .unwrap();
+        for shell in ["bash", "zsh", "fish"] {
+            assert!(hook_env_output(shell, &child).unwrap().is_empty());
+        }
     }
 
     /// Shell integration removal deletes exactly the lines OMG owns,
@@ -1940,6 +1811,30 @@ mod tests {
     fn test_read_pin_file_missing_is_none() {
         let missing = tempdir().unwrap().path().join("does-not-exist");
         assert!(read_pin_file(&missing).unwrap().is_none());
+    }
+
+    #[test]
+    fn pin_reads_are_bounded() {
+        let dir = tempdir().unwrap();
+        let pin = dir.path().join(".nvmrc");
+        fs::write(&pin, vec![b'1'; 1024 * 1024 + 1]).unwrap();
+        assert!(read_pin_file(&pin).is_err());
+        fs::write(&pin, "22.1.0\n").unwrap();
+        assert_eq!(read_pin_file(&pin).unwrap().as_deref(), Some("22.1.0\n"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pin_reads_reject_special_files() {
+        let dir = tempdir().unwrap();
+        let pin = dir.path().join(".nvmrc");
+        std::os::unix::fs::symlink("/dev/zero", &pin).unwrap();
+        assert!(read_pin_file(&pin).is_err());
+        let fifo = dir.path().join("mise.toml");
+        nix::unistd::mkfifo(&fifo, nix::sys::stat::Mode::S_IRUSR).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || tx.send(read_pin_file(&fifo).is_err()).unwrap());
+        assert!(rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap());
     }
 
     #[test]

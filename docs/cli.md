@@ -520,9 +520,11 @@ natively, so projects already using mise work without installing it.
 YAML is rejected), `_.source` (evaluated only for explicit `run`/tasks),
 `{{env.NAME}}`/`{{config_root}}`
 templates, and per-task `env` (including task `_.file`/`_.path`/`_.source`).
-Automatic hooks reject `_.source` because entering a repository does not
-constitute permission to execute its scripts. Missing env files and unmet
-required variables are skipped in hooks; malformed configuration is rejected.
+Automatic hooks select installed runtimes only. They do not apply project
+`[env]` assignments, unsets, files, paths, or scripts: entering a repository
+does not authorize changes to the interactive shell's execution environment.
+Runtime pin and manifest reads reject symlinks and special files and are
+limited to 1 MiB. Invalid pins are reported without blocking the prompt.
 `run` and task execution fail closed on missing files and unmet
 `required` entries.
 
@@ -1065,6 +1067,123 @@ OMG includes a curated registry of 60+ popular developer tools across categories
 1. Check the built-in registry for optimal source
 2. Fall back to interactive selection if not in registry
 3. Install to isolated `~/.local/share/omg/tools/`
+
+**Secure tool installs:**
+
+OMG treats package installation as execution of untrusted publisher content.
+For npm, Cargo, pip, and Go tools it uses an isolated home and configuration,
+does not pass ambient registry, Git, SSH, cloud, or CI environment credentials,
+uses a fixed system executable path to prevent project-local helper injection,
+and keeps the previous working tool until the replacement passes its checks. npm
+lifecycle scripts are disabled and registry signatures/provenance are audited;
+pip accepts wheels only; Cargo requires the published lockfile; and Go uses the
+public module proxy and checksum database.
+
+Registry-backed managers accept registry package names only. npm GitHub
+shorthands, Git URLs, tarball URLs, and local package paths are rejected so a
+package name cannot silently select a less verified source. Go module paths are
+accepted because they are authenticated through the configured module proxy and
+checksum database.
+
+The selected manager's resolved executable directory is retained so runtimes
+installed by OMG, rustup, or another user runtime manager continue to work.
+Other caller `PATH` entries are removed, and a manager executable resolved from
+the current project is rejected.
+
+On Linux, secure manager commands run from `/` with absolute destination paths
+so Cargo and npm cannot discover configuration by walking from the staging tree
+into the user's home. Cargo receives an isolated `CARGO_HOME` and cannot delegate
+Git fetching to a host CLI. pip configuration files are disabled explicitly so
+global `extra-index-url` settings cannot reintroduce dependency confusion.
+
+Some legitimate tools or private registries need a narrower policy. Exceptions
+are comma-separated exact package names and apply only to the current command:
+
+```bash
+OMG_TOOL_DANGEROUSLY_ALLOW_ALL_NPM_SCRIPTS="@scope/reviewed-cli" omg tool install reviewed-cli
+OMG_TOOL_ALLOW_PIP_SDISTS="reviewed-cli" omg tool install reviewed-cli
+OMG_TOOL_ALLOW_CARGO_UNLOCKED="reviewed-cli" omg tool install reviewed-cli
+OMG_TOOL_ALLOW_HOST_ENV="npm:@company/private-cli" omg tool install private-cli
+OMG_TOOL_ALLOW_UNVERIFIED="npm:@company/private-cli" omg tool install private-cli
+OMG_TOOL_ALLOW_GO_CGO="reviewed-cli" omg tool install reviewed-cli
+OMG_TOOL_ALLOW_GO_TOOLCHAIN_DOWNLOAD="reviewed-cli" omg tool install reviewed-cli
+```
+
+OMG prints a `Security override:` warning for every matching exception before
+the package manager starts. Treat an unexpected warning as a reason to stop and
+remove the variable from the current shell.
+
+`OMG_TOOL_ALLOW_HOST_ENV` accepts exact `manager:package` entries such as
+`npm:@company/private-cli`, `cargo:private-cli`, `pip:private-cli`, or
+`go:example.com/company/private-cli`. It restores the full host environment, so
+package scripts and build processes may read every credential available to the
+current shell. Use it only for a package and registry you control, in a shell
+containing the minimum necessary credential. Multiple approvals can be listed
+with commas. Avoid persistent shell-profile exports so an approval does not
+silently apply to later releases.
+
+Every successful managed installation contains
+`.omg-security-receipt.json`. It records the manager and package, public or
+host-configured source policy, every active exception, and the effective npm,
+pip, Cargo, and Go protections. It also records the SHA-256 digest of every
+published executable or script target using relative paths. Security tooling
+can inspect this receipt without relying on terminal history.
+
+Before activation, OMG resolves every regular file and symlink in the tool's
+`bin` and npm `.bin` directories. An entry whose final target escapes the staged
+installation aborts the update, leaving the previous installed version active.
+The previous directory is retained until shared command links also succeed. A
+link failure rolls the directory back, removes links introduced by the failed
+version, and restores the previous version's commands.
+
+On Linux, every managed package-manager process sets the kernel's
+`no_new_privs` flag before execution and receives closed standard input. The
+flag is inherited by build and lifecycle-script descendants and cannot be
+unset, so executing setuid, setgid, or file-capability programs cannot grant
+them new privileges. Closed input prevents install hooks from using OMG's
+terminal to request sudo or other interactive credentials. These controls do
+not restrict ordinary filesystem or network access.
+
+If a corporate TLS proxy or private certificate authority is required, scope
+`OMG_TOOL_ALLOW_HOST_ENV` to the affected package and expose only the necessary
+proxy and certificate variables in that shell. The package's build process can
+read those values.
+
+Private registries that do not publish npm-compatible registry signatures may
+also require `OMG_TOOL_ALLOW_UNVERIFIED` with the exact `manager:package` value.
+This skips the final authenticity check and should be limited to an internally
+verified artifact. It does not imply `OMG_TOOL_ALLOW_HOST_ENV` or enable npm
+scripts; set each exception independently when it is actually required.
+
+The npm script exception is scoped to the requested package installation, but
+npm versions without a dependency-level allowlist can execute lifecycle scripts
+from that package's transitive dependencies too. Its deliberately explicit name
+reflects that risk. OMG first installs with scripts disabled and verifies the
+dependency tree, then runs `npm rebuild` only when this exception is active.
+Review the complete dependency tree before using it.
+
+Go tool builds default to `CGO_ENABLED=0` and `GOTOOLCHAIN=local`. The CGO
+exception permits the selected package to invoke the native C toolchain. The
+toolchain-download exception permits Go to fetch and execute a toolchain that
+is not already installed; Go's checksum database still authenticates official
+downloaded toolchains. Apply only the exception named in OMG's failure message.
+
+These defaults follow the upstream security controls documented by
+[npm](https://docs.npmjs.com/viewing-package-provenance/),
+[pip](https://pip.pypa.io/en/stable/topics/secure-installs/),
+[Cargo](https://doc.rust-lang.org/cargo/commands/cargo-install.html), and the
+[Go module system](https://go.dev/ref/mod#authenticating). Linux privilege
+containment follows the kernel's
+[`no_new_privs` contract](https://docs.kernel.org/userspace-api/no_new_privs.html).
+npm provenance proves
+the published artifact's origin and integrity; it does not prove that the
+publisher's code is safe.
+
+Cargo crates can contain `build.rs`, and explicitly approved npm scripts or
+Python source distributions execute publisher-controlled build code. The
+isolated environment prevents automatic inheritance of shell credentials, but
+it is not a filesystem or network sandbox. Review these packages and use a
+container or disposable VM when the publisher is not fully trusted.
 
 ---
 

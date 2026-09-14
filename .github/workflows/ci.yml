@@ -117,6 +117,9 @@ jobs:
       - name: Check local CI targets
         run: make ci-local-quick
 
+      - name: Verify installer destination safety
+        run: bash tests/installer_security.sh
+
   portable:
     name: "Portable Rust"
     needs: quick-gate
@@ -174,7 +177,7 @@ jobs:
           tool: nextest
 
       - name: Run portable tests
-        run: cargo nextest run --lib --no-default-features --features pgp,license --locked --profile ci
+        run: cargo nextest run --lib --bins --no-default-features --features pgp,license --locked --profile ci
 
   #############################################################################
   # STAGE 2: Platform Matrix (Linux containers)
@@ -315,7 +318,7 @@ jobs:
 
       - name: Run unit tests
         run: |
-          cargo nextest run --lib --no-default-features --features ${{ matrix.features }} \
+          cargo nextest run --lib --bins --no-default-features --features ${{ matrix.features }} \
             --locked --profile ci --no-fail-fast
 
       - name: Prepare sandbox regression executable
@@ -388,7 +391,7 @@ jobs:
           if-no-files-found: error
 
   sandbox-cancellation:
-    name: "AUR sandbox cancellation"
+    name: "AUR sandbox security regressions"
     needs: [quick-gate, linux-matrix]
     if: needs.quick-gate.outputs.should-build == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group'
     runs-on: ubuntu-latest
@@ -405,7 +408,7 @@ jobs:
         run: |
           docker build --tag omg-sandbox-regression - <<'DOCKERFILE'
           FROM archlinux:latest@sha256:b0deabeb3d283da2c7f7dbf0eea051b7b2cd0554e0b737cc457fd21683bdcdd1
-          RUN pacman -Syu --noconfirm --needed bubblewrap && pacman -Scc --noconfirm
+          RUN pacman -Syu --noconfirm --needed bubblewrap fakeroot && pacman -Scc --noconfirm
           DOCKERFILE
 
       - name: Prepare sandbox seccomp profile
@@ -415,10 +418,13 @@ jobs:
           jq '(.syscalls[] | select(.includes.caps == ["CAP_SYS_ADMIN"]) | .names) += ["pivot_root"]' \
             seccomp-default.json > seccomp-sandbox.json
 
-      - name: Verify descendant cleanup
+      - name: Verify sandbox isolation and descendant cleanup
         timeout-minutes: 2
+        shell: bash
         run: |
+          set -euo pipefail
           chmod +x fixture/omg-lib-tests
+          mkdir -p "$RUNNER_TEMP/sandbox-evidence"
           # Only this fixture gets namespace permissions, not compilation or
           # other tests. No checkout, credentials, or Docker socket are mounted.
           # Bubblewrap also needs pivot_root, which the default profile denies.
@@ -427,10 +433,103 @@ jobs:
             --pids-limit 128 --memory 1g --cpus 2 \
             --mount "type=bind,source=$PWD/fixture,target=/fixture,readonly" \
             omg-sandbox-regression /bin/bash -euo pipefail -c '
-              test_name=package_managers::aur::client::tests::cancelling_logged_sandbox_build_terminates_descendants
-              /fixture/omg-lib-tests --ignored --list | grep -Fx "$test_name: test"
-              /fixture/omg-lib-tests --exact "$test_name" --ignored --nocapture
-            '
+              command -v bwrap
+              command -v fakeroot
+              test "$(id -u)" = 0
+              getent passwd nobody
+              # A successful namespace probe prevents a denied bwrap startup
+              # from masquerading as the read-only-root rejection test passing.
+              bwrap --ro-bind / / --unshare-pid --proc /proc -- /bin/true
+              # Create the user namespace with the existing container-root
+              # permissions, then map the payload to nobody and drop its caps.
+              # This does not require relaxing host unprivileged-userns policy.
+              bwrap --unshare-user --uid "$(id -u nobody)" --gid "$(id -g nobody)" \
+                --cap-drop ALL --ro-bind / / --proc /proc -- /usr/bin/id
+              /fixture/omg-lib-tests --include-ignored --list > /tmp/tests.list
+              failed=0
+              for case in cancelling_logged_sandbox_build_terminates_descendants \
+                bwrap_readonly_root_blocks_arbitrary_writes \
+                sandbox_fakeroot_skips_unmappable_real_chown \
+                makepkg_invocations_isolate_every_writable_cache \
+                invocation_ownership_setup_uses_only_private_directory_handles \
+                fresh_outputs_never_fall_back_to_checkout_or_other_invocations \
+                chroot_requires_explicit_host_code_consent_before_launch; do
+                test_name="package_managers::aur::client::tests::$case"
+                if ! grep -Fx "$test_name: test" /tmp/tests.list; then
+                  echo "MISSING $case"; failed=1; continue
+                fi
+                echo "RUN $case (required tools present; root handoff enabled)"
+                if /fixture/omg-lib-tests --exact "$test_name" --include-ignored --nocapture; then
+                  echo "PASS $case"
+                else
+                  echo "FAIL $case"; failed=1
+                fi
+              done
+              # Arch treats PKGBUILD/install hooks as executable input, so the
+              # archive parser is a required security gate:
+              # https://man.archlinux.org/man/PKGBUILD.5
+              for case in member_paths_reject_absolute_parent_and_empty_paths \
+                links_cannot_escape_the_archive_root \
+                buildinfo_requires_one_complete_identity \
+                inspector_classifies_install_hook_and_setuid_file \
+                inspector_rejects_special_files_and_duplicate_paths \
+                inspector_requires_paired_build_for_system_integration_payloads; do
+                test_name="package_managers::aur::artifact_inspector::tests::$case"
+                if ! grep -Fx "$test_name: test" /tmp/tests.list; then
+                  echo "MISSING $case"; failed=1; continue
+                fi
+                echo "RUN $case (AUR archive inspection)"
+                if /fixture/omg-lib-tests --exact "$test_name" --include-ignored --nocapture; then
+                  echo "PASS $case"
+                else
+                  echo "FAIL $case"; failed=1
+                fi
+              done
+              for case in paired_output_verification_is_order_independent_and_exact \
+                reproducible_epoch_is_stable_and_rejects_invalid_digests; do
+                test_name="package_managers::aur::client::tests::$case"
+                if ! grep -Fx "$test_name: test" /tmp/tests.list; then
+                  echo "MISSING $case"; failed=1; continue
+                fi
+                echo "RUN $case (AUR paired-build verification)"
+                if /fixture/omg-lib-tests --exact "$test_name" --include-ignored --nocapture; then
+                  echo "PASS $case"
+                else
+                  echo "FAIL $case"; failed=1
+                fi
+              done
+              case=elevated_state_roundtrip_preserves_caller_files
+              test_name="core::usage::tests::$case"
+              if ! grep -Fx "$test_name: test" /tmp/tests.list; then
+                echo "MISSING $case"; failed=1
+              else
+                echo "RUN $case (isolated system state and caller files)"
+                # This mount and caller tree live only in this disposable
+                # container. No host state or credentials are mounted here.
+                mount -t tmpfs -o nosuid,nodev,noexec,mode=755 tmpfs /var/lib
+                printf isolated > /var/lib/.omg-state-isolation-fixture
+                caller=$(mktemp -d /tmp/omg-state-caller.XXXXXX)
+                printf caller-history-sentinel > "$caller/history-target"
+                ln -s history-target "$caller/history.json"
+                printf caller-usage-sentinel > "$caller/usage.json"
+                chown -hR nobody: "$caller"
+                if OMG_DATA_DIR="$caller" /fixture/omg-lib-tests --exact "$test_name" --include-ignored --nocapture; then
+                  echo "PASS $case"
+                else
+                  echo "FAIL $case"; failed=1
+                fi
+              fi
+              exit "$failed"
+            ' 2>&1 | tee "$RUNNER_TEMP/sandbox-evidence/tests.log"
+
+      - name: Upload sandbox security evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: aur-sandbox-security-evidence
+          path: ${{ runner.temp }}/sandbox-evidence/
+          retention-days: 14
+          if-no-files-found: warn
 
   #############################################################################
   # STAGE 2a: Feature-intersection compile checks
@@ -534,6 +633,9 @@ jobs:
 
       # sccache temporarily disabled due to service outage
 
+      - name: Verify installer destination safety
+        run: bash tests/installer_security.sh
+
       - name: Build
         run: cargo build --release --no-default-features --features macos,pgp,license --locked
 
@@ -545,7 +647,7 @@ jobs:
         run: cargo nextest --version
 
       - name: Run unit tests
-        run: cargo nextest run --lib --no-default-features --features macos,pgp,license --locked --profile ci
+        run: cargo nextest run --lib --bins --no-default-features --features macos,pgp,license --locked --profile ci
 
       - name: Install Homebrew test packages
         run: |
@@ -619,7 +721,7 @@ jobs:
         run: cargo nextest --version
 
       - name: Run unit tests
-        run: cargo nextest run --lib --no-default-features --features debian,pgp,license --locked --profile ci
+        run: cargo nextest run --lib --bins --no-default-features --features debian,pgp,license --locked --profile ci
 
       - name: Verify binary
         run: |
@@ -657,6 +759,7 @@ jobs:
     steps:
       - name: Evaluate results
         env:
+          BUILD_REQUIRED: ${{ needs.quick-gate.outputs.should-build == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group' }}
           QUICK_GATE: ${{ needs.quick-gate.result }}
           PORTABLE: ${{ needs.portable.result }}
           LINUX_MATRIX: ${{ needs.linux-matrix.result }}
@@ -691,7 +794,10 @@ jobs:
             ["Ubuntu"]="$UBUNTU"
           )
           for job in "${!required_results[@]}"; do
-            if [[ "${required_results[$job]}" != "success" && "${required_results[$job]}" != "skipped" ]]; then
+            if [[ "${required_results[$job]}" == "skipped" && "$BUILD_REQUIRED" == "false" ]]; then
+              continue
+            fi
+            if [[ "${required_results[$job]}" != "success" ]]; then
               echo "::error::$job did not succeed: ${required_results[$job]}"
               exit 1
             fi
@@ -705,9 +811,9 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "All required checks passed!" >> $GITHUB_STEP_SUMMARY
 
-  # The only write-scoped job in this workflow. It runs exclusively on push
-  # to main; pull_request runs of PR-controlled workflow code can never
-  # obtain this token, even if the PR edits this file.
+  # This definition grants write permissions only to the push-to-main job.
+  # A collaborator who can modify workflows can also change this condition;
+  # repository rules, not this editable condition, govern that authority.
   release-tag:
     name: "Tag Release"
     needs: [quick-gate, portable, linux-matrix, sandbox-cancellation, feature-intersections, macos, ubuntu, ci-success]

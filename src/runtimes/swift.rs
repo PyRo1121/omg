@@ -46,6 +46,15 @@ use super::common::{
     normalize_version, print_already_installed, print_installed, print_using,
     remove_file_best_effort, uninstall_version, validate_download_filename,
 };
+
+// Published at https://www.swift.org/keys/active/. Keep this list explicit so
+// replacing the remotely fetched aggregate keyring cannot silently add trust.
+#[cfg(feature = "pgp")]
+const SWIFT_SIGNING_FINGERPRINTS: &[&str] = &[
+    "E813C892820A6FA13755B268F167DF1ACF9CE069", // Automatic signing key #4
+    "A62AE125BBBFBB96A6E042EC925CC1CCED3D1561", // Swift 5.x releases
+    "52BB7E3DE28A71BE22EC05FFEF80A866B47A981F", // Swift 6.x releases
+];
 #[cfg(feature = "pgp")]
 use crate::core::security::pgp::PgpVerifier;
 use crate::{
@@ -284,12 +293,14 @@ async fn download_file(client: &reqwest::Client, url: &str, dest: &Path) -> Resu
 #[cfg(feature = "pgp")]
 fn verify_tarball_signature(keyring: &Path, tarball: &Path, signature: &Path) -> Result<()> {
     crate::core::security::pgp::require_detached_signature_files("Swift", tarball, signature)?;
-    let verifier = PgpVerifier::from_keyring(keyring).with_context(|| {
-        format!(
-            "Failed to load Swift signing keyring: {}",
-            keyring.display()
-        )
-    })?;
+    let verifier =
+        PgpVerifier::from_keyring_with_allowed_fingerprints(keyring, SWIFT_SIGNING_FINGERPRINTS)
+            .with_context(|| {
+                format!(
+                    "Failed to load Swift signing keyring: {}",
+                    keyring.display()
+                )
+            })?;
     verifier
         .verify_detached(tarball, signature)
         .with_context(|| {
@@ -558,7 +569,7 @@ fn publish_keyring(candidate: &Path, destination: &Path) -> Result<()> {
 
 #[cfg(feature = "pgp")]
 fn validate_keyring(path: &Path) -> Result<()> {
-    PgpVerifier::from_keyring(path)?;
+    PgpVerifier::from_keyring_with_allowed_fingerprints(path, SWIFT_SIGNING_FINGERPRINTS)?;
     Ok(())
 }
 
@@ -570,7 +581,9 @@ fn validate_keyring(_path: &Path) -> Result<()> {
 /// Smoke-test the toolchain and bind its reported version to the request.
 fn smoke_swift(version_dir: &Path, expected: &str) -> Result<()> {
     let swift = version_dir.join(SWIFT_BINARY);
-    let output = std::process::Command::new(&swift)
+    let mut command = std::process::Command::new(&swift);
+    super::common::harden_untrusted_runtime_command(&mut command, version_dir);
+    let output = command
         .arg("--version")
         .output()
         .with_context(|| format!("Failed to run smoke test: {}", swift.display()))?;
@@ -590,11 +603,14 @@ fn smoke_swift(version_dir: &Path, expected: &str) -> Result<()> {
         );
         Ok(())
     } else {
+        let stderr =
+            crate::cli::style::sanitize_terminal_text(&String::from_utf8_lossy(&output.stderr));
+        let stderr: String = stderr.chars().take(300).collect();
         anyhow::bail!(
             "Swift smoke test failed with status {}: {}: {}",
             output.status,
             swift.display(),
-            String::from_utf8_lossy(&output.stderr).trim()
+            stderr.trim()
         )
     }
 }

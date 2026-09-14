@@ -376,7 +376,7 @@ fn test_update_with_yes_flag() {
     result.assert_success();
     let output = result.combined_output();
     assert!(
-        output.contains("Refreshing catalogs") && output.contains("System is up to date"),
+        output.contains("Checking for updates · cached") && output.contains("System is up to date"),
         "--yes must not turn --check into an install. Got:\n{output}"
     );
 }

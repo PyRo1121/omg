@@ -112,7 +112,7 @@ fn caret_requirement_resolves_highest_matching_installed_version() {
     );
 }
 
-/// Contract: runtimes without a native branch (`zig`, …) never contribute a
+/// Contract: unregistered runtimes never contribute a
 /// PATH entry even when a matching-looking directory exists on disk, while a
 /// deno pin resolves through the same generic resolver as python/go/ruby.
 #[test]
@@ -122,7 +122,7 @@ fn unsupported_runtime_pins_never_reach_path() {
     let data = tmp.path();
     std::fs::create_dir_all(data.join("versions/deno/1.40.0/bin"))
         .expect("create fixture directory");
-    std::fs::create_dir_all(data.join("versions/zig/0.11.0/bin"))
+    std::fs::create_dir_all(data.join("versions/omg-test-unsupported-runtime/0.11.0/bin"))
         .expect("create fixture directory");
     with_test_env(
         &[
@@ -130,13 +130,15 @@ fn unsupported_runtime_pins_never_reach_path() {
             ("NVM_DIR", "/nonexistent-nvm-for-tests"),
         ],
         || {
-            let additions =
-                build_path_additions(&pin_map(&[("deno", "1.40.0"), ("zig", "0.11.0")]))
-                    .expect("resolution");
+            let additions = build_path_additions(&pin_map(&[
+                ("deno", "1.40.0"),
+                ("omg-test-unsupported-runtime", "0.11.0"),
+            ]))
+            .expect("resolution");
             assert_eq!(
                 additions,
                 vec![data.join("versions/deno/1.40.0/bin").display().to_string()],
-                "deno must resolve through the generic resolver; zig must never reach PATH"
+                "deno must resolve through the generic resolver; unregistered tools must never reach PATH"
             );
         },
     );

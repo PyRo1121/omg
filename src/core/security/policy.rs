@@ -504,6 +504,18 @@ impl SpdxParser {
     }
 }
 
+/// Separate package metadata entries describe cumulative obligations. Preserve
+/// alternatives inside each entry without allowing them to escape the AND.
+pub fn combined_license_expression<'a>(
+    licenses: impl IntoIterator<Item = &'a str>,
+) -> Option<String> {
+    let entries = licenses
+        .into_iter()
+        .map(|license| format!("({license})"))
+        .collect::<Vec<_>>();
+    (!entries.is_empty()).then(|| entries.join(" AND "))
+}
+
 pub fn require_native_plan_support(backend: &str) -> anyhow::Result<()> {
     let policy = SecurityPolicy::load_default()?;
     anyhow::ensure!(
@@ -558,6 +570,33 @@ async fn check_prepared_with_source(
 mod tests {
     use super::*;
     use crate::core::security::vulnerability::VulnerabilityError;
+
+    #[test]
+    fn separate_license_entries_preserve_all_obligations_and_group_alternatives() {
+        let policy = SecurityPolicy {
+            allowed_licenses: vec!["MIT".into()],
+            ..SecurityPolicy::default()
+        };
+        let licenses = combined_license_expression(["MIT", "GPL-3.0"]);
+        assert!(
+            policy
+                .check_source("multi", false, licenses.as_deref())
+                .is_err()
+        );
+        let alternatives = combined_license_expression(["MIT OR Apache-2.0", "GPL-3.0"]);
+        assert!(
+            policy
+                .check_source("multi", false, alternatives.as_deref())
+                .is_err()
+        );
+        let allowed = combined_license_expression(["MIT"]);
+        assert!(
+            policy
+                .check_source("single", false, allowed.as_deref())
+                .is_ok()
+        );
+        assert!(combined_license_expression(std::iter::empty()).is_none());
+    }
 
     #[test]
     fn test_grade_ordering() {
@@ -939,6 +978,11 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn forged_elevation_policy_handoff_is_rejected() {
+        if crate::config::Settings::rerun_config_test_unprivileged(
+            "core::security::policy::tests::forged_elevation_policy_handoff_is_rejected",
+        ) {
+            return;
+        }
         let temp = tempfile::TempDir::new().expect("temp dir");
         temp_env::with_var("OMG_CONFIG_DIR", Some(temp.path()), || {
             let strict = SecurityPolicy {

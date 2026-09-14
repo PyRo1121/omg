@@ -1239,13 +1239,13 @@ mod update_tests {
         result.assert_stdout_contains("update");
     }
 
-    // Contract: --check lists pending updates (and refreshes databases
-    // unless --no-sync). Observed: "Refreshing catalogs".
+    // Contract: --check lists pending updates without refreshing package
+    // databases or requesting elevation.
     #[test]
     fn test_update_dry_run() {
         let result = run_omg(&["update", "--check"]);
         result.assert_success();
-        result.assert_stdout_contains("Refreshing catalogs");
+        result.assert_stdout_contains("Checking for updates · cached");
         result.assert_no_ansi();
     }
 }

@@ -72,7 +72,9 @@ pub(crate) fn load_local_package_metadata(path: &str) -> Result<LocalPackageMeta
             },
         )?,
         installed_size: u64::try_from(package.isize()).unwrap_or(0),
-        license: (!licenses.is_empty()).then(|| licenses.join(" AND ")),
+        license: crate::core::security::policy::combined_license_expression(
+            licenses.iter().map(String::as_str),
+        ),
     })
 }
 
@@ -459,6 +461,7 @@ pub fn execute_transaction(
     kind: TransactionKind,
     handle: Option<&mut alpm::Alpm>,
 ) -> Result<()> {
+    validate_aur_artifact_handoffs(kind, &packages)?;
     let staged = if matches!(
         kind,
         TransactionKind::Install | TransactionKind::InstallAurArtifact
@@ -472,6 +475,13 @@ pub fn execute_transaction(
     let packages = staged
         .as_ref()
         .map_or(packages, |inputs| inputs.targets.clone());
+    if kind == TransactionKind::InstallAurArtifact {
+        for package in &packages {
+            crate::package_managers::aur::artifact_inspector::inspect_archive(
+                std::path::Path::new(package),
+            )?;
+        }
+    }
     let pacman_config = crate::core::pacman_conf::PacmanConfig::parse(paths::pacman_conf_path())
         .context("Failed to load transaction options from pacman.conf")?;
 
@@ -516,13 +526,29 @@ pub fn execute_transaction(
     Ok(())
 }
 
+fn validate_aur_artifact_handoffs(kind: TransactionKind, packages: &[String]) -> Result<()> {
+    if kind == TransactionKind::InstallAurArtifact {
+        // Linux sealing prevents mutation after review and closes the privileged
+        // check/use race: https://man7.org/linux/man-pages/man2/memfd_create.2.html
+        anyhow::ensure!(
+            packages
+                .iter()
+                .all(|package| crate::core::security::artifact::is_handoff(package)),
+            "AUR artifacts must arrive through an immutable sealed handoff"
+        );
+    }
+    Ok(())
+}
+
 pub(crate) fn register_configured_syncdbs(
     alpm: &alpm::Alpm,
     pacman_config: &crate::core::pacman_conf::PacmanConfig,
 ) -> Result<()> {
     let policy = signature_policy(pacman_config)?;
+    let require_pgp = crate::core::security::policy::SecurityPolicy::load_default()?.require_pgp;
     for repo in &pacman_config.repos {
         let siglevel = repository_siglevel(policy.default, repo.sig_level.as_deref())?;
+        let siglevel = enforce_required_package_signature(siglevel, require_pgp);
         alpm.register_syncdb(repo.name.as_str(), siglevel)
             .with_context(|| {
                 format!(
@@ -966,6 +992,19 @@ struct ParsedSignatureLevel {
     mask: alpm::SigLevel,
 }
 
+#[test]
+fn explicit_pgp_requirement_overrides_optional_and_disabled_package_signatures() {
+    for level in [
+        alpm::SigLevel::NONE,
+        alpm::SigLevel::PACKAGE | alpm::SigLevel::PACKAGE_OPTIONAL,
+    ] {
+        let enforced = enforce_required_package_signature(level, true);
+        assert!(enforced.contains(alpm::SigLevel::PACKAGE));
+        assert!(!enforced.contains(alpm::SigLevel::PACKAGE_OPTIONAL));
+        assert_eq!(enforce_required_package_signature(level, false), level);
+    }
+}
+
 fn set_signature_flags(parsed: &mut ParsedSignatureLevel, flags: alpm::SigLevel) {
     parsed.level.insert(flags);
     parsed.mask.insert(flags);
@@ -1110,11 +1149,24 @@ pub(crate) fn repository_siglevel(
     ))
 }
 
+fn enforce_required_package_signature(mut level: alpm::SigLevel, required: bool) -> alpm::SigLevel {
+    if required {
+        level.insert(alpm::SigLevel::PACKAGE);
+        level.remove(alpm::SigLevel::PACKAGE_OPTIONAL | alpm::SigLevel::USE_DEFAULT);
+    }
+    level
+}
+
 pub(crate) fn configure_signature_policy(
     alpm: &alpm::Alpm,
     config: &crate::core::pacman_conf::PacmanConfig,
 ) -> Result<SignaturePolicy> {
-    let signatures = signature_policy(config)?;
+    let mut signatures = signature_policy(config)?;
+    let require_pgp = crate::core::security::policy::SecurityPolicy::load_default()?.require_pgp;
+    signatures.default = enforce_required_package_signature(signatures.default, require_pgp);
+    signatures.local_file = enforce_required_package_signature(signatures.local_file, require_pgp);
+    signatures.remote_file =
+        enforce_required_package_signature(signatures.remote_file, require_pgp);
     alpm.set_default_siglevel(signatures.default)
         .context("Failed to configure default package signature policy")?;
     alpm.set_local_file_siglevel(signatures.local_file)
@@ -1522,7 +1574,9 @@ fn commit_alpm_transaction(
                 crate::package_managers::parse_version(package.version().as_str())
                     .context("Invalid prepared package version")?,
                 package.origin() != alpm::PackageFrom::SyncDb,
-                package.licenses().iter().next().map(str::to_owned),
+                crate::core::security::policy::combined_license_expression(
+                    package.licenses().iter(),
+                ),
             ))
         })
         .collect::<Result<Vec<_>>>()?;
@@ -1699,7 +1753,8 @@ mod tests {
         is_keyring_related_error, local_package_siglevel, package_base_name,
         provider_selection_message, question_refusal_error, reclaim_stale_database_lock,
         register_configured_syncdbs, repository_siglevel, setup_alpm_callbacks, signature_policy,
-        transaction_flags, transaction_overall_percent, validate_transaction_targets,
+        transaction_flags, transaction_overall_percent, validate_aur_artifact_handoffs,
+        validate_transaction_targets,
     };
     use crate::core::paths;
 
@@ -2211,5 +2266,30 @@ mod tests {
         assert!(super::progress_event_is_due(&mut last, "foo", 6));
         assert!(super::progress_event_is_due(&mut last, "bar", 7));
         assert_eq!(last.0, "bar");
+    }
+
+    #[test]
+    fn aur_transactions_require_sealed_handoff_targets() {
+        assert!(
+            validate_aur_artifact_handoffs(
+                TransactionKind::InstallAurArtifact,
+                &["/tmp/package.pkg.tar.zst".to_owned()]
+            )
+            .is_err()
+        );
+        assert!(
+            validate_aur_artifact_handoffs(
+                TransactionKind::InstallAurArtifact,
+                &["/__omg_archive/sealed-descriptor".to_owned()]
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_aur_artifact_handoffs(
+                TransactionKind::Install,
+                &["/tmp/package.pkg.tar.zst".to_owned()]
+            )
+            .is_ok()
+        );
     }
 }

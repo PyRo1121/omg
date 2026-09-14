@@ -154,7 +154,7 @@ fn unreadable_local_archive_falls_back_to_recording_the_raw_path() {
 /// ---------------------------------------------------------------------------
 
 #[test]
-fn deferred_sync_update_delegates_official_work_and_parent_records_no_changes() {
+fn deferred_sync_update_preserves_attempted_changes_in_parent_history() {
     if omg_lib::core::privilege::is_root() {
         report_skip("deferred-sync parent/child split only applies to non-root callers");
         return;
@@ -175,9 +175,8 @@ fn deferred_sync_update_delegates_official_work_and_parent_records_no_changes() 
     result.assert_failure();
     result.assert_stderr_contains("Privilege elevation not supported in development mode");
 
-    // Single-ownership rule: the official upgrade was delegated to the child,
-    // so THIS process must record an Update transaction with zero changes —
-    // otherwise every official package would appear twice once both sides log.
+    // Elevated children use a separate root store. The invoking user's store
+    // must retain the attempted changes and failure status for history/rollback.
     let history = load_history(&project);
     assert_eq!(
         history.len(),
@@ -187,9 +186,15 @@ fn deferred_sync_update_delegates_official_work_and_parent_records_no_changes() 
     assert_eq!(history[0]["transaction_type"].as_str(), Some("Update"));
     assert_eq!(history[0]["success"].as_bool(), Some(false));
     let changes = history[0]["changes"].as_array().expect("changes array");
-    assert!(
-        changes.is_empty(),
-        "delegated official changes must NOT be parent-recorded, got: {changes:?}"
+    assert_eq!(
+        changes,
+        &vec![serde_json::json!({
+            "name": "pkgA",
+            "old_version": "1.0",
+            "new_version": "2.0",
+            "source": "unknown",
+        })],
+        "delegated official attempts must remain in the invoking user's history"
     );
 }
 

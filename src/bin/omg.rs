@@ -26,8 +26,6 @@ use omg_lib::cli::{
     SnapshotCommands, commands,
 };
 use omg_lib::cli::{blame, ci, diff, migrate, outdated, size, snapshot, why};
-#[cfg(feature = "arch")]
-use omg_lib::core::is_elevated;
 use omg_lib::core::{is_root, set_yes_flag};
 use omg_lib::hooks;
 
@@ -163,10 +161,10 @@ fn try_fast_elevated(
     reexec_elevated: bool,
     parent_records: bool,
 ) -> Option<Result<()>> {
-    // Only run this path when elevated via sudo. The re-exec marker is the
-    // authoritative signal (env_reset strips OMG_ELEVATED); accept the
-    // legacy env flag too for direct `sudo omg` invocations.
-    if !((reexec_elevated || is_elevated()) && omg_lib::core::privilege::is_root()) {
+    // The internal argv marker selects this path. An environment flag is not
+    // accepted because permissive sudoers `env_keep`/`SETENV` rules can carry
+    // caller-controlled values into the root process.
+    if !(reexec_elevated && omg_lib::core::privilege::is_root()) {
         return None;
     }
 
@@ -691,6 +689,20 @@ fn strip_internal_invocation_markers(args: &mut Vec<String>, is_root: bool) -> (
     (true, parent_records)
 }
 
+fn direct_root_warning_required(args: &[String], is_root: bool, reexec_elevated: bool) -> bool {
+    // Root bypasses normal discretionary-access checks, so keeping the full CLI
+    // under root needlessly enlarges its authority:
+    // https://man7.org/linux/man-pages/man7/capabilities.7.html
+    is_root
+        && !reexec_elevated
+        && !args.iter().skip(1).any(|argument| {
+            matches!(
+                argument.as_str(),
+                "-h" | "--help" | "-V" | "--version" | "--json" | "-q" | "--quiet"
+            )
+        })
+}
+
 #[cfg(unix)]
 fn restore_sigpipe_default() -> Result<()> {
     use nix::sys::signal::{SigHandler, Signal, signal};
@@ -737,6 +749,13 @@ fn main() {
         && let Err(error) = omg_lib::core::security::policy::inherit_policy(&args.remove(1))
     {
         finish(Err(error));
+    }
+    if console::user_attended()
+        && direct_root_warning_required(&args, omg_lib::core::privilege::is_root(), reexec_elevated)
+    {
+        eprintln!(
+            "Warning: direct root execution is deprecated. Run OMG as your regular user; OMG requests sudo only for validated package transactions."
+        );
     }
     // The marker has already been authenticated by root re-exec parsing.
     // Preserve its history-ownership contract if flags route the child through
@@ -1531,9 +1550,9 @@ async fn dispatch_command(command: &Commands, ctx: &omg_lib::cli::CliContext) ->
 #[cfg(test)]
 mod fast_path_tests {
     use super::{
-        FastCounter, configure_fast_path_output, has_json_flag, info_package_from_fast_args,
-        parse_fast_counter_cmd, parse_fast_list_tail, root_help_selection, try_fast_completions,
-        try_fast_explicit_count, try_fast_hooks,
+        FastCounter, configure_fast_path_output, direct_root_warning_required, has_json_flag,
+        info_package_from_fast_args, parse_fast_counter_cmd, parse_fast_list_tail,
+        root_help_selection, try_fast_completions, try_fast_explicit_count, try_fast_hooks,
     };
 
     #[cfg(feature = "arch")]
@@ -1573,6 +1592,45 @@ mod fast_path_tests {
             info_package_from_fast_args(&args(&["omg", "info", "-v"])),
             None
         );
+    }
+
+    #[test]
+    fn direct_root_warning_excludes_internal_reexec_and_metadata_commands() {
+        assert!(direct_root_warning_required(
+            &args(&["omg", "sync"]),
+            true,
+            false
+        ));
+        assert!(!direct_root_warning_required(
+            &args(&["omg", "sync"]),
+            true,
+            true
+        ));
+        assert!(!direct_root_warning_required(
+            &args(&["omg", "sync"]),
+            false,
+            false
+        ));
+        assert!(!direct_root_warning_required(
+            &args(&["omg", "--help"]),
+            true,
+            false
+        ));
+        assert!(!direct_root_warning_required(
+            &args(&["omg", "--version"]),
+            true,
+            false
+        ));
+        assert!(!direct_root_warning_required(
+            &args(&["omg", "--json", "sync"]),
+            true,
+            false
+        ));
+        assert!(!direct_root_warning_required(
+            &args(&["omg", "--quiet", "sync"]),
+            true,
+            false
+        ));
     }
 
     #[test]

@@ -61,6 +61,10 @@ omg install spotify
 omg update
 ```
 
+Run these commands as your regular account. Unlike workflows that start the helper with sudo, OMG keeps fetching, review, and package building unprivileged and requests sudo only for its validated package transaction. `sudo omg ...` is deprecated; AUR builds already refuse to run when OMG starts as root.
+
+OMG reviews and re-hashes the recipe, builds offline in Bubblewrap by default, inspects the resulting archive, and passes sealed bytes to the privileged consumer. Packages containing install hooks, setuid/setgid files, or file capabilities require separate attended approval. These controls follow Arch's documented [PKGBUILD execution and install-script model](https://man.archlinux.org/man/PKGBUILD.5), Bubblewrap's [caller-defined sandbox model](https://github.com/containers/bubblewrap/blob/main/README.md#sandbox-security), and Linux's [`memfd_create(2)` sealing semantics](https://man7.org/linux/man-pages/man2/memfd_create.2.html).
+
 ## Configuration Migration
 
 ### yay config location
