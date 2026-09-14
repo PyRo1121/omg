@@ -174,3 +174,136 @@ pub(crate) fn load(start: &Path, env: &HashMap<String, String>) -> Result<Vec<Do
     }
     Ok(documents)
 }
+
+#[cfg(test)]
+mod compatibility {
+    use super::super::mise_env::{Strictness, load_mise_env_chain};
+    use std::collections::HashMap;
+    use std::fs;
+
+    #[test]
+    fn selected_environments_reject_paths_and_keep_last_duplicate() {
+        let env = HashMap::from([("MISE_ENV".into(), " test,prod,test, ".into())]);
+        assert_eq!(
+            super::selected_environments(&env).unwrap(),
+            ["prod", "test"]
+        );
+        for name in ["../secrets", "a/b", "a\\b", "a.b"] {
+            let env = HashMap::from([("MISE_ENV".into(), name.into())]);
+            assert!(super::selected_environments(&env).is_err());
+        }
+    }
+
+    #[test]
+    fn grouped_configuration_retains_its_project_root() {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().join(".config/mise");
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(
+            directory.join("config.toml"),
+            "[env]\nROOT='{{config_root}}'\n",
+        )
+        .unwrap();
+        let env = load_mise_env_chain(root.path(), &HashMap::new(), Strictness::Strict).unwrap();
+        assert!(
+            env.set
+                .contains(&("ROOT".into(), root.path().display().to_string()))
+        );
+    }
+
+    #[test]
+    fn fragments_merge_in_filename_order_before_main_configuration() {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().join(".config/mise/conf.d");
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(
+            directory.join("20-last.toml"),
+            "[env]\nORDER='last'\nMAIN='fragment'\n",
+        )
+        .unwrap();
+        fs::write(directory.join("10-first.toml"), "[env]\nORDER='first'\n").unwrap();
+        fs::write(directory.join(".hidden.toml"), "[env]\nHIDDEN='no'\n").unwrap();
+        fs::write(
+            root.path().join(".config/mise/config.toml"),
+            "[env]\nMAIN='config'\n",
+        )
+        .unwrap();
+        let env = load_mise_env_chain(root.path(), &HashMap::new(), Strictness::Strict).unwrap();
+        assert!(env.set.contains(&("ORDER".into(), "last".into())));
+        assert!(env.set.contains(&("MAIN".into(), "config".into())));
+        assert!(!env.set.iter().any(|(name, _)| name == "HIDDEN"));
+    }
+
+    #[test]
+    fn invalid_environment_identifies_its_declaring_file() {
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("mise.local.toml");
+        fs::write(&file, "[env]\nBAD-NAME='invalid'\n").unwrap();
+        let error =
+            load_mise_env_chain(root.path(), &HashMap::new(), Strictness::Strict).unwrap_err();
+        assert!(error.to_string().contains(&file.display().to_string()));
+    }
+
+    #[test]
+    fn excessive_fragments_fail_before_environment_resolution() {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().join(".config/mise/conf.d");
+        fs::create_dir_all(&directory).unwrap();
+        for index in 0..257 {
+            fs::write(directory.join(format!("{index:03}.toml")), "[env]\n").unwrap();
+        }
+        let error =
+            load_mise_env_chain(root.path(), &HashMap::new(), Strictness::Strict).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("Too many mise configuration fragments")
+        );
+    }
+
+    #[test]
+    fn local_environment_overrides_project_configuration() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("mise.toml"), "[env]\nMODE='base'\n").unwrap();
+        fs::write(root.path().join("mise.local.toml"), "[env]\nMODE='local'\n").unwrap();
+        let env = load_mise_env_chain(root.path(), &HashMap::new(), Strictness::Strict).unwrap();
+        assert!(env.set.contains(&("MODE".into(), "local".into())));
+    }
+
+    #[test]
+    fn selected_environment_applies_before_its_local_override() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("mise.toml"), "[env]\nMODE='base'\n").unwrap();
+        fs::write(
+            root.path().join("mise.test.toml"),
+            "[env]\nMODE='test'\nTEST_ONLY='yes'\n",
+        )
+        .unwrap();
+        fs::write(
+            root.path().join("mise.test.local.toml"),
+            "[env]\nMODE='local-test'\n",
+        )
+        .unwrap();
+        let base = HashMap::from([("MISE_ENV".into(), "test".into())]);
+        let env = load_mise_env_chain(root.path(), &base, Strictness::Strict).unwrap();
+        assert!(env.set.contains(&("MODE".into(), "local-test".into())));
+        assert!(env.set.contains(&("TEST_ONLY".into(), "yes".into())));
+    }
+
+    #[test]
+    fn child_base_overrides_parent_selected_environment() {
+        let root = tempfile::tempdir().unwrap();
+        let child = root.path().join("child");
+        fs::create_dir(&child).unwrap();
+        fs::write(
+            root.path().join("mise.test.toml"),
+            "[env]\nMODE='parent'\nINHERITED='yes'\n",
+        )
+        .unwrap();
+        fs::write(child.join("mise.toml"), "[env]\nMODE='child'\n").unwrap();
+        let base = HashMap::from([("MISE_ENV".into(), "test".into())]);
+        let env = load_mise_env_chain(&child, &base, Strictness::Strict).unwrap();
+        assert!(env.set.contains(&("MODE".into(), "child".into())));
+        assert!(env.set.contains(&("INHERITED".into(), "yes".into())));
+    }
+}

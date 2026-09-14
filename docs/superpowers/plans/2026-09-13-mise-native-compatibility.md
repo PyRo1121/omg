@@ -10,9 +10,9 @@ The user approved implementing native mise support on September 13, 2026. Execut
 
 ## Implementation sequence
 
-- [ ] Add a portable Cargo harness compiling production configuration modules by path. Demonstrate failures for local overrides, selected environment files, and ancestor precedence before implementation.
-- [ ] Add `src/config/mise_config.rs`: ordered configuration discovery, explicit environment selection, bounded parsing, source identity, and declaring project root. Keep discovery separate from script execution.
-- [ ] Replace the environment module's private file enumeration with shared discovery. Check child base versus parent selected environment, local versus base, and invalid files.
+- [x] Add a portable Cargo harness compiling production configuration modules by path. Demonstrate failures for local overrides, selected environment files, and ancestor precedence before implementation.
+- [x] Add `src/config/mise_config.rs`: ordered configuration discovery, explicit environment selection, bounded parsing, source identity, and declaring project root. Keep discovery separate from script execution.
+- [x] Replace the environment module's private file enumeration with shared discovery. Check child base versus parent selected environment, local versus base, and invalid files.
 - [ ] Feed shared documents into runtime pin parsing. Preserve existing dedicated-pin behavior while allowing mise variants to override earlier mise declarations. Document intentional differences from upstream version-file defaults.
 - [ ] Add a native task definition and planner module. Cover shorthand, dependency-only groups, cycles, missing prerequisites, diamond deduplication, working directories, and malformed commands before wiring execution.
 - [ ] Integrate definitions into the existing task runner without changing other ecosystem selection. Execute planned dependencies with their own environment and declaring root; stop on failure.

@@ -29,8 +29,9 @@
 //!   Full Tera is out of scope: any other `{{…}}` is a hard error rather
 //!   than a silently literal string.
 //!
-//! Out of scope: `mise.local.toml` / `MISE_ENV` config environments,
-//! encrypted-secret backends, and per-plugin env directives.
+//! Project configuration includes local overrides, selected `MISE_ENV` layers,
+//! and grouped configuration files. Encrypted-secret backends and per-plugin
+//! env directives remain out of scope.
 
 use std::collections::{HashMap, HashSet};
 use std::io::Read as _;
@@ -951,7 +952,8 @@ pub(crate) fn load_mise_env_chain(
     let mut effective = base.clone();
     let mut patterns: Vec<String> = Vec::new();
     for document in super::mise_config::load(start, base)? {
-        let parsed = parse_mise_env(&document.value, &document.root)?;
+        let parsed = parse_mise_env(&document.value, &document.root)
+            .with_context(|| format!("Invalid mise environment in {}", document.path.display()))?;
         patterns.extend(parsed.redactions.iter().cloned());
         let config_root = &document.root;
         let mut file_pairs = Vec::new();
