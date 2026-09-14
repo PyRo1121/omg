@@ -133,19 +133,7 @@ fn write_config_file(path: &str, config: &str) -> Result<()> {
     let config = config.as_str();
     ensure_safe_config_parent(std::path::Path::new(path))?;
 
-    let created = match fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-    {
-        Ok(mut file) => {
-            file.write_all(config.as_bytes())?;
-            file.sync_all()?;
-            true
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => false,
-        Err(error) => return Err(error.into()),
-    };
+    let created = create_new_config_file(std::path::Path::new(path), config)?;
 
     if created {
         println!(
@@ -163,6 +151,22 @@ fn write_config_file(path: &str, config: &str) -> Result<()> {
         println!("{}", style::dim(config));
     }
     Ok(())
+}
+
+fn create_new_config_file(path: &std::path::Path, config: &str) -> Result<bool> {
+    match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+    {
+        Ok(mut file) => {
+            file.write_all(config.as_bytes())?;
+            file.sync_all()?;
+            Ok(true)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+        Err(error) => Err(error.into()),
+    }
 }
 
 fn ensure_safe_config_parent(path: &std::path::Path) -> Result<()> {
@@ -603,12 +607,10 @@ mod tests {
             .join("outside.yml");
         symlink(&outside_absolute, &destination).expect("dangling destination symlink");
 
-        write_config_file(
-            destination.to_str().expect("UTF-8 fixture path"),
-            "untrusted overwrite",
-        )
-        .expect("existing destination is a preview, not an error");
+        let created = create_new_config_file(&destination, "untrusted overwrite")
+            .expect("existing destination is a preview, not an error");
 
+        assert!(!created, "an existing symlink must not be replaced");
         assert!(!outside.exists(), "writer must not follow the symlink");
         assert!(
             destination.is_symlink(),
@@ -628,9 +630,29 @@ mod tests {
         let linked_parent = directory.path().join(".github");
         symlink(outside_absolute, &linked_parent).expect("linked parent");
 
-        let destination = linked_parent.join("workflows/ci.yml");
-        ensure_safe_config_parent(&destination).expect_err("symlinked parent must be refused");
+        // tempfile returns an absolute path even for tempdir_in("."). Use the
+        // relative fixture path so this reaches ancestor validation rather than
+        // passing accidentally at the absolute-path guard.
+        let destination = std::path::Path::new(directory.path().file_name().expect("fixture name"))
+            .join(".github/workflows/ci.yml");
+        let error =
+            ensure_safe_config_parent(&destination).expect_err("symlinked parent must be refused");
+        assert!(error.to_string().contains("Refusing symlinked"), "{error}");
         assert!(!outside.join("workflows").exists());
+    }
+
+    #[test]
+    fn ci_generation_creates_a_relative_config_without_overwriting() {
+        let directory = tempfile::tempdir_in(".").expect("fixture directory");
+        let destination = std::path::Path::new(directory.path().file_name().expect("fixture name"))
+            .join(".github/workflows/ci.yml");
+        let path = destination.to_str().expect("UTF-8 fixture path");
+        write_config_file(path, "original config").expect("create config");
+        write_config_file(path, "replacement config").expect("preview existing config");
+        assert_eq!(
+            fs::read_to_string(destination).expect("config"),
+            "original config"
+        );
     }
 
     #[test]
