@@ -29,6 +29,8 @@ feat(config)!: support layered mise project environments
 - **Arch**: Add AUR-only update scope
 ### 🐛 Bug Fixes
 
+- **Ci**: Isolate smoke credentials and repair maintenance checks
+- **Ci**: Align QEMU release contracts and isolate workflow credentials
 - **Config**: Skip absent optional mise directory paths
 - **Config**: Match mise environment precedence and config roots
 - **Config**: Remove superseded mise file parser
@@ -370,6 +372,7 @@ clone it again instead, and cover the config-selected vectors in the test.
 
 ### 📚 Documentation
 
+- **Ci**: Explain versioned QEMU release preparation
 - **Omarchy**: Define narrow AUR delegation contract
 - **Omarchy**: Substantiate managed-install default comparisons
 - **Omarchy**: Clarify existing mise configuration support
