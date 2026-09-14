@@ -32,7 +32,32 @@ while (($#)); do
       benchmark=true; transaction_samples=$2; shift 2 ;;
     --print-pins) print_pins=true; shift ;;
     --inventory-allow-mutations) inventory_mutations=true; shift ;;
-    --help) printf 'Usage: scripts/benchmark-qemu.sh [--distro all|arch|debian|ubuntu|fedora] [--arch x86_64|aarch64] [--release vVERSION] [--staged-dir DIR] [--evidence-dir DIR] [--benchmark] [--benchmark-transactions COUNT] [--print-pins] [--inventory-tiers CSV] [--inventory-allow-mutations]\nRuns sequential disposable KVM guests with pinned images, reboot, sudo, package lifecycle and optional warm read-query timing. Guests run the host architecture by default (--arch overrides, but KVM cannot cross architectures, so a mismatch fails closed instead of silently emulating). With --inventory-tiers, drives tests/cli_behavior_inventory.tsv rows over SSH after a passing lifecycle (see scripts/qemu-inventory.sh). --benchmark-transactions COUNT additionally runs independently reset install/remove trials (1-100 per tool). --print-pins lists the pinned guest images without booting anything. Requires Docker, KVM, jq, coreutils; published downloads need gh and benchmarks need Python 3. No compilation or host package changes.\n'; exit 0 ;;
+    --help)
+      cat <<'HELP'
+Usage: scripts/benchmark-qemu.sh [--distro all|arch|debian|ubuntu|fedora]
+  [--arch x86_64|aarch64] [--release vVERSION]
+  [--staged-dir DIR | --release-dir DIR] [--inventory-file TSV]
+  [--evidence-dir DIR] [--benchmark] [--benchmark-transactions COUNT]
+  [--print-pins] [--inventory-tiers CSV] [--inventory-allow-mutations]
+
+Runs disposable KVM guests with pinned images, reboot, sudo, package lifecycle,
+and optional warm read-query timing. Host and guest architecture must match;
+there is no TCG fallback. --print-pins lists images without booting guests.
+
+--staged-dir uses locally built archives and the current source inventory.
+--release-dir uses downloaded published archives without a GitHub token in the
+harness. Published --inventory-tiers requires --inventory-file from the release
+revision. Prepare both with scripts/prepare-qemu-release.py:
+  python3 scripts/prepare-qemu-release.py --tag vVERSION --distro arch --destination published
+  scripts/benchmark-qemu.sh --distro arch --release vVERSION --release-dir published --inventory-file published/cases.tsv --inventory-tiers hermetic,container
+
+Inventory rows run over SSH after a passing lifecycle (scripts/qemu-inventory.sh).
+--benchmark-transactions COUNT runs independently reset install/remove trials
+(1-100 per tool). Requires Docker, KVM, jq, and coreutils. Direct published
+downloads need gh; release preparation and benchmarks need Python 3.
+No compilation or host package changes.
+HELP
+      exit 0 ;;
     *) printf 'error: unknown argument %s\n' "$1" >&2; exit 2 ;;
   esac
 done
