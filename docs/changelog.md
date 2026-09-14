@@ -1,48 +1,5 @@
 # Changelog
 
-## Unreleased
-
-### Tool supply-chain hardening
-
-- Isolate npm, Cargo, pip, and Go tool installations from ambient environment
-  credentials and package-manager configuration.
-- Replace the caller-controlled executable search path with root-controlled
-  system directories during Linux tool installations.
-- Retain only the resolved manager's executable directory for user-managed
-  runtimes and reject manager executables resolved from the current project.
-- Run secured manager commands from the Linux filesystem root, isolate
-  `CARGO_HOME`, disable Cargo's Git CLI delegation, and disable pip configuration
-  files to prevent parent/config-based source substitution.
-- Apply manager-specific package grammar so npm GitHub shorthands, local paths,
-  Git sources, and other alternate-source specifications cannot cross the
-  registry-only tool-install boundary.
-- Disable npm lifecycle scripts by default and verify registry signatures and
-  provenance before activating an installed tool.
-- When npm scripts are explicitly approved, install inertly and verify the
-  dependency tree before running the lifecycle-script rebuild phase.
-- Require Python wheels, Cargo lockfiles, and Go's public checksum database by
-  default, with exact package-scoped compatibility overrides documented in the
-  CLI reference.
-- Disable CGO and automatic Go toolchain downloads during tool installation by
-  default, with independent package-scoped exceptions.
-- Close managed installer standard input and set Linux `no_new_privs` before
-  execution so build hooks cannot request terminal credentials or gain
-  privileges through setuid, setgid, or file-capability programs. This follows
-  the Linux kernel
-  [`no_new_privs` contract](https://docs.kernel.org/userspace-api/no_new_privs.html).
-- Support private registry workflows through independently scoped environment,
-  script/build, lockfile, and signature-verification exceptions.
-- Print every matching package-scoped security exception before starting an
-  install or update so persisted overrides cannot weaken policy silently.
-- Persist `.omg-security-receipt.json` with every managed tool so audits can
-  inspect the effective source, verification, script/build, and runtime policy.
-- Bind each receipt to the published executable and script targets with
-  streaming SHA-256 hashes and stable relative paths.
-- Resolve and contain-check tool binary entries before activation and again
-  while linking, rejecting package symlinks that target host files.
-- Keep the previous managed tool until shared-bin activation completes and
-  restore its directory and command links when activation fails.
-
 All notable changes to OMG are documented here.
 
 OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm, pyenv, rustup, and more with a single tool.
@@ -56,6 +13,18 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ## [Unreleased]
 ### 🐛 Bug Fixes
 
+- **Ci**: Combine identical cached update status branches
+- **Security**: Close remaining Arch trust gaps
+- **Ci**: Repair hardening fixtures and platform test failures
+- Fail closed on AUR paired builds
+- Satisfy portable tool hardening lints
+- Enforce tool privileges without unsafe
+- Roll back failed tool activation
+- **Dnf**: Read inventory through the retained SQLite observer
+- **Build**: Align AUR command types and gate Swift signing keys
+- **Privilege**: Import context for invoking account lookup
+- **Ci**: Run coverage fixtures with unprivileged identity
+- **Dnf**: Initialize WAL observation before caching inventory
 - **Security**: Land the pending security branch and remediate 2026-09-10 audit findings ([#394](https://github.com/PyRo1121/omg/issues/394))
 
 * fix(security): hooks refuse project _.path in automatic PATH output (csf_62033e8, csf_e757fdf, csf_f6e23cc, csf_c17f3813)
@@ -372,6 +341,10 @@ clone it again instead, and cover the config-selected vectors in the test.
 
 ### 📚 Documentation
 
+- **Omarchy**: Substantiate managed-install default comparisons
+- **Omarchy**: Clarify existing mise configuration support
+- **Omarchy**: Explain installation protections and integration proposal
+- **Readme**: Document release hardening and refresh platform guidance
 - Elevate README to world class and align documentation with code stack ([#393](https://github.com/PyRo1121/omg/issues/393))
 
   - Overhaul README.md with high-contrast badges, Franken-stack comparison, ASCII architecture, and grounded disclosures
@@ -384,6 +357,45 @@ clone it again instead, and cover the config-selected vectors in the test.
 
   - Document accurate cache tiers and AUR rollback mechanisms in cache.md and packages.md
 
+### 🔒 Security
+
+- **Ci**: Align hardened update checks across runners
+
+Inspect the std::process::Command wrapped by Tokio before asserting that the resolved bubblewrap launcher is absolute. Tokio's command wrapper does not expose get_program directly, which caused the Arch staged build and coverage compilation gates to fail before exercising the security tests.
+
+Update the Docker E2E assertion to require the hardened check-only status, 'Checking for updates · cached'. This preserves the no-refresh contract added to prevent a read-only update check from mutating package databases or invoking elevation.
+
+Together these changes restore executable coverage for the trusted launcher boundary and make the container test verify the intended least-privilege behavior.
+
+- Deny installer privilege gains
+- Hash managed tool entrypoints
+- Contain managed tool binary links
+- Record managed tool policy receipts
+- Block parent manager configuration
+- Isolate tool manager resolution
+- Reject alternate tool package sources
+- Constrain Go tool builds
+- Verify npm packages before scripts
+- Surface tool policy overrides
+- Pin tool installer executable path
+- Harden managed tool installations
+- Require Reproducible Builds for High-Risk AUR Packages
+
+Detect AUR artifacts that integrate with privileged system surfaces, rebuild them in an independent private invocation, and require exact archive hashes before installation. Use a source-derived SOURCE_DATE_EPOCH, process-local verification caching, auditable evidence, and required CI regression coverage while preserving the single-build path for ordinary packages.
+
+- Harden Package-Manager Privilege Boundaries
+### 🧪 Testing
+
+- **Update**: Enforce cached check-only behavior
+
+Update the comprehensive CLI and package-operation assertions to match the hardened update contract: --check reads cached package databases and must not refresh catalogs or request privilege.
+
+The coverage workflow reached the executable suite and exposed the stale expectation after 2,783 tests began running. Keeping these assertions explicit prevents a future regression from turning a read-only status check back into a mutating or privilege-bearing operation.
+
+- **Security**: Verify GnuPG launcher trust before keybox round trip
+- **Container**: Expect the complete Go release version
+- Seal AUR archive provenance fixtures
+- **Dnf**: Expose cache observation changes in failing regressions
 ## [0.1.220] - 2026-09-09
 ### Review
 
