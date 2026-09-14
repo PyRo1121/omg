@@ -12,7 +12,7 @@ This is a proposal for evaluation, not an announcement of Omarchy adoption or en
 
 Omarchy already makes Arch approachable through package menus and a coordinated update workflow. Its updater handles system packages and installed AUR packages, together with snapshots and migrations. Direct system upgrades can skip that coordination, so Omarchy explicitly guards them. OMG should preserve this behavior. [Omarchy updates](https://omarchy.org/manual/updates/)
 
-Its development menu already offers many language environments, most managed through mise. OMG therefore needs to earn its place through useful installation policy and integration, rather than merely offering another runtime selector. [Development tools](https://omarchy.org/manual/development-tools/)
+Its development menu already offers many language environments, most managed through mise. OMG already reads supported mise tool pins, task definitions, and project environment settings natively. That gives existing mise projects a practical starting point: reuse supported configuration while adopting OMG's package and tool workflows. [Development tools](https://omarchy.org/manual/development-tools/)
 
 Omarchy also supplies an existing security baseline, including disk encryption and a firewall. Its base package selection primarily uses official repositories and its own repository; optional AUR installations introduce a different trust decision. [Security](https://omarchy.org/manual/security/)
 
@@ -57,14 +57,27 @@ The proposed first integration is optional managed developer-tool installation a
 | Area | Proposed responsibility |
 | --- | --- |
 | OS upgrades, mirror/channel selection, migrations, snapshots | Omarchy's existing update workflow. Do not substitute `omg update` or bypass Omarchy's upgrade guard. |
-| Existing mise-managed environments | Keep working. Evaluate OMG on selected tools first; avoid two shell hooks competing to select the same runtime. |
+| Existing mise projects | Reuse supported `[tools]`, `[tasks]`, and `[env]` declarations directly in OMG. Keep mise for unsupported features and choose one active shell runtime selector. |
 | Managed developer CLIs | Evaluate OMG's defaults, exceptions, activation behavior, and removal experience on a defined set of tools. |
 | AUR installation | Evaluate the complete transaction, including dependency installation and compatibility with Omarchy's selected repository channel. |
 | Recovery | Preserve native package tools and Omarchy recovery. OMG tool activation rollback is not a whole-system snapshot. |
 
 These are integration requirements, not a claim that Omarchy-specific compatibility has already been tested. In particular, an Arch backend alone does not establish that every package transaction respects Omarchy's additional update coordination. Omarchy's stable mirror also intentionally trails current Arch packages; AUR dependency availability must be assessed against the selected channel. [Update channels and guards](https://omarchy.org/manual/updates/)
 
-OMG can read runtime pins from `mise.toml`, `.mise.toml`, and supported ecosystem version files. This can reduce the need to rewrite version declarations, but does not imply complete mise configuration or plugin compatibility. [Supported runtime detection](runtimes.md)
+### Existing mise compatibility
+
+OMG implements the following configuration support natively; these workflows do not shell out to mise:
+
+| Existing configuration | What OMG already supports |
+| --- | --- |
+| `[tools]` in `mise.toml` or `.mise.toml` | Plain version strings and tables with a string `version` for supported native runtimes/tools. Dedicated ecosystem version files take precedence. |
+| `[tasks.<name>]` | `run` as a string or an array of strings, with array steps executed sequentially through OMG's task runner. |
+| Project and task `[env]` | Assignments, unsets, defaults, required values, supported templates, PATH additions, and environment files during explicit run/task execution. Supported environment files include dotenv, JSON, and TOML. |
+| Explicit environment sourcing | Supported `_.source` scripts are evaluated during explicit run/task execution. Automatic shell hooks select installed runtimes without importing project environment directives. |
+
+This means users can already reuse supported parts of their mise project configuration with OMG, rather than maintaining a separate set of version pins and simple tasks. The implementation is visible in [tool-pin parsing](https://github.com/PyRo1121/omg/blob/cc67ab89541f07af7b433bf29d142a78954cd882/src/hooks/mod.rs), [task execution](https://github.com/PyRo1121/omg/blob/cc67ab89541f07af7b433bf29d142a78954cd882/src/core/task_runner.rs), and [environment resolution](https://github.com/PyRo1121/omg/blob/cc67ab89541f07af7b433bf29d142a78954cd882/src/config/mise_env.rs).
+
+The compatibility boundary is specific: backend-qualified tool entries such as `github:owner/repo` are skipped by the mise pin parser; task dependency graphs, file-task directories, and task templates are not implemented by this adapter. Environment support excludes `mise.local.toml`, `MISE_ENV` configuration environments, encrypted-secret backends, per-plugin directives, YAML environment files, and full Tera templates. Review these features before migrating a project that depends on them. This is existing configuration compatibility, not a claim of complete mise parity or automatic reuse of mise's installed tool directories. [Runtime management](runtimes.md)
 
 ## What would justify making it a default?
 
