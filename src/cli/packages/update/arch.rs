@@ -604,7 +604,7 @@ mod tests {
     #[test]
     fn update_phase_context_keeps_check_wording() {
         assert_eq!(
-            update_phase_context(false, false, false),
+            update_phase_context(false, false, false, false),
             "Refreshing catalogs"
         );
         assert_eq!(
