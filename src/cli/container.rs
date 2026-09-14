@@ -1,6 +1,7 @@
 //! Container CLI commands
 
 use anyhow::{Context, Result};
+use std::io::Write as _;
 
 use crate::cli::components::Components;
 use crate::cli::tea::Cmd;
@@ -596,7 +597,7 @@ pub fn init(base_image: Option<String>) -> Result<()> {
     // `COPY . .` must never embed untracked credentials or repository data.
     ensure_dockerignore(&cwd)?;
 
-    std::fs::write(&dockerfile_path, dockerfile)?;
+    create_new_dockerfile(&dockerfile_path, dockerfile.as_bytes())?;
 
     let mut details = vec![format!("Base image: {}", base)];
     if !runtimes.is_empty() {
@@ -616,10 +617,37 @@ pub fn init(base_image: Option<String>) -> Result<()> {
     Ok(())
 }
 
+fn create_new_dockerfile(path: &std::path::Path, contents: &[u8]) -> Result<()> {
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .with_context(|| format!("Refusing to overwrite existing {}", path.display()))?;
+    file.write_all(contents)?;
+    file.sync_all()?;
+    Ok(())
+}
+
 #[cfg(test)]
 #[expect(clippy::expect_used)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn dockerfile_creation_refuses_a_dangling_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().expect("temp directory");
+        let outside = directory.path().join("outside");
+        let destination = directory.path().join("Dockerfile.omg");
+        symlink(&outside, &destination).expect("dangling destination symlink");
+
+        create_new_dockerfile(&destination, b"FROM malicious")
+            .expect_err("existing symlink must be refused");
+        assert!(!outside.exists(), "writer must not follow the symlink");
+        assert!(destination.is_symlink());
+    }
 
     #[test]
     fn env_vars_parse_strict_key_value_pairs() {
