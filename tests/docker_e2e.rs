@@ -184,12 +184,12 @@ fn test_docker_update_check() {
 
     assert!(success, "Update check should succeed");
     // Contract: arch::update check_only path prints a phase header announcing
-    // its catalog-refresh check phase
+    // that it checks the cached package databases without refreshing them
     // (src/cli/packages/update/arch.rs update_phase_context). The transient
     // "Checking" spinner is cleared and never reaches non-TTY stdout.
     let plain = strip_ansi(&stdout);
     assert!(
-        plain.contains("Refreshing catalogs"),
+        plain.contains("Checking for updates · cached"),
         "update --check must announce its check phase, got: {plain}"
     );
 }

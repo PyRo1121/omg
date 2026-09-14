@@ -4518,7 +4518,7 @@ mod tests {
             Ok(PathBuf::from("/usr/bin/bwrap"))
         })
         .expect("trusted bubblewrap installation");
-        assert!(Path::new(command.get_program()).is_absolute());
+        assert!(Path::new(command.as_std().get_program()).is_absolute());
     }
 
     #[test]
