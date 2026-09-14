@@ -11,13 +11,16 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ---
 
 ## [Unreleased]
-
-- **Config (breaking)**: Apply mise project layers to runtime pins and tasks. Run plain-name task dependencies once before their parent, honor declaring-root task directories, and reject unsupported task execution controls instead of ignoring them. Review local/selected pins, ancestor tasks, and the [migration guide](mise-compatibility.md#migrating-existing-omg-projects) before upgrading.
 ### ⚠️  Breaking Changes
 
 - **Config**: Document mise environment layer migration ⚠️ **BREAKING CHANGE**
 ### ✨ New Features
 
+- **Config**: Support layered mise pins and task dependencies ([#404](https://github.com/PyRo1121/omg/issues/404)) ⚠️ **BREAKING CHANGE**
+
+feat(config)!: support layered mise pins and task dependencies
+
+- **Config**: Support layered mise pins and task dependencies ⚠️ **BREAKING CHANGE**
 - **Config**: Support layered mise project environments ([#403](https://github.com/PyRo1121/omg/issues/403)) ⚠️ **BREAKING CHANGE**
 
 feat(config)!: support layered mise project environments
