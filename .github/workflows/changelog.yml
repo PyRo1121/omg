@@ -14,13 +14,15 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  update-changelog:
-    name: Update Changelog
+  generate-changelog:
+    name: Generate Changelog
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      changed: ${{ steps.changes.outputs.changed }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -31,11 +33,6 @@ jobs:
           # events the default checkout lands on a tag (detached HEAD), where
           # a follow-up `git push` would fail.
           ref: main
-
-      - name: Configure Git
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Install git-cliff
         uses: taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b # v2.87.4
@@ -75,14 +72,65 @@ jobs:
         id: changes
         run: |
           if git diff --quiet docs/changelog.md; then
-            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "changed=false" >> "$GITHUB_OUTPUT"
           else
-            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "changed=true" >> "$GITHUB_OUTPUT"
             echo "::notice::Changelog updated with new commits"
           fi
 
-      - name: Commit and Push
+      - name: Stage generated changelog
         if: steps.changes.outputs.changed == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: generated-changelog
+          path: docs/changelog.md
+          if-no-files-found: error
+          retention-days: 1
+
+  publish-changelog:
+    name: Publish Changelog
+    needs: generate-changelog
+    if: needs.generate-changelog.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: main
+
+      - name: Download generated changelog
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: generated-changelog
+          path: .changelog-artifact
+
+      - name: Validate generated changelog
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact=.changelog-artifact/changelog.md
+          if [[ ! -f "$artifact" || -L "$artifact" ]]; then
+            echo "::error::Generated changelog is not a regular file"
+            exit 1
+          fi
+          size=$(stat --format='%s' "$artifact")
+          if (( size == 0 || size > 5242880 )); then
+            echo "::error::Generated changelog has invalid size: $size bytes"
+            exit 1
+          fi
+          install -m 0644 -- "$artifact" docs/changelog.md
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Commit and Push
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -96,7 +144,7 @@ jobs:
 
       - name: Summary
         env:
-          CHANGELOG_CHANGED: ${{ steps.changes.outputs.changed }}
+          CHANGELOG_CHANGED: ${{ needs.generate-changelog.outputs.changed }}
         run: |
           echo "## Changelog Update" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
