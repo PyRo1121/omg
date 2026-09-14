@@ -1667,12 +1667,16 @@ mod tests {
     #[test]
     fn binary_preflight_rejects_links_outside_the_installation() {
         let staging = tempfile::tempdir().expect("staging directory");
+        let external = tempfile::NamedTempFile::new().expect("external file fixture");
         let bin = staging.path().join("bin");
         fs::create_dir_all(&bin).expect("bin directory");
-        symlink("/etc/hostname", bin.join("escaped")).expect("external link fixture");
+        symlink(external.path(), bin.join("escaped")).expect("external link fixture");
         let error = validate_tool_binary_containment(staging.path())
             .expect_err("external binary link must fail closed");
-        assert!(error.to_string().contains("outside its installation"));
+        assert!(
+            error.to_string().contains("outside its installation"),
+            "unexpected rejection: {error:#}"
+        );
     }
 
     #[cfg(unix)]

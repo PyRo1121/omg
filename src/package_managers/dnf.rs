@@ -1477,9 +1477,11 @@ impl PackageManager for DnfPackageManager {
 /// handoff boundary.
 fn reject_unsealed_local_rpm_targets(packages: &[String]) -> Result<()> {
     for package in packages {
-        let lower = package.to_ascii_lowercase();
+        let is_rpm = package
+            .rsplit_once('.')
+            .is_some_and(|(_, extension)| extension.eq_ignore_ascii_case("rpm"));
         anyhow::ensure!(
-            !lower.ends_with(".rpm") && !package.contains('/') && !package.contains('\\'),
+            !is_rpm && !package.contains('/') && !package.contains('\\'),
             "Local RPM installation is not supported securely yet: '{package}'. Install repository packages by name; local RPM support requires a sealed archive handoff"
         );
     }
@@ -1494,6 +1496,9 @@ mod tests {
     fn local_rpm_operands_are_refused_until_they_can_be_sealed() {
         for target in [
             "package.rpm",
+            "package.RPM",
+            "package.RpM",
+            ".rpm",
             "./package.rpm",
             "/tmp/package.rpm",
             "dir/package",

@@ -403,7 +403,9 @@ fn test_sudo_command_not_found_reports_error() {
     // Contract: running a command that cannot resolve must surface a named
     // error rather than silently succeeding. `omg info` on a package that no
     // repo knows exits nonzero and says so.
-    let runner = TestRunner::new();
+    // Use the hermetic repository backend: an Arch miss falls through to the
+    // live AUR service, whose availability is unrelated to this error contract.
+    let runner = TestRunner::new().with_env("OMG_TEST_DISTRO", "debian");
 
     let result = runner.run(&["info", "definitely-not-a-real-command-xyz"]);
 

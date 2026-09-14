@@ -102,7 +102,7 @@ fn normalize_member_path(path: &Path) -> Result<String> {
 fn archive_sha256(path: &Path) -> Result<String> {
     let mut input = BufReader::new(File::open(path)?);
     let mut hash = Sha256::new();
-    let mut buffer = [0_u8; 64 * 1024];
+    let mut buffer = vec![0_u8; 64 * 1024].into_boxed_slice();
     loop {
         let count = input.read(&mut buffer)?;
         if count == 0 {
@@ -495,7 +495,7 @@ mod tests {
         };
         assert!(!ordinary.requires_exception());
 
-        let mut privileged = ordinary.clone();
+        let mut privileged = ordinary;
         privileged.privileged_files.push(PrivilegedFile {
             path: "usr/bin/demo".into(),
             mode: 0o4755,

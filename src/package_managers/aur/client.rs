@@ -6352,7 +6352,18 @@ mod tests {
                 use std::fmt::Write;
                 writeln!(pkginfo, "arch = {architecture}")?;
             }
-            write_tar_gz(&archive, &[(".PKGINFO", pkginfo.as_bytes())]);
+            let buildinfo = format!(
+                "format = 2\npkgname = fixture\npkgbase = fixture\npkgver = 1.0-1\npkgarch = {}\n",
+                actual.unwrap_or("any")
+            );
+            write_tar_gz(
+                &archive,
+                &[
+                    (".PKGINFO", pkginfo.as_bytes()),
+                    (".BUILDINFO", buildinfo.as_bytes()),
+                    (".MTREE", b"#mtree\n"),
+                ],
+            );
             let outputs = ["fixture".to_string()];
             let cached = AurClient::select_cached_artifacts(
                 vec![archive.clone()],

@@ -4,6 +4,7 @@
 //! https://man.archlinux.org/man/PKGBUILD.5#INSTALL/UPGRADE/REMOVE_SCRIPTING
 
 use anyhow::Result;
+use std::fmt::Write as _;
 
 use super::artifact_inspector::ArtifactInspection;
 
@@ -21,20 +22,21 @@ pub(crate) fn exception_prompt(inspections: &[ArtifactInspection]) -> Result<Opt
     let mut prompt =
         String::from("AUR package contents request exceptional install-time privileges:\n");
     for inspection in exceptional {
-        prompt.push_str(&format!(
+        write!(
+            prompt,
             "\n{} {} [{}]",
             crate::cli::style::sanitize_terminal_text(&inspection.package_name),
             crate::cli::style::sanitize_terminal_text(&inspection.package_version),
             inspection.archive_sha256
-        ));
+        )?;
         if let Some(hook) = &inspection.install_hook {
-            prompt.push_str(&format!("\n  .INSTALL hook sha256={hook}"));
+            write!(prompt, "\n  .INSTALL hook sha256={hook}")?;
         }
         for file in &inspection.privileged_files {
             let path = crate::cli::style::sanitize_terminal_text(&file.path);
-            prompt.push_str(&format!("\n  {path} mode={:04o}", file.mode & 0o7777));
+            write!(prompt, "\n  {path} mode={:04o}", file.mode & 0o7777)?;
             if let Some(capability) = &file.capability {
-                prompt.push_str(&format!(" capability={capability}"));
+                write!(prompt, " capability={capability}")?;
             }
         }
     }

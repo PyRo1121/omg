@@ -50,7 +50,7 @@ fn init_creates_dockerfile_with_default_base_in_empty_project() {
 /// Contract: project marker files are detected and each mapped to its pinned
 /// runtime installation block in the generated Dockerfile:
 /// package.json → node (NODE_VERSION=20), Cargo.toml → rust,
-/// go.mod → go (GO_VERSION=1.22), requirements.txt → python (PYTHON_VERSION=3.12).
+/// go.mod → go (GO_VERSION=1.22.0), requirements.txt → python (PYTHON_VERSION=3.12).
 #[test]
 fn init_detects_project_runtimes_into_dockerfile() {
     let project = TestProject::new();
@@ -72,7 +72,7 @@ fn init_detects_project_runtimes_into_dockerfile() {
         "rust runtime block missing:\n{dockerfile}"
     );
     assert!(
-        dockerfile.contains("ENV GO_VERSION=1.22\n"),
+        dockerfile.contains("ENV GO_VERSION=1.22.0\n"),
         "go runtime block missing:\n{dockerfile}"
     );
     assert!(

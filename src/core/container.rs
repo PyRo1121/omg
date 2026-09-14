@@ -516,7 +516,7 @@ impl ContainerManager {
                     // release number, never empty or "latest".
                     // https://go.dev/doc/install
                     let go_ver = if version.is_empty() || version == "latest" {
-                        "1.22"
+                        "1.22.0"
                     } else {
                         version
                     };
@@ -1121,6 +1121,21 @@ mod tests {
         assert!(dockerfile.contains("NODE_VERSION=20"));
         assert!(dockerfile.contains("GO_VERSION=1.22.5"));
         assert!(!dockerfile.contains("curl -fsSL https://deb.nodesource.com"));
+    }
+
+    #[test]
+    fn default_go_release_uses_a_patch_version_and_verifies_its_digest() {
+        let manager = ContainerManager::with_runtime(ContainerRuntime::Docker);
+        let url = "https://go.dev/dl/go1.22.0.linux-amd64.tar.gz";
+        let digests = InstallerDigests::from([(url.to_string(), "a".repeat(64))]);
+        for version in ["", "latest"] {
+            let generated =
+                manager.generate_dockerfile("ubuntu:24.04", &[("go", version)], &digests);
+            assert!(generated.unpinned_urls.is_empty());
+            assert!(generated.content.contains(url));
+            assert!(generated.content.contains("ENV GO_VERSION=1.22.0\n"));
+            assert!(generated.content.contains("sha256sum -c -"));
+        }
     }
 
     #[test]

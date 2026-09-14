@@ -781,6 +781,7 @@ install_from_release
                 .env("PATH", std::env::var_os("PATH").expect("PATH"))
                 .env("GITHUB_EVENT_NAME", "workflow_dispatch")
                 .env("GITHUB_SHA", "fixture-commit")
+                .env("GITHUB_REF", "refs/tags/v1.2.3")
                 .env("DRY_RUN", value)
                 .current_dir(fixture.path())
                 .output()

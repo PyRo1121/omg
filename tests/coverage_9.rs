@@ -8,7 +8,7 @@
 //! - `list --json`: structured entries for native runtimes (exact payload),
 //!   explicit failure naming unsupported runtimes, `--available` conflict
 //! - unknown runtimes fail explicitly without installing a fallback manager
-//! - dynamic completion is sourced from `SUPPORTED_RUNTIMES`
+//! - dynamic completion covers native runtimes and the bundled tool registry
 //!
 //! All tests are offline: PATH is cleared (the omg binary itself is spawned
 //! by absolute path), and every assertion avoids code paths that download.
@@ -20,6 +20,79 @@ pub mod common;
 use common::*;
 
 const NO_MISE_ENV: &[(&str, &str)] = &[("PATH", "")];
+
+// Pin the public catalog independently of the implementation so additions or
+// removals require an explicit update to the CLI contract.
+const EXPECTED_RUNTIMES: &[&str] = &[
+    "actionlint",
+    "bat",
+    "bun",
+    "consul",
+    "delta",
+    "delve",
+    "deno",
+    "dive",
+    "dotnet",
+    "duf",
+    "dust",
+    "elixir",
+    "erlang",
+    "eza",
+    "fd",
+    "fnm",
+    "fzf",
+    "gh",
+    "ghcup",
+    "glow",
+    "go",
+    "golangci-lint",
+    "hadolint",
+    "helix",
+    "helm",
+    "hyperfine",
+    "java",
+    "jq",
+    "just",
+    "k9s",
+    "kind",
+    "kotlin",
+    "kustomize",
+    "lazydocker",
+    "lazygit",
+    "minikube",
+    "neovim",
+    "node",
+    "opentofu",
+    "packer",
+    "pandoc",
+    "php",
+    "pi",
+    "procs",
+    "protoc",
+    "python",
+    "ripgrep",
+    "ruby",
+    "ruff",
+    "rust",
+    "scala",
+    "shellcheck",
+    "shfmt",
+    "skaffold",
+    "starship",
+    "stylua",
+    "swift",
+    "task",
+    "terraform",
+    "terragrunt",
+    "tilt",
+    "tokei",
+    "uv",
+    "vault",
+    "yq",
+    "zellij",
+    "zig",
+    "zoxide",
+];
 
 fn data_dir_str(project: &TestProject) -> String {
     project.data_dir.path().display().to_string()
@@ -246,7 +319,7 @@ fn list_json_native_runtime_emits_exact_structured_entry() {
 }
 
 #[test]
-fn list_json_all_runtimes_emits_nine_entries_with_required_fields() {
+fn list_json_all_runtimes_emits_catalog_entries_with_required_fields() {
     let project = TestProject::new();
 
     let result = project.run_with_env(&["list", "--json"], NO_MISE_ENV);
@@ -254,18 +327,16 @@ fn list_json_all_runtimes_emits_nine_entries_with_required_fields() {
 
     let actual: serde_json::Value =
         serde_json::from_str(&result.stdout).expect("list --json must emit valid JSON only");
-    let expected: Vec<serde_json::Value> = [
-        "node", "python", "rust", "go", "ruby", "java", "bun", "pi", "deno",
-    ]
-    .into_iter()
-    .map(|runtime| {
-        serde_json::json!({
-            "runtime": runtime,
-            "current": null,
-            "installed": [],
+    let expected: Vec<serde_json::Value> = EXPECTED_RUNTIMES
+        .iter()
+        .map(|runtime| {
+            serde_json::json!({
+                "runtime": runtime,
+                "current": null,
+                "installed": [],
+            })
         })
-    })
-    .collect();
+        .collect();
     assert_eq!(
         actual,
         serde_json::Value::Array(expected),
@@ -277,11 +348,14 @@ fn list_json_all_runtimes_emits_nine_entries_with_required_fields() {
 fn list_json_unsupported_runtime_fails_explicitly() {
     let project = TestProject::new();
 
-    let result = project.run_with_env(&["list", "erlang", "--json"], NO_MISE_ENV);
+    let result = project.run_with_env(
+        &["list", "omg-test-unsupported-runtime", "--json"],
+        NO_MISE_ENV,
+    );
 
     // Unsupported runtimes fail rather than emitting partial or empty data.
     result.assert_failure();
-    result.assert_stderr_contains("Unsupported runtime 'erlang'");
+    result.assert_stderr_contains("Unsupported runtime 'omg-test-unsupported-runtime'");
 }
 
 #[test]
@@ -302,10 +376,10 @@ fn list_json_conflicts_with_available_flag() {
 fn list_unknown_runtime_fails_explicitly() {
     let project = TestProject::new();
 
-    let result = project.run_with_env(&["list", "erlang"], NO_MISE_ENV);
+    let result = project.run_with_env(&["list", "omg-test-unsupported-runtime"], NO_MISE_ENV);
 
     result.assert_failure();
-    result.assert_stderr_contains("Unsupported runtime 'erlang'");
+    result.assert_stderr_contains("Unsupported runtime 'omg-test-unsupported-runtime'");
 }
 
 #[test]
@@ -329,10 +403,7 @@ fn complete_lists_all_supported_native_runtimes() {
 
     let suggestions: Vec<&str> = result.stdout.lines().map(str::trim).collect();
     assert_eq!(
-        suggestions,
-        vec![
-            "bun", "deno", "go", "java", "node", "pi", "python", "ruby", "rust"
-        ],
+        suggestions, EXPECTED_RUNTIMES,
         "completion after `use` must offer exactly the sorted supported runtimes:\n{}",
         result.stdout
     );
