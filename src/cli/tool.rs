@@ -11,9 +11,6 @@ use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-#[cfg(target_os = "linux")]
-use std::os::unix::process::CommandExt as _;
-
 use crate::cli::style;
 
 const ALLOW_NPM_SCRIPTS_ENV: &str = "OMG_TOOL_DANGEROUSLY_ALLOW_ALL_NPM_SCRIPTS";
@@ -45,15 +42,30 @@ fn restrict_manager_process(command: &mut Command) {
     // stdin prevents publisher-controlled install hooks from borrowing the
     // caller's terminal to request credentials or sudo authentication.
     command.stdin(std::process::Stdio::null());
-    #[cfg(target_os = "linux")]
-    // SAFETY: pre_exec only invokes the async-signal-safe prctl wrapper. It
-    // allocates no Rust state and runs after fork immediately before exec.
-    unsafe {
-        command.pre_exec(|| {
-            nix::sys::prctl::set_no_new_privs()
-                .map_err(|error| std::io::Error::from_raw_os_error(error as i32))
-        });
-    }
+}
+
+#[cfg(target_os = "linux")]
+fn restricted_manager_command(
+    program: impl AsRef<std::ffi::OsStr>,
+    staging_dir: &Path,
+) -> Result<Command> {
+    let mut command = manager_command(
+        crate::core::privilege::trusted_program("setpriv")?,
+        staging_dir,
+    );
+    command
+        .arg("--no-new-privs")
+        .arg("--")
+        .arg(program.as_ref());
+    Ok(command)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn restricted_manager_command(
+    program: impl AsRef<std::ffi::OsStr>,
+    staging_dir: &Path,
+) -> Result<Command> {
+    Ok(manager_command(program, staging_dir))
 }
 
 fn validate_managed_package(manager: &str, package: &str) -> Result<()> {
@@ -265,11 +277,7 @@ fn secured_manager_command(
     manager: &str,
     package: &str,
 ) -> Result<Command> {
-    if host_environment_is_allowed(manager, package) {
-        let mut command = manager_command(program, staging_dir);
-        restrict_manager_process(&mut command);
-        return Ok(command);
-    }
+    let allow_host_environment = host_environment_is_allowed(manager, package);
 
     let requested_program = Path::new(program.as_ref());
     let resolved_program = if requested_program.components().count() == 1 {
@@ -305,7 +313,11 @@ fn secured_manager_command(
             );
         }
     }
-    let mut command = manager_command(&resolved_program, staging_dir);
+    let mut command = restricted_manager_command(&resolved_program, staging_dir)?;
+    if allow_host_environment {
+        restrict_manager_process(&mut command);
+        return Ok(command);
+    }
     #[cfg(unix)]
     command.current_dir("/");
 
@@ -1706,7 +1718,7 @@ mod tests {
                 .get(std::ffi::OsStr::new("PATH"))
                 .expect("isolated PATH");
             let entries: Vec<_> = std::env::split_paths(path).collect();
-            assert_eq!(entries.first(), executable.parent());
+            assert_eq!(entries.first().map(PathBuf::as_path), executable.parent());
             assert!(entries.contains(&PathBuf::from("/usr/bin")));
         }
     }
