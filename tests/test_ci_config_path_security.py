@@ -15,6 +15,7 @@ class CiConfigPathSecurityTests(unittest.TestCase):
             "fn generate_github_actions", 1
         )[0]
         self.assertIn("create_new(true)", writer)
+        self.assertIn("symlink_metadata", writer)
         self.assertNotIn("fs::write(path, config)", writer)
 
 

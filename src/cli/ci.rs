@@ -131,9 +131,7 @@ fn write_config_file(path: &str, config: &str) -> Result<()> {
         ),
     );
     let config = config.as_str();
-    if let Some(parent) = std::path::Path::new(path).parent() {
-        fs::create_dir_all(parent)?;
-    }
+    ensure_safe_config_parent(std::path::Path::new(path))?;
 
     let created = match fs::OpenOptions::new()
         .write(true)
@@ -163,6 +161,37 @@ fn write_config_file(path: &str, config: &str) -> Result<()> {
             style::maybe_color("✓", |t| t.green().to_string()),
             style::maybe_color(path, |t| t.cyan().to_string())
         );
+    }
+    Ok(())
+}
+
+fn ensure_safe_config_parent(path: &std::path::Path) -> Result<()> {
+    use std::path::Component;
+
+    anyhow::ensure!(!path.is_absolute(), "CI config path must be relative");
+    let mut directory = std::path::PathBuf::new();
+    let Some(parent) = path.parent() else {
+        return Ok(());
+    };
+    for component in parent.components() {
+        match component {
+            Component::CurDir => continue,
+            Component::Normal(name) => directory.push(name),
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                anyhow::bail!("CI config path must stay inside the current repository")
+            }
+        }
+        match fs::symlink_metadata(&directory) {
+            Ok(metadata) => anyhow::ensure!(
+                metadata.is_dir() && !metadata.file_type().is_symlink(),
+                "Refusing symlinked or non-directory CI config ancestor: {}",
+                directory.display()
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                fs::create_dir(&directory)?;
+            }
+            Err(error) => return Err(error.into()),
+        }
     }
     Ok(())
 }
@@ -566,10 +595,13 @@ mod tests {
     fn ci_generation_refuses_a_dangling_destination_symlink() {
         use std::os::unix::fs::symlink;
 
-        let directory = tempfile::tempdir().expect("temp directory");
+        let directory = tempfile::tempdir_in(".").expect("relative temp directory");
         let outside = directory.path().join("outside.yml");
         let destination = directory.path().join("ci.yml");
-        symlink(&outside, &destination).expect("dangling destination symlink");
+        let outside_absolute = std::fs::canonicalize(directory.path())
+            .expect("canonical fixture directory")
+            .join("outside.yml");
+        symlink(&outside_absolute, &destination).expect("dangling destination symlink");
 
         write_config_file(
             destination.to_str().expect("UTF-8 fixture path"),
@@ -582,6 +614,23 @@ mod tests {
             destination.is_symlink(),
             "existing entry must remain intact"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ci_generation_refuses_a_symlinked_parent_directory() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir_in(".").expect("relative temp directory");
+        let outside = directory.path().join("outside");
+        std::fs::create_dir(&outside).expect("outside directory");
+        let outside_absolute = std::fs::canonicalize(&outside).expect("canonical outside");
+        let linked_parent = directory.path().join(".github");
+        symlink(outside_absolute, &linked_parent).expect("linked parent");
+
+        let destination = linked_parent.join("workflows/ci.yml");
+        ensure_safe_config_parent(&destination).expect_err("symlinked parent must be refused");
+        assert!(!outside.join("workflows").exists());
     }
 
     #[test]
