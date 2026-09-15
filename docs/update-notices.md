@@ -9,7 +9,7 @@ The first eligible command or terminal starts a background check; a subsequent
 invocation can show:
 
 ```text
-OMG 0.1.222 is available (installed: 0.1.221). Update with your package manager or `omg self-update`. Notes: https://github.com/PyRo1121/omg/releases/tag/v0.1.222
+OMG 0.1.222 is available (installed: 0.1.221). Update with your package manager or `omg self-update`. Notes: https://github.com/omg-cli/omg/releases/tag/v0.1.222
 ```
 
 Checks and notices are limited to once per day per user cache, including failed

@@ -139,7 +139,7 @@ mod unix {
         let current = Version::parse(env!("CARGO_PKG_VERSION"))?;
         if let Some(latest) = notice(&cache, &current, now) {
             eprintln!(
-                "OMG {latest} is available (installed: {current}). Update with your package manager or `omg self-update`. Notes: https://github.com/PyRo1121/omg/releases/tag/v{latest}"
+                "OMG {latest} is available (installed: {current}). Update with your package manager or `omg self-update`. Notes: https://github.com/omg-cli/omg/releases/tag/v{latest}"
             );
             cache.notified = now;
             save_cache(&mut file, &cache)?;

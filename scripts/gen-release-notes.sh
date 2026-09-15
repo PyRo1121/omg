@@ -84,7 +84,7 @@ if "$script_dir/extract-release-notes.sh" "${version}"; then
   echo "✓ Extracted changelog for v${version}" >&2
 else
   echo "⚠ No changelog found, using generic message" >&2
-  echo "See [full changelog](https://github.com/PyRo1121/omg/blob/main/docs/changelog.md) for details."
+  echo "See [full changelog](https://github.com/omg-cli/omg/blob/main/docs/changelog.md) for details."
 fi
 
 cat <<EOF_FOOTER
@@ -142,5 +142,5 @@ sudo cp omg /usr/local/bin/
 
 ---
 
-**Full Changelog**: https://github.com/PyRo1121/omg/blob/v${version}/docs/changelog.md
+**Full Changelog**: https://github.com/omg-cli/omg/blob/v${version}/docs/changelog.md
 EOF_FOOTER
