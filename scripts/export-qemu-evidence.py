@@ -24,6 +24,7 @@ HOST_FILES = {
     "controller-setup.log", "controller-security.log", "image-setup.log", "boot.log", "guest-check.log",
     "evidence-copy.log", "benchmark-validation.log", "transactions.log",
     "transaction-validation.log", "inventory.log",
+    "guest-health.json", "controller-health.json", "controller-final-state.json", "health-validation.log",
     "benchmark-driver-sha256.txt", "cases.tsv", "controller-id.txt", "release-checksum.txt",
 }
 GUEST_FILES = {

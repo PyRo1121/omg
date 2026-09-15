@@ -219,6 +219,8 @@ cleanup() {
   trap - EXIT
   if [[ ${started:-false} == true ]]; then
     safe_to_remove=false
+    # Preserve controller state before forced cleanup destroys the OOM/exit evidence.
+    timeout 15 docker inspect --format '{{json .State}}' "$controller" > "$work/controller-final-state.json" 2>> "$work/cleanup.log" || { rc=3; result=HARNESS_ERROR; }
     timeout --kill-after=5s 60s docker rm --force "$controller" >> "$work/cleanup.log" 2>&1 || { rc=3; result=HARNESS_ERROR; }
     if remaining=$(timeout 15 docker ps -aq --filter "name=^/${controller}$") && [[ -z "$remaining" ]]; then
       printf 'verified absent: %s\n' "$controller" >> "$work/cleanup.log"
@@ -313,7 +315,7 @@ read -r digest filename extra < "$work/release/$archive.sha256"
 (cd "$work/release" && sha256sum -c "$archive.sha256") > "$work/release-checksum.txt"
 printf 'distro=%s\narch=%s\nrelease=%s\nartifact_source=%s\nimage_url=%s\nimage_digest=%s\nfirmware=%s\nqemu=%s -machine %s\ncontroller=%s\ncase_id=%s\n' "$distro" "$arch" "$tag" "$source_kind" "$image_url" "$image_hash" "$firmware" "$qemu_bin" "$qemu_machine" "$controller_image" "$case_id" > "$work/metadata.txt"
 started=true
-timeout 120 docker run -d --name "$controller" --cpus 2 --memory 3g --memory-swap 3g --device /dev/kvm \
+timeout 120 docker run -d --name "$controller" --cpus 2 --memory 3g --memory-swap 3g --pids-limit 512 --log-opt max-size=10m --log-opt max-file=2 --device /dev/kvm \
   --mount "type=bind,src=$work,dst=/work" --workdir /work \
   "$controller_image" sleep infinity > "$work/controller-id.txt"
 timeout --kill-after=5s 600 docker exec "$controller" sh -c "apt-get -o APT::Update::Error-Mode=any -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update && DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends $qemu_pkg qemu-utils cloud-image-utils openssh-client curl ca-certificates $firmware_pkg jq" > "$work/controller-setup.log" 2>&1
@@ -735,6 +737,25 @@ elif [[ -n "$inventory_tiers" ]]; then
     $ids | map({case_id:., distro:$distro, artifact_source:"inventory",
       result:"BLOCKED", exit_code:-1, elapsed_seconds:0})' > "$work/inventory/results.json"
   printf '{"complete":false,"reason":"guest lifecycle failed"}\n' > "$work/inventory/summary.json"
+fi
+# Health is an independent admission gate after the selected test work. Query
+# boot-scoped kernel/crash identity only, never raw cores or process environments.
+health_rc=0
+timeout --kill-after=5s 60s docker exec -i -w /work/guest "$controller" \
+  ssh -i client-key -p 2222 -o BatchMode=yes -o ConnectTimeout=5 \
+    -o ServerAliveInterval=5 -o ServerAliveCountMax=3 \
+    -o StrictHostKeyChecking=yes -o UserKnownHostsFile=known_hosts \
+    bench@127.0.0.1 sudo -n python3 - collect \
+  < "$here/check-qemu-health.py" > "$work/guest-health.json" 2> "$work/health-validation.log" || health_rc=$?
+timeout 15 docker inspect --format '{{json .State}}' "$controller" > "$work/controller-health.json" 2>> "$work/health-validation.log" || health_rc=120
+if [[ "$health_rc" == 0 ]]; then
+  python3 "$here/check-qemu-health.py" verify --guest "$work/guest-health.json" \
+    --serial "$work/guest/serial.log" --controller "$work/controller-health.json" \
+    >> "$work/health-validation.log" 2>&1 || health_rc=120
+fi
+if [[ "$health_rc" != 0 ]]; then
+  printf 'Final guest/controller health failed admission\n' >&2
+  [[ "$rc" != 0 ]] || rc=120
 fi
 # Verdict map: only proven-rig codes are HARNESS_ERROR. Per the GNU
 # coreutils manual, timeout exits 124 when the managed command times out

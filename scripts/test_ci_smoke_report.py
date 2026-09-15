@@ -40,6 +40,7 @@ class ReportingTests(unittest.TestCase):
             result = json.loads((Path(directory) / "results.json").read_text())
             self.assertEqual(result, [{"case_id": "qemu-arch-build", "distro": "arch", "result": "HARNESS_ERROR", "exit_code": 1, "elapsed_seconds": 0}])
             self.assertIn("429", (Path(directory) / "reporting.log").read_text())
+            self.assertEqual(json.loads((Path(directory) / "reporting-status.json").read_text()), {"exit_code": 1})
 
     def test_success_and_skipped_never_send(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(REPORT.subprocess, "run") as run:
@@ -96,6 +97,49 @@ class ReportingTests(unittest.TestCase):
             with patch.object(REPORT.subprocess, "run", side_effect=FileNotFoundError):
                 self.assertEqual(REPORT.status("ubuntu", "qemu-ubuntu-preflight", "cancelled", Path(directory)), 0)
             self.assertEqual(json.loads((Path(directory) / "results.json").read_text())[0]["exit_code"], 130)
+            self.assertEqual(json.loads((Path(directory) / "reporting-status.json").read_text())["exit_code"], 255)
+
+    def test_setup_failure_has_results_and_delivery_receipt(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(REPORT.subprocess, "run") as run:
+            run.return_value.returncode = 0
+            run.return_value.stdout = run.return_value.stderr = ""
+            root = Path(directory)
+            self.assertEqual(REPORT.ensure_failure("arch", "qemu-arch-lifecycle", "failure", root), 0)
+            self.assertEqual(len(list(root.glob("run-*/results.json"))), 1)
+            self.assertEqual(REPORT.verify(root), 0)
+            REPORT.ensure_failure("arch", "qemu-arch-lifecycle", "failure", root)
+            self.assertEqual(run.call_count, 1)
+
+    def test_invalid_or_foreign_results_cannot_hide_failure(self):
+        candidates = ["{", "[]", "null", json.dumps([{
+            "case_id": "qemu-fedora-lifecycle", "distro": "fedora", "result": "HARNESS_ERROR",
+            "exit_code": 1, "elapsed_seconds": 1,
+        }])]
+        for candidate in candidates:
+            with self.subTest(candidate=candidate), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                original = root / "run-original"
+                original.mkdir()
+                (original / "results.json").write_text(candidate)
+                with patch.object(REPORT.subprocess, "run", side_effect=FileNotFoundError):
+                    REPORT.ensure_failure("arch", "qemu-arch-lifecycle", "cancelled", root)
+                reports = list(root.glob("run-setup-*/results.json"))
+                self.assertEqual(len(reports), 1)
+                self.assertEqual(json.loads(reports[0].read_text())[0]["exit_code"], 130)
+                self.assertEqual((original / "results.json").read_text(), candidate)
+
+    def test_inventory_failure_does_not_fabricate_setup_failure(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(REPORT.subprocess, "run") as reporter:
+            root = Path(directory)
+            run = root / "run-completed"
+            run.mkdir()
+            (run / "results.json").write_text(json.dumps([{
+                "case_id": "qemu-arch-lifecycle", "distro": "arch", "result": "PASS",
+                "exit_code": 0, "elapsed_seconds": 1,
+            }]))
+            self.assertEqual(REPORT.ensure_failure("arch", "qemu-arch-lifecycle", "failure", root), 0)
+            reporter.assert_not_called()
+            self.assertEqual(len(list(root.glob("run-*"))), 1)
 
     def test_verify_requires_a_receipt_for_every_exported_run(self):
         with tempfile.TemporaryDirectory() as directory:

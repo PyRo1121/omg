@@ -40,6 +40,8 @@ on:
       - "scripts/test_prepare_qemu_release.py"
       - "scripts/test_qemu_process_isolation.py"
       - "scripts/check-qemu-controller.sh"
+      - "scripts/check-qemu-health.py"
+      - "scripts/test_qemu_health.py"
       - "scripts/test_qemu_controller_floor.py"
       - "scripts/qemu-transactions.sh"
       - "scripts/qemu-inventory.sh"
@@ -598,6 +600,16 @@ jobs:
           fi
           ./scripts/benchmark-qemu.sh "${args[@]}"
 
+      - name: Preserve setup failure evidence
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+          DISTRO: ${{ matrix.distro }}
+        run: |
+          python3 scripts/ci-smoke-report.py ensure-failure --distro "$DISTRO" \
+            --case-id "qemu-$DISTRO-lifecycle" --status "$JOB_STATUS" \
+            --evidence-root "$RUNNER_TEMP/qemu-evidence"
+
       - name: Export allowlisted guest evidence
         if: always()
         run: |
@@ -698,6 +710,16 @@ jobs:
           ./scripts/benchmark-qemu.sh --arch aarch64 --distro "${{ matrix.distro }}" --benchmark --evidence-dir "$RUNNER_TEMP/qemu-evidence" \
             --release "${{ needs.prepare.outputs.tag }}" \
             --staged-dir staged --inventory-tiers hermetic,container --inventory-allow-mutations
+
+      - name: Preserve setup failure evidence
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+          DISTRO: ${{ matrix.distro }}
+        run: |
+          python3 scripts/ci-smoke-report.py ensure-failure --distro "$DISTRO" \
+            --case-id "qemu-$DISTRO-aarch64-lifecycle" --status "$JOB_STATUS" \
+            --evidence-root "$RUNNER_TEMP/qemu-evidence"
 
       - name: Export allowlisted guest evidence
         if: always()
