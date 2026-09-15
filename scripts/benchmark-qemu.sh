@@ -362,7 +362,7 @@ if [[ "$1" == uefi ]]; then
   firmware=(-drive if=pflash,format=raw,readonly=on,file="$3" -drive if=pflash,format=raw,file="$vm_vars")
 fi
 nohup "$5" -machine "$6,accel=kvm" -cpu host -smp 2 -m 1536 \
-  -runas 65534:65534 \
+  -run-with user=65534:65534 \
   -sandbox on,obsolete=deny,spawn=deny,resourcecontrol=deny \
   -monitor none \
   "${firmware[@]}" -display none -serial "file:$vm_serial" \

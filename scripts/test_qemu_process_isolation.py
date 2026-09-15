@@ -10,6 +10,12 @@ BASH = 'C:/Program Files/Git/bin/bash.exe' if os.name == 'nt' else 'bash'
 
 
 class QemuProcessIsolationTests(unittest.TestCase):
+    def test_launch_uses_supported_privilege_drop_without_root_fallback(self):
+        source = (ROOT / 'scripts/benchmark-qemu.sh').read_text(encoding='utf-8')
+        self.assertIn('-run-with user=65534:65534', source)
+        self.assertNotIn('-runas ', source)
+        self.assertIn('-sandbox on,obsolete=deny,spawn=deny,resourcecontrol=deny', source)
+
     def test_process_gate_rejects_root_capabilities_and_missing_restrictions(self):
         source = (ROOT / 'scripts/benchmark-qemu.sh').read_text()
         script = source.split('qemu_pid=$(<qemu.pid)', 1)[1].split('opts=(', 1)[0]
