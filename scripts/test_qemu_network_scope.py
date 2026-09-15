@@ -52,7 +52,9 @@ print(json.dumps(dict(
         self.assertEqual(receipt["routes4"], [])
         self.assertEqual(receipt["routes6"], [])
         import errno
-        self.assertEqual(receipt["connections"], [errno.ENETUNREACH, errno.ENETUNREACH])
+        self.assertEqual(receipt["connections"][0], errno.ENETUNREACH)
+        # IPv6 may reject the absent source address before route lookup.
+        self.assertIn(receipt["connections"][1], (errno.ENETUNREACH, errno.EADDRNOTAVAIL))
         status = dict(line.split(':', 1) for line in receipt["status"].splitlines() if ':' in line)
         self.assertEqual(status["NoNewPrivs"].strip(), "1")
         self.assertEqual(int(status["CapEff"].strip(), 16), 0)
