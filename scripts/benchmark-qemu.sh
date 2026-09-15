@@ -16,6 +16,7 @@ inventory_tiers=
 inventory_mutations=false
 inventory_isolation=false
 storage_faults=false
+restrict_egress=false
 report_inventory='[]'
 inventory_product_failure=false
 root="$HOME/.cache/build-targets/omg-qemu-benchmark"
@@ -40,6 +41,7 @@ while (($#)); do
     --inventory-allow-mutations) inventory_mutations=true; shift ;;
     --inventory-isolate-hermetic) inventory_isolation=true; shift ;;
     --storage-faults) storage_faults=true; shift ;;
+    --restrict-egress) restrict_egress=true; shift ;;
     --help)
       cat <<'HELP'
 Usage: scripts/benchmark-qemu.sh [--distro all|arch|debian|ubuntu|fedora]
@@ -210,6 +212,7 @@ if [[ "$distro" == all ]]; then
   [[ "$inventory_mutations" == false ]] || args+=(--inventory-allow-mutations)
   [[ "$inventory_isolation" == false ]] || args+=(--inventory-isolate-hermetic)
   [[ "$storage_faults" == false ]] || args+=(--storage-faults)
+  [[ "$restrict_egress" == false ]] || args+=(--restrict-egress)
   jq -n --arg source "$source_kind" --arg suffix "$case_suffix" '["arch", "debian", "ubuntu", "fedora"] | map({case_id:("qemu-"+.+$suffix+"-lifecycle"), distro:., result:"NOT_RUN", artifact_source:$source, exit_code:null, elapsed_seconds:0})' > "$suite/results.json"
   for target in arch debian ubuntu fedora; do
     jq --arg target "$target" 'map(if .distro == $target then .result = "INCOMPLETE" else . end)' "$suite/results.json" > "$suite/results.next.json"
@@ -244,6 +247,9 @@ cleanup() {
     else rc=3; result=HARNESS_ERROR; fi
   fi
   if [[ "$safe_to_remove" == true ]]; then
+  if [[ ${egress_started:-false} == true ]]; then
+    timeout 60 sudo -n python3 "$here/qemu-controller-egress.py" remove "$controller" >> "$work/cleanup.log" 2>&1 || { rc=3; result=HARNESS_ERROR; }
+  fi
   # Only the stopped controller's owned disposable disks live here, not evidence.
   rm -rf "$work/guest/transaction-disks" || { rc=3; result=HARNESS_ERROR; }
   [[ ! -e "$work/guest/transaction-disks" ]] || { rc=3; result=HARNESS_ERROR; }
@@ -332,8 +338,14 @@ read -r digest filename extra < "$work/release/$archive.sha256"
 printf 'distro=%s\narch=%s\nrelease=%s\nartifact_source=%s\nimage_url=%s\nimage_digest=%s\nfirmware=%s\nqemu=%s -machine %s\ncontroller=%s\ncase_id=%s\n' "$distro" "$arch" "$tag" "$source_kind" "$image_url" "$image_hash" "$firmware" "$qemu_bin" "$qemu_machine" "$controller_image" "$case_id" > "$work/metadata.txt"
 started=true
 timeout 120 docker run -d --name "$controller" --cpus 2 --memory 3g --memory-swap 3g --pids-limit 512 --log-opt max-size=10m --log-opt max-file=2 --device /dev/kvm \
+  --cap-drop NET_RAW --cap-drop NET_ADMIN --dns 1.1.1.1 --dns 9.9.9.9 \
   --mount "type=bind,src=$work,dst=/work" --workdir /work \
   "$controller_image" sleep infinity > "$work/controller-id.txt"
+if [[ "$restrict_egress" == true ]]; then
+  egress_started=true
+  timeout 120 sudo -n python3 "$here/qemu-controller-egress.py" install "$controller" \
+    > "$work/egress-policy.json" 2> "$work/egress-policy.log"
+fi
 timeout --kill-after=5s 600 docker exec "$controller" sh -c "apt-get -o APT::Update::Error-Mode=any -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update && DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends $qemu_pkg qemu-utils cloud-image-utils openssh-client curl ca-certificates $firmware_pkg jq" > "$work/controller-setup.log" 2>&1
 cp "$here/check-qemu-controller.sh" "$work/check-qemu-controller.sh"
 timeout 30 docker exec "$controller" bash /work/check-qemu-controller.sh "$qemu_pkg" > "$work/controller-security.log" 2>&1
@@ -789,7 +801,10 @@ if [[ "$storage_faults" == true && "$rc" == 0 ]]; then
       -o StrictHostKeyChecking=yes -o UserKnownHostsFile=known_hosts \
       bench@127.0.0.1 "sudo -n bash -c $quoted_fault_setup bash $quoted_fault_binary" \
       < "$here/qemu-storage-faults.py" > "$work/storage-faults.json" 2> "$work/storage-faults.log" || fault_rc=$?
-  if [[ "$fault_rc" != 0 ]] || ! python3 "$here/qemu-storage-faults.py" --receipt "$work/storage-faults.json" >> "$work/storage-faults.log" 2>&1; then
+  if [[ "$fault_rc" == 1 && -f "$work/storage-faults.json" && $(wc -c < "$work/storage-faults.json") -le 65536 ]] &&
+     jq -e '.schema_version==1 and .scope=="privacy-export-atomic-write" and .complete==false and .failure_kind=="product"' "$work/storage-faults.json" >/dev/null; then
+    rc=1
+  elif [[ "$fault_rc" != 0 ]] || ! python3 "$here/qemu-storage-faults.py" --receipt "$work/storage-faults.json" >> "$work/storage-faults.log" 2>&1; then
     rc=120
   fi
 fi

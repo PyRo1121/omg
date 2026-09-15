@@ -27,6 +27,7 @@ HOST_FILES = {
     "guest-health.json", "controller-health.json", "controller-final-state.json", "health-validation.log",
     "inventory-admission.json",
     "storage-faults.json", "storage-faults.log",
+    "egress-policy.json", "egress-policy.log",
     "image-provenance.json",
     "benchmark-driver-sha256.txt", "cases.tsv", "controller-id.txt", "release-checksum.txt",
 }

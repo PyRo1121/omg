@@ -24,7 +24,7 @@ FATAL = re.compile(
 BOOT_ID = re.compile(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}")
 
 
-def bounded_file(path):
+def bounded_file(path, errors="strict"):
     descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
     with os.fdopen(descriptor, "rb") as stream:
         info = os.fstat(stream.fileno())
@@ -33,7 +33,7 @@ def bounded_file(path):
         data = stream.read(LIMIT + 1)
     if len(data) > LIMIT:
         raise ValueError("health evidence grew beyond limit")
-    return data.decode("utf-8", errors="strict")
+    return data.decode("utf-8", errors=errors)
 
 
 def query(argv):
@@ -96,7 +96,10 @@ def verify_guest(guest, serial, boot_id=None):
             or payload.get("fatal_signatures") != []
             or payload.get("product_crashes") != []):
         raise ValueError("guest crash or incomplete health evidence")
-    serial_text = bounded_file(serial)
+    # Serial consoles are byte streams, not a UTF-8 protocol. A torn terminal
+    # glyph must not invalidate otherwise complete health evidence. Preserve
+    # invalid bytes as escapes; never discard surrounding crash signatures.
+    serial_text = bounded_file(serial, errors="backslashreplace")
     if not serial_text.strip() or crash_signatures(serial_text):
         raise ValueError("missing serial evidence or fatal guest signature")
     if boot_id is not None and payload["boot_id"] != boot_id:

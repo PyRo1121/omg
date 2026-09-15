@@ -9,7 +9,12 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
+
+
+class ProductFailure(Exception):
+    """A proven fault exposed a failed integrity or recovery assertion."""
 
 
 def command(argv, **kwargs):
@@ -69,10 +74,10 @@ def run(binary, token):
 
         def recovered():
             if export().returncode != 0:
-                raise ValueError("export did not recover after fault removal")
+                raise ProductFailure("export did not recover after fault removal")
             json.loads(output.read_text())
             if stat.S_IMODE(output.stat().st_mode) != 0o600:
-                raise ValueError("recovered export is not private")
+                raise ProductFailure("recovered export is not private")
 
         recovered()
         for fault in ("enospc", "readonly", "fsync-eio", "fsync-kill"):
@@ -115,8 +120,10 @@ def run(binary, token):
                     observed = observed and "(INJECTED)" in text
                 else:
                     observed = observed and "killed by SIGKILL" in text and result.returncode in (-9, 137)
-            if not observed or result.returncode == 0 or output.read_bytes() != before:
-                raise ValueError(f"{fault}: activation, refusal or prior export integrity not proven")
+            if not observed:
+                raise ValueError(f"{fault}: fault activation not proven")
+            if result.returncode == 0 or output.read_bytes() != before:
+                raise ProductFailure(f"{fault}: fault was active but refusal or prior export integrity failed")
             recovered()
             rows.append(dict(id=fault, fault_observed=True, prior_preserved=True, recovered=True))
         receipt = dict(schema_version=1, scope="privacy-export-atomic-write", complete=True, cases=rows)
@@ -146,4 +153,13 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except ProductFailure as error:
+        print(json.dumps(dict(schema_version=1, scope="privacy-export-atomic-write", complete=False,
+                              failure_kind="product", error=str(error))))
+        print(f"PRODUCT_FAIL: {error}", file=sys.stderr)
+        raise SystemExit(1)
+    except (ValueError, OSError, subprocess.SubprocessError) as error:
+        print(f"HARNESS_ERROR: {error}", file=sys.stderr)
+        raise SystemExit(120)

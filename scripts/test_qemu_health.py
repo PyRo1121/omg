@@ -70,6 +70,16 @@ class HealthTests(unittest.TestCase):
         self.serial.write_text("Kernel panic handler installed\nOOM killer enabled\n")
         self.assertEqual(self.verify(), 0)
 
+    def test_serial_torn_utf8_does_not_hide_crash_signatures(self):
+        self.serial.write_bytes(b"Linux version 6.12\n\xe2Reached target\n")
+        self.assertEqual(self.verify(), 0)
+        self.serial.write_bytes(b"\xe2\nKernel panic - not syncing: fixture\n")
+        with self.assertRaises(ValueError):
+            self.verify()
+        self.guest.write_bytes(b"{\xe2}")
+        with self.assertRaises(ValueError):
+            self.verify()
+
     def test_named_worker_crash_is_identified_by_product_executable(self):
         core = json.dumps({"COREDUMP_COMM": "tokio-runtime-w", "COREDUMP_EXE": "/home/bench/release/omg",
                            "COREDUMP_SIGNAL": "11", "COREDUMP_ENVIRON": "private"})

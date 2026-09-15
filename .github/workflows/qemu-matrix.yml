@@ -50,6 +50,8 @@ on:
       - "scripts/test_qemu_controller_floor.py"
       - "scripts/qemu-transactions.sh"
       - "scripts/qemu-storage-faults.py"
+      - "scripts/qemu-controller-egress.py"
+      - "scripts/test_qemu_egress.py"
       - "scripts/test_qemu_storage_faults.py"
       - "scripts/qemu-inventory.sh"
       - "scripts/test-release-smoke.sh"
@@ -140,6 +142,7 @@ jobs:
           sudo -n python3 -m unittest discover -s scripts -p test_qemu_health.py
           python3 -m unittest discover -s scripts -p test_qemu_network_scope.py
           python3 -m unittest discover -s scripts -p test_qemu_storage_faults.py
+          python3 -m unittest discover -s scripts -p test_qemu_egress.py
           sudo -n python3 -m unittest discover -s scripts -p test_export_qemu_evidence.py
 
       - name: Resolve selection
@@ -611,6 +614,7 @@ jobs:
           args+=(--inventory-isolate-hermetic)
           args+=(--benchmark-transactions 1)
           args+=(--storage-faults)
+          args+=(--restrict-egress)
           ./scripts/benchmark-qemu.sh "${args[@]}"
 
       - name: Preserve setup failure evidence
@@ -727,6 +731,7 @@ jobs:
             --inventory-isolate-hermetic \
             --benchmark-transactions 1 \
             --storage-faults \
+            --restrict-egress \
             --staged-dir staged --inventory-tiers hermetic,container --inventory-allow-mutations
 
       - name: Preserve setup failure evidence
