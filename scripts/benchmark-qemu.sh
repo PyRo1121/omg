@@ -128,7 +128,7 @@ pins_for() {
   controller_image=debian:trixie@sha256:6788062a1b42ac281f053ac876170b79a3eaed5d61383b8ed7eaca6c6965f3b1
   case "$pin_distro-$pin_arch" in
     arch-x86_64)
-      image_url=https://geo.mirror.pkgbuild.com/images/latest/Arch-Linux-x86_64-cloudimg-20260901.583572.qcow2
+      image_url=https://geo.mirror.pkgbuild.com/images/v20260901.583572/Arch-Linux-x86_64-cloudimg-20260901.583572.qcow2
       image_hash=e3e688f97a71b265ce202905a504253f60f3680cf57d011a45411c43bedfa930
       firmware=uefi ;;
     arch-aarch64)
