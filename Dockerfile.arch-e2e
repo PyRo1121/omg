@@ -1,5 +1,5 @@
 # Arch Linux image for the local Compose smoke tests.
-FROM archlinux:latest@sha256:b860afd5823683f7ea389ba5f00d812f4fe55f6f286dea329d2abeefa535e309
+FROM archlinux:latest@sha256:204e91950fd364961088a01773eee9012243b7e965fed42b1d82d12416190782
 
 ENV CARGO_HOME=/root/.cargo \
     RUSTUP_HOME=/root/.rustup
