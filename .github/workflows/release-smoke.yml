@@ -18,6 +18,10 @@ on:
         description: "Release tag to smoke (e.g. v0.1.217); empty means latest published release"
         required: false
         default: ""
+      upgrade_from:
+        description: "Optional published source tag for an Ubuntu self-update smoke test"
+        required: false
+        default: ""
   schedule:
     # Nightly, staggered off qemu-matrix's 03:17 slot. PR/dispatch runs
     # smoke but never file: filing is nightly-only (see file-issues).
@@ -31,6 +35,39 @@ permissions:
   contents: read
 
 jobs:
+  upgrade:
+    name: Published Ubuntu upgrade
+    if: github.event_name == 'workflow_dispatch' && inputs.upgrade_from != ''
+    needs: resolve-release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Verify source release and exercise self-update
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_TAG: ${{ inputs.upgrade_from }}
+          TARGET_TAG: ${{ needs.resolve-release.outputs.release_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$TARGET_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          test "$SOURCE_TAG" != "$TARGET_TAG"
+          trial=$(mktemp -d)
+          cd "$trial"
+          archive="omg-${SOURCE_TAG}-x86_64-linux-ubuntu.tar.gz"
+          gh release download "$SOURCE_TAG" --repo PyRo1121/omg --pattern "$archive" --pattern "$archive.sha256"
+          sha256sum --check "$archive.sha256"
+          gh attestation verify "$archive" --repo PyRo1121/omg \
+            --signer-workflow PyRo1121/omg/.github/workflows/release.yml \
+            --source-ref "refs/tags/$SOURCE_TAG"
+          tar -xzf "$archive" --strip-components=1 "${archive%.tar.gz}/omg"
+          test "$(./omg --version)" = "omg ${SOURCE_TAG#v}"
+          ./omg self-update --version "${TARGET_TAG#v}"
+          test "$(./omg --version)" = "omg ${TARGET_TAG#v}"
+          ./omg --help >/dev/null
+          printf 'Verified Ubuntu self-update: %s -> %s\n' "$SOURCE_TAG" "$TARGET_TAG" >> "$GITHUB_STEP_SUMMARY"
+
   runner-fixtures:
     name: Runner fixtures
     runs-on: ubuntu-latest
