@@ -46,6 +46,7 @@ on:
       - "scripts/test_qemu_image_provenance.py"
       - "scripts/test_qemu_inventory_policy.py"
       - "scripts/test_qemu_health.py"
+      - "scripts/test_qemu_network_scope.py"
       - "scripts/test_qemu_controller_floor.py"
       - "scripts/qemu-transactions.sh"
       - "scripts/qemu-inventory.sh"
@@ -135,6 +136,7 @@ jobs:
           ./scripts/test-qa-file-issue.sh
           python3 -m unittest discover -s scripts -p test_ci_smoke_report.py
           sudo -n python3 -m unittest discover -s scripts -p test_qemu_health.py
+          python3 -m unittest discover -s scripts -p test_qemu_network_scope.py
           sudo -n python3 -m unittest discover -s scripts -p test_export_qemu_evidence.py
 
       - name: Resolve selection
@@ -603,6 +605,7 @@ jobs:
             # Declared-ux rows (self-update-*, daemon-foreground) self-skip.
             args+=(--release-dir published --inventory-file published/cases.tsv --inventory-tiers "hermetic,qemu,container,network,pty" --inventory-allow-mutations)
           fi
+          args+=(--inventory-isolate-hermetic)
           ./scripts/benchmark-qemu.sh "${args[@]}"
 
       - name: Preserve setup failure evidence
@@ -716,6 +719,7 @@ jobs:
             --release "${{ needs.prepare.outputs.tag }}" \
             --inventory-policy tests/qemu-inventory-policy.json \
             --image-policy tests/qemu-image-provenance/manifest.json \
+            --inventory-isolate-hermetic \
             --staged-dir staged --inventory-tiers hermetic,container --inventory-allow-mutations
 
       - name: Preserve setup failure evidence

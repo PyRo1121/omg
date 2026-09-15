@@ -55,6 +55,9 @@ def admit(policy, inventory, results, summary, distro, tiers):
         elif verdict in ("PASS", "FAIL"):
             if code < 0:
                 raise ValueError("executed case lacks an exit code")
+            scope = "offline" if expected[case]["tiers"] == ["hermetic"] else "network"
+            if row.get("network_scope") != scope:
+                raise ValueError("case did not run in its required network scope")
             counts["executed"] += 1
             counts["passed" if verdict == "PASS" else "failed"] += 1
         elif verdict in ("BLOCKED", "HARNESS_ERROR"):

@@ -27,7 +27,7 @@ class PolicyTests(unittest.TestCase):
         self.results = self.root / "results.json"
         self.summary = self.root / "summary.json"
         self.rows = [dict(case_id="qemu-arch-required", distro="arch", artifact_source="inventory",
-                          result="PASS", exit_code=0),
+                          result="PASS", exit_code=0, network_scope="offline"),
                      dict(case_id="qemu-arch-optional", distro="arch", artifact_source="inventory",
                           result="SKIPPED", exit_code=-1)]
         self.summary.write_text('{"complete":true,"pass":1,"fail":0,"skipped":1}')
@@ -61,6 +61,11 @@ class PolicyTests(unittest.TestCase):
     def test_changed_inventory_needs_policy_review(self):
         self.inventory.write_bytes(b"changed inventory\n")
         with self.assertRaises(KeyError):
+            self.admit()
+
+    def test_unconfined_hermetic_result_is_rejected(self):
+        self.rows[0]["network_scope"] = "unconfined"
+        with self.assertRaises(ValueError):
             self.admit()
 
     def test_product_failure_is_not_admitted(self):

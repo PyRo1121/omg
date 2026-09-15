@@ -14,6 +14,7 @@ benchmark=false
 transaction_samples=0
 inventory_tiers=
 inventory_mutations=false
+inventory_isolation=false
 report_inventory='[]'
 inventory_product_failure=false
 root="$HOME/.cache/build-targets/omg-qemu-benchmark"
@@ -36,6 +37,7 @@ while (($#)); do
       benchmark=true; transaction_samples=$2; shift 2 ;;
     --print-pins) print_pins=true; shift ;;
     --inventory-allow-mutations) inventory_mutations=true; shift ;;
+    --inventory-isolate-hermetic) inventory_isolation=true; shift ;;
     --help)
       cat <<'HELP'
 Usage: scripts/benchmark-qemu.sh [--distro all|arch|debian|ubuntu|fedora]
@@ -45,6 +47,7 @@ Usage: scripts/benchmark-qemu.sh [--distro all|arch|debian|ubuntu|fedora]
   [--print-pins] [--inventory-tiers CSV] [--inventory-allow-mutations]
   [--inventory-policy JSON]
   [--image-policy JSON]
+  [--inventory-isolate-hermetic]
 
 Runs disposable KVM guests with pinned images, reboot, sudo, package lifecycle,
 and optional warm read-query timing. Host and guest architecture must match;
@@ -203,6 +206,7 @@ if [[ "$distro" == all ]]; then
   [[ "$transaction_samples" == 0 ]] || args+=(--benchmark-transactions "$transaction_samples")
   [[ -z "$inventory_tiers" ]] || args+=(--inventory-tiers "$inventory_tiers")
   [[ "$inventory_mutations" == false ]] || args+=(--inventory-allow-mutations)
+  [[ "$inventory_isolation" == false ]] || args+=(--inventory-isolate-hermetic)
   jq -n --arg source "$source_kind" --arg suffix "$case_suffix" '["arch", "debian", "ubuntu", "fedora"] | map({case_id:("qemu-"+.+$suffix+"-lifecycle"), distro:., result:"NOT_RUN", artifact_source:$source, exit_code:null, elapsed_seconds:0})' > "$suite/results.json"
   for target in arch debian ubuntu fedora; do
     jq --arg target "$target" 'map(if .distro == $target then .result = "INCOMPLETE" else . end)' "$suite/results.json" > "$suite/results.next.json"
@@ -711,6 +715,7 @@ if [[ -n "$inventory_tiers" && "$rc" == 0 ]]; then
   inv_args=(--work /work --distro "$distro" --tiers "$inventory_tiers" --tag "$tag"
     --binary "/home/bench/omg-${tag}-${arch}-linux-${distro}/omg" --tsv /work/cases.tsv)
   [[ "$inventory_mutations" == false ]] || inv_args+=(--allow-mutations)
+  [[ "$inventory_isolation" == false ]] || inv_args+=(--isolate-hermetic)
   inventory_rc=0
   timeout --kill-after=5s 3600 docker exec -w /work "$controller" bash /work/qemu-inventory.sh "${inv_args[@]}" > "$work/inventory.log" 2>&1 || inventory_rc=$?
   # Validate identity and values even for interrupted reports. Partial
