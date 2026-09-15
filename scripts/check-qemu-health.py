@@ -66,16 +66,20 @@ def collect():
     if not kernel.strip() or kernel.strip() == "-- No entries --":
         raise ValueError("missing boot kernel evidence")
     cores = query(["journalctl", "--boot=" + journal_boot, "--quiet", "--no-pager", "--output=json",
-                   "--output-fields=COREDUMP_COMM,COREDUMP_SIGNAL",
+                   "--output-fields=COREDUMP_COMM,COREDUMP_EXE,COREDUMP_SIGNAL",
                    "MESSAGE_ID=fc2e22bc6ee647b6b90729ab34a250b1"])
     crashes = []
     for line in cores.splitlines():
         row = json.loads(line)
-        if row.get("COREDUMP_COMM") in ("omg", "omgd"):
+        executable = row.get("COREDUMP_EXE", "")
+        process = Path(executable).name if isinstance(executable, str) else ""
+        if process not in ("omg", "omgd"):
+            process = row.get("COREDUMP_COMM")
+        if process in ("omg", "omgd"):
             signal = row.get("COREDUMP_SIGNAL")
             if not isinstance(signal, str) or not re.fullmatch(r"[0-9]{1,3}", signal):
                 raise ValueError("invalid crash signal")
-            crashes.append({"process": row["COREDUMP_COMM"], "signal": int(signal)})
+            crashes.append({"process": process, "signal": int(signal)})
     return {"schema_version": 1, "complete": True, "boot_id": boot_id,
             "kernel_bytes": len(kernel.encode()), "fatal_signatures": crash_signatures(kernel),
             "product_crashes": crashes}

@@ -6,7 +6,7 @@ commit="${2:?commit SHA is required}"
 label="${3:-$workflow}"
 repository="${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
 
-latest_run="$(
+latest_snapshot() {
   gh run list \
     --repo "$repository" \
     --workflow "$workflow" \
@@ -15,7 +15,8 @@ latest_run="$(
     --limit 1 \
     --json databaseId,status,conclusion \
     --jq '.[0] | select(. != null) | [.databaseId, .status, (.conclusion // "")] | @tsv'
-)"
+}
+latest_run="$(latest_snapshot)"
 if [[ -z "$latest_run" ]]; then
   echo "::error::No push-triggered $label run found for commit $commit" >&2
   exit 1
@@ -34,6 +35,15 @@ fi
 echo "Waiting for $label run $run_id on $commit"
 if ! gh run watch "$run_id" --repo "$repository" --exit-status; then
   echo "::error::$label run $run_id failed for commit $commit" >&2
+  exit 1
+fi
+
+# A newer failed run may have appeared while this one was being watched.
+# Recheck the current newest push result before authorizing a tag/publication.
+latest_run="$(latest_snapshot)"
+IFS=$'\t' read -r latest_id latest_status latest_conclusion <<< "$latest_run"
+if [[ "$latest_id" != "$run_id" || "$latest_status" != completed || "$latest_conclusion" != success ]]; then
+  echo "::error::Latest $label evidence changed while waiting; refusing stale success" >&2
   exit 1
 fi
 

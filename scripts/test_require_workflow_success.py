@@ -12,9 +12,14 @@ FAKE_GH = """gh() {
 if [[ "$1 $2" == "run list" ]]; then
   # A release must not select an older success or PR-controlled run.
   [[ "$*" != *"--status success"* && "$*" == *"--event push"* && "$*" == *"--limit 1"* ]] || return 2
+  if [[ "${FAKE_GH_FINISHED:-0}" == 1 ]]; then
+    if [[ "$FAKE_GH_STATE" == newer_during_wait ]]; then printf '303\\tcompleted\\tfailure\\n'
+    else printf '202\\tcompleted\\tsuccess\\n'; fi
+    return 0
+  fi
   case "$FAKE_GH_STATE" in
     success) printf '101\\tcompleted\\tsuccess\\n' ;;
-    pending|failed) printf '202\\tin_progress\\t\\n' ;;
+    pending|failed|newer_during_wait) printf '202\\tin_progress\\t\\n' ;;
     newer_failure) printf '303\\tcompleted\\tfailure\\n' ;;
     cancelled) printf '303\\tcompleted\\tcancelled\\n' ;;
     skipped) printf '303\\tcompleted\\tskipped\\n' ;;
@@ -22,8 +27,9 @@ if [[ "$1 $2" == "run list" ]]; then
   return 0
 fi
 if [[ "$1 $2" == "run watch" ]]; then
-  [[ "$FAKE_GH_STATE" == "pending" ]]
-  return
+  [[ "$FAKE_GH_STATE" == pending || "$FAKE_GH_STATE" == newer_during_wait ]] || return 1
+  export FAKE_GH_FINISHED=1
+  return 0
 fi
 return 2
 }
@@ -48,6 +54,11 @@ def run_gate(state: str) -> subprocess.CompletedProcess[str]:
 
 
 class WorkflowSuccessGateTests(unittest.TestCase):
+    def test_new_failure_appearing_during_watch_blocks_old_green(self):
+        result = run_gate("newer_during_wait")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("refusing stale success", result.stderr)
+
     def test_accepts_an_existing_successful_run(self) -> None:
         result = run_gate("success")
 

@@ -42,6 +42,8 @@ on:
       - "scripts/check-qemu-controller.sh"
       - "scripts/check-qemu-health.py"
       - "scripts/check-qemu-inventory.py"
+      - "scripts/verify-qemu-image.py"
+      - "scripts/test_qemu_image_provenance.py"
       - "scripts/test_qemu_inventory_policy.py"
       - "scripts/test_qemu_health.py"
       - "scripts/test_qemu_controller_floor.py"
@@ -593,7 +595,7 @@ jobs:
         env:
           STAGED: ${{ needs.prepare.outputs.staged }}
         run: |
-          args=(--distro "${{ matrix.distro }}" --release "${{ needs.prepare.outputs.tag }}" --benchmark --evidence-dir "$RUNNER_TEMP/qemu-evidence" --inventory-policy tests/qemu-inventory-policy.json)
+          args=(--distro "${{ matrix.distro }}" --release "${{ needs.prepare.outputs.tag }}" --benchmark --evidence-dir "$RUNNER_TEMP/qemu-evidence" --inventory-policy tests/qemu-inventory-policy.json --image-policy tests/qemu-image-provenance/manifest.json)
           if [[ "$STAGED" == 'true' ]]; then
             args+=(--staged-dir staged --inventory-tiers "hermetic,container" --inventory-allow-mutations)
           else
@@ -713,6 +715,7 @@ jobs:
           ./scripts/benchmark-qemu.sh --arch aarch64 --distro "${{ matrix.distro }}" --benchmark --evidence-dir "$RUNNER_TEMP/qemu-evidence" \
             --release "${{ needs.prepare.outputs.tag }}" \
             --inventory-policy tests/qemu-inventory-policy.json \
+            --image-policy tests/qemu-image-provenance/manifest.json \
             --staged-dir staged --inventory-tiers hermetic,container --inventory-allow-mutations
 
       - name: Preserve setup failure evidence

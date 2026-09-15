@@ -21,6 +21,15 @@ def step_script(block, name):
 
 
 class ReleaseWorkflowBoundaryTests(unittest.TestCase):
+    def test_immutable_tag_waits_for_other_workflows_without_waiting_on_itself(self):
+        block = job_block((WORKFLOWS / 'ci.yml').read_text(), 'release-tag')
+        tag = block.index('git tag "$TAG" "$GITHUB_SHA"')
+        for workflow in ('benchmark.yml', 'audit.yml', 'secrets.yml', 'codeql.yml',
+                         'coverage.yml', 'docker-e2e.yml', 'qemu-matrix.yml'):
+            self.assertLess(block.index(f'scripts/require-workflow-success.sh {workflow}'), tag)
+        self.assertNotIn('scripts/require-workflow-success.sh ci.yml', block)
+        self.assertIn('ci-success]', block)
+
     def test_dispatch_executes_exact_gates_without_evaluating_input(self):
         release = (WORKFLOWS / 'release.yml').read_text(encoding='utf-8')
         script = step_script(job_block(release, 'gate-on-ci'),
