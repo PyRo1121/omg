@@ -593,7 +593,7 @@ jobs:
     # `!github.event.act` skips this leg during local act runs (no macOS
     # containers exist); the condition is always true on GitHub.
     if: (needs.quick-gate.outputs.should-build == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group') && !github.event.act
-    runs-on: blacksmith-6vcpu-macos-15
+    runs-on: macos-14
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
