@@ -34,7 +34,7 @@ class EgressTests(unittest.TestCase):
 
     def test_network_policy_requires_positive_metadata_counter(self):
         container = dict(Name="/" + NAME, State=dict(Running=True),
-                         HostConfig=dict(Privileged=False, CapDrop=["NET_RAW", "NET_ADMIN"], Dns=list(EGRESS.RESOLVERS)),
+                         HostConfig=dict(Privileged=False, CapDrop=["CAP_NET_RAW", "CAP_NET_ADMIN"], Dns=list(EGRESS.RESOLVERS)),
                          NetworkSettings=dict(Networks=dict(bridge=dict(IPAddress="172.17.0.2", GlobalIPv6Address=""))))
         for packets in (0, 1):
             def fake(argv, check=True):

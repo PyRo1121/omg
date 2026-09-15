@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: main-writer
+  group: changelog-generation
   cancel-in-progress: false
 
 permissions:
@@ -30,8 +30,7 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
           # Always generate the changelog from main; on `release: published`
-          # events the default checkout lands on a tag (detached HEAD), where
-          # a follow-up `git push` would fail.
+          # events the default checkout otherwise selects the release tag.
           ref: main
 
       - name: Install git-cliff
@@ -85,74 +84,9 @@ jobs:
           name: generated-changelog
           path: docs/changelog.md
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 30
 
-  publish-changelog:
-    name: Publish Changelog
-    needs: generate-changelog
-    if: needs.generate-changelog.outputs.changed == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-          ref: main
-
-      - name: Download generated changelog
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: generated-changelog
-          path: .changelog-artifact
-
-      - name: Validate generated changelog
-        shell: bash
+      - name: Review summary
+        if: steps.changes.outputs.changed == 'true'
         run: |
-          set -euo pipefail
-          artifact=.changelog-artifact/changelog.md
-          if [[ ! -f "$artifact" || -L "$artifact" ]]; then
-            echo "::error::Generated changelog is not a regular file"
-            exit 1
-          fi
-          size=$(stat --format='%s' "$artifact")
-          if (( size == 0 || size > 5242880 )); then
-            echo "::error::Generated changelog has invalid size: $size bytes"
-            exit 1
-          fi
-          install -m 0644 -- "$artifact" docs/changelog.md
-
-      - name: Configure Git
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Commit and Push
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          git add docs/changelog.md
-          git commit -m "docs: update changelog [skip ci]
-
-          Auto-generated from git history with git-cliff."
-          trap 'git config --unset credential.helper >/dev/null 2>&1 || true' EXIT
-          git config credential.helper '!f() { echo username=x-access-token; echo "password=$GITHUB_TOKEN"; }; f'
-          git push origin HEAD:main
-
-      - name: Summary
-        env:
-          CHANGELOG_CHANGED: ${{ needs.generate-changelog.outputs.changed }}
-        run: |
-          echo "## Changelog Update" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          if [ "$CHANGELOG_CHANGED" == "true" ]; then
-            echo "✅ Changelog updated and committed" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### Recent entries:" >> $GITHUB_STEP_SUMMARY
-            head -50 docs/changelog.md | tail -40 >> $GITHUB_STEP_SUMMARY
-          else
-            echo "ℹ️ No changes to changelog" >> $GITHUB_STEP_SUMMARY
-          fi
+          echo "Generated changelog is attached as an artifact. Review it in a PR; this workflow cannot write to main." >> "$GITHUB_STEP_SUMMARY"

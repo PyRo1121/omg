@@ -43,10 +43,11 @@ def install(controller):
     container, = json.loads(execute(["docker", "inspect", controller]).stdout)
     host = container["HostConfig"]
     networks = container["NetworkSettings"]["Networks"]
+    dropped = {cap.removeprefix("CAP_") for cap in host.get("CapDrop") or []}
     if (container["Name"] != "/" + controller or container["State"]["Running"] is not True
             or list(networks) != ["bridge"] or networks["bridge"].get("GlobalIPv6Address")
             or host.get("Privileged") is not False
-            or not {"NET_RAW", "NET_ADMIN"}.issubset(set(host.get("CapDrop") or []))
+            or not {"NET_RAW", "NET_ADMIN"}.issubset(dropped)
             or host.get("Dns") != list(RESOLVERS)):
         observed = dict(name=container["Name"], running=container["State"]["Running"],
                         networks=list(networks), privileged=host.get("Privileged"),
