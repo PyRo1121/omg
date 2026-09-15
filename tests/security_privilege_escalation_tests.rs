@@ -967,16 +967,29 @@ install_from_release
             eprintln!("skipping benchmark.yml assertions: .github is not present in this checkout");
             return;
         };
-        let (benchmark_job, commit_job) = workflow
+        let (benchmark_job, review_job) = workflow
             .split_once("  commit-results:")
-            .expect("benchmark commit job must be isolated");
+            .expect("benchmark history preparation must be isolated");
         assert!(
             benchmark_job.contains("permissions:\n  contents: read"),
             "benchmark scripts must run under a read-only token"
         );
         assert!(
-            commit_job.contains("permissions:\n      contents: write"),
-            "only the result-commit job may receive repository write permission"
+            review_job.contains("permissions:\n      contents: read")
+                && review_job.contains("persist-credentials: false"),
+            "history preparation must also use a read-only token without persisted credentials"
+        );
+        assert!(
+            !workflow.contains("contents: write")
+                && !workflow.contains("git push")
+                && !workflow.contains("secrets.GITHUB_TOKEN"),
+            "benchmark jobs must not receive write credentials or bypass main review rules"
+        );
+        assert!(
+            review_job.contains("actions/upload-artifact@")
+                && review_job.contains("benchmark-history-for-review")
+                && review_job.contains("if-no-files-found: error"),
+            "generated history must remain available as a required review artifact"
         );
         assert!(
             !workflow.contains("credential.helper"),
