@@ -1,4 +1,4 @@
-//! Best-effort terminal notice. Cached metadata is advisory, never installation authority.
+//! Best-effort update notice. Cached metadata is advisory, never installation authority.
 
 #[cfg(unix)]
 mod unix {
@@ -139,7 +139,7 @@ mod unix {
         let current = Version::parse(env!("CARGO_PKG_VERSION"))?;
         if let Some(latest) = notice(&cache, &current, now) {
             eprintln!(
-                "OMG {latest} is available (installed: {current}). Update with your package manager or `omg self-update`. Notes: https://github.com/PyRo1121/omg/releases/tag/v{latest}"
+                "OMG {latest} is available (installed: {current}). Update with your package manager or `omg self-update`. Notes: https://github.com/omg-cli/omg/releases/tag/v{latest}"
             );
             cache.notified = now;
             save_cache(&mut file, &cache)?;
@@ -232,6 +232,41 @@ mod unix {
     }
 }
 
+#[cfg(any(unix, test))]
+fn command_notice_allowed(args: &[String]) -> bool {
+    args.get(1).is_some_and(|command| {
+        !command.starts_with('-')
+            && !command.starts_with("__")
+            && !matches!(
+                command.as_str(),
+                "self-update" | "help" | "version" | "hook" | "env" | "completions" | "daemon"
+            )
+    }) && !args.iter().any(|arg| {
+        matches!(
+            arg.as_str(),
+            "--json" | "--quiet" | "-q" | "--help" | "-h" | "--version" | "-V"
+        ) || arg.starts_with("--format")
+    })
+}
+
+/// Print a cached advisory after successful interactive commands, before exit.
+/// Background refresh never blocks the completed command or installs an update.
+pub fn after_command() {
+    #[cfg(unix)]
+    {
+        use std::io::IsTerminal;
+        if !std::io::stdout().is_terminal() || !std::io::stderr().is_terminal() {
+            return;
+        }
+        let args: Vec<String> = std::env::args().collect();
+        if command_notice_allowed(&args)
+            && let Err(error) = unix::run(false)
+        {
+            tracing::debug!("Update notice unavailable: {error:#}");
+        }
+    }
+}
+
 /// Handle the private shell protocol before telemetry, logging or runtime startup.
 pub fn try_handle(args: &[String]) -> bool {
     if !(args.len() == 2 || (args.len() == 3 && args[2] == "--refresh"))
@@ -244,4 +279,32 @@ pub fn try_handle(args: &[String]) -> bool {
         tracing::debug!("Update notice unavailable: {error:#}");
     }
     true
+}
+
+#[cfg(test)]
+mod command_tests {
+    use super::command_notice_allowed;
+
+    #[test]
+    fn notices_target_interactive_commands_not_machine_or_update_protocols() {
+        for command in ["status", "install", "search", "update"] {
+            assert!(command_notice_allowed(&["omg".into(), command.into()]));
+        }
+        for args in [
+            vec!["omg"],
+            vec!["omg", "__update-notice"],
+            vec!["omg", "self-update"],
+            vec!["omg", "hook", "bash"],
+            vec!["omg", "completions", "zsh"],
+            vec!["omg", "env"],
+            vec!["omg", "status", "--json"],
+            vec!["omg", "status", "--quiet"],
+            vec!["omg", "status", "-q"],
+            vec!["omg", "status", "--help"],
+            vec!["omg", "status", "--format=json"],
+        ] {
+            let args = args.into_iter().map(String::from).collect::<Vec<_>>();
+            assert!(!command_notice_allowed(&args), "{args:?}");
+        }
+    }
 }

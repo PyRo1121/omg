@@ -12,6 +12,26 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 
 ## [Unreleased]
 
+## [0.1.222] - 2026-09-15
+
+See the [release overview, migration instructions and complete commit ledger](releases/v0.1.222.md).
+
+### Built-in updates and organization migration
+
+- Show daily cached update notices after successful interactive commands, without requiring a shell hook or blocking on network access.
+- Select exactly one release-signing repository by version across the move to `omg-cli/omg`; retain verification for existing releases.
+- Require trusted ownership and write permissions for the self-updater's GitHub CLI verifier and its parent paths.
+- Document the one-time verified in-place upgrade for binaries through v0.1.221; subsequent direct-install upgrades use `omg self-update`.
+- Point update and release links directly at the organization.
+
+### CI and QEMU
+
+- Verify the actual published v0.1.220 to v0.1.221 self-update path.
+- Parse only reviewed case receipts in the trusted QEMU reporter.
+- Restore Arch guest preparation using the exact versioned publisher URL, retaining the reviewed digest and signature.
+- Run the pinned, checksum-verified Gitleaks CLI after the organization transfer.
+- Update installer signer and public-file integrity regression expectations for the reviewed migration.
+
 ## [0.1.221] - 2026-09-15
 
 See the [release overview and complete commit ledger](releases/v0.1.221.md).

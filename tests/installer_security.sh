@@ -54,7 +54,7 @@ for scenario in missing rejected wrong_tag accepted; do
       [[ "$status" == 0 && -f "$INSTALL_DIR/omg" ]]
       grep -Fx -- '--source-ref' "$scenario_dir/gh-args"
       grep -Fx 'refs/tags/v1.2.3' "$scenario_dir/gh-args"
-      grep -Fx 'PyRo1121/omg/.github/workflows/release.yml' "$scenario_dir/gh-args"
+      grep -Fx 'omg-cli/omg/.github/workflows/release.yml' "$scenario_dir/gh-args"
     else
       [[ "$status" != 0 && ! -e "$scenario_dir/extracted" && ! -e "$INSTALL_DIR/omg" ]]
     fi
