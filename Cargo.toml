@@ -297,14 +297,14 @@ cvss = "2.2.0"
 
 [dev-dependencies]
 tokio = { version = "1.49", features = ["test-util"] }
-rcgen = "=0.13.2"
+rcgen = "=0.14.10"
 criterion = { version = "0.8", features = ["html_reports"] }
 assert_cmd = "2.1"
 proptest = "1.4"                                             # Property-based testing
 serial_test = "4.0.1"                                          # Serialize tests that modify global state
 scopeguard = "1.2"
 temp-env = "0.3"
-zstd = "0.13"                                                # For decompression benchmarks
+zstd = "0.14"                                                # For decompression benchmarks
 
 # Maximum optimization for production releases
 [profile.release]
