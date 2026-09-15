@@ -12,7 +12,7 @@ use crate::cli::progress::{Accent, Outcome, ProgressTask, TaskKind, TaskSpec};
 use crate::cli::style;
 use crate::core::env::distro::{Distro, detect_distro};
 
-const GITHUB_RELEASES_PAGE: &str = "https://github.com/PyRo1121/omg/releases";
+const GITHUB_RELEASES_PAGE: &str = "https://github.com/omg-cli/omg/releases";
 
 const RELEASES_BASE_URL: &str = "https://releases.omg.latham.cloud";
 
@@ -23,7 +23,20 @@ const MAX_LATEST_VERSION_BYTES: usize = 256;
 const MAX_CHECKSUM_BYTES: usize = 1024;
 
 /// Repository used to verify Sigstore build-provenance attestations.
-const ATTESTATION_REPO: &str = "PyRo1121/omg";
+const ATTESTATION_REPO: &str = "omg-cli/omg";
+
+fn attestation_repository(tag: &str) -> Result<&'static str> {
+    let version = Version::parse(tag.strip_prefix('v').context("Invalid release tag")?)?;
+    // The namespace changed after v0.1.221. Do not fall back to another signer
+    // after verification fails: each release has exactly one expected identity.
+    Ok(
+        if (version.major, version.minor, version.patch) <= (0, 1, 221) {
+            "PyRo1121/omg"
+        } else {
+            ATTESTATION_REPO
+        },
+    )
+}
 
 /// Explicit opt-in that downgrades the provenance gate from fail-closed to
 /// warning-only.
@@ -543,6 +556,8 @@ fn locate_gh() -> Option<std::path::PathBuf> {
 }
 
 fn verify_attestation(archive_path: &std::path::Path, tag: &str) -> Result<bool> {
+    let repository = attestation_repository(tag)?;
+    let signer_workflow = format!("{repository}/.github/workflows/release.yml");
     let Some(gh) = locate_gh() else {
         return Ok(false);
     };
@@ -551,11 +566,11 @@ fn verify_attestation(archive_path: &std::path::Path, tag: &str) -> Result<bool>
         .arg(archive_path)
         .args([
             "-R",
-            ATTESTATION_REPO,
+            repository,
             "--source-ref",
             &format!("refs/tags/{tag}"),
             "--signer-workflow",
-            "PyRo1121/omg/.github/workflows/release.yml",
+            &signer_workflow,
         ])
         .stdin(std::process::Stdio::null())
         .output();
@@ -575,7 +590,7 @@ fn verify_attestation(archive_path: &std::path::Path, tag: &str) -> Result<bool>
     } else {
         Err(anyhow::anyhow!(
             "Sigstore attestation verification FAILED for {}. Possible \\
-             supply-chain tampering. Run manually to inspect:\n                 gh attestation verify {} -R {ATTESTATION_REPO}",
+             supply-chain tampering. Run manually to inspect:\n                 gh attestation verify {} -R {repository}",
             archive_path.display(),
             archive_path.display(),
         ))
@@ -635,6 +650,19 @@ fn parse_allow_unverified(value: Option<&str>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn release_signer_cutover_has_no_cross_namespace_fallback() {
+        for tag in ["v0.1.220", "v0.1.221"] {
+            assert_eq!(attestation_repository(tag).unwrap(), "PyRo1121/omg");
+        }
+        for tag in ["v0.1.222", "v0.1.222-rc.1", "v0.2.0", "v1.0.0"] {
+            assert_eq!(attestation_repository(tag).unwrap(), "omg-cli/omg");
+        }
+        for tag in ["0.1.221", "v0.1.221/other", "v01.1.221", "v0.1.221\n"] {
+            assert!(attestation_repository(tag).is_err());
+        }
+    }
 
     #[test]
     fn parse_version_accepts_v_prefix_and_surrounding_whitespace() {

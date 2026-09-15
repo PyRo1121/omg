@@ -395,13 +395,24 @@ resolve_artifact() {
   if [[ -n "$digest_pin_file" ]]; then
     verify_pinned_digest "$digest" "$archive" "$digest_pin_file" || return 1
   fi
-  if [[ "$executor" == "native" && -z "$staged_dir" ]]; then
-    # A release uploader can replace an archive and its server-side digest.
-    # Verify the release workflow identity before extracting or running it.
-    gh attestation verify "$workdir/$archive" \
-      --repo "$repo" \
-      --source-ref "refs/tags/$tag" \
-      --signer-workflow "$repo/.github/workflows/release.yml" || return 1
+    if [[ "$executor" == "native" && -z "$staged_dir" ]]; then
+      # A release uploader can replace an archive and its server-side digest.
+      # Verify the release workflow identity before extracting or running it.
+      local signer_repo="$repo"
+      if [[ "$repo" == omg-cli/omg || "$repo" == PyRo1121/omg ]]; then
+        signer_repo=omg-cli/omg
+        local release_version="${tag#v}"
+        if [[ "$release_version" == 0.0.* ]] || {
+          [[ "$release_version" =~ ^0\.1\.([0-9]{1,3})([-+].*)?$ ]] &&
+            (( 10#${BASH_REMATCH[1]} <= 221 ))
+        }; then
+          signer_repo=PyRo1121/omg
+        fi
+      fi
+      gh attestation verify "$workdir/$archive" \
+        --repo "$signer_repo" \
+        --source-ref "refs/tags/$tag" \
+        --signer-workflow "$signer_repo/.github/workflows/release.yml" || return 1
   fi
 }
 

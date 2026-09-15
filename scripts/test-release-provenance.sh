@@ -42,9 +42,9 @@ fi
 grep -Fxq -- '--source-ref' "$scratch/attestation-args"
 grep -Fxq -- 'refs/tags/v9.9.9' "$scratch/attestation-args"
 grep -Fxq -- '--signer-workflow' "$scratch/attestation-args"
-grep -Fxq -- 'PyRo1121/omg/.github/workflows/release.yml' "$scratch/attestation-args"
+grep -Fxq -- 'omg-cli/omg/.github/workflows/release.yml' "$scratch/attestation-args"
 grep -Fxq -- '--repo' "$scratch/attestation-args"
-grep -Fxq -- 'PyRo1121/omg' "$scratch/attestation-args"
+grep -Fxq -- 'omg-cli/omg' "$scratch/attestation-args"
 
 attestation_result=0
 mkdir "$scratch/accepted"

@@ -8,7 +8,7 @@ from pathlib import Path
 import re
 import subprocess
 
-REPOSITORY = 'PyRo1121/omg'
+REPOSITORY = 'omg-cli/omg'
 HEADER = 'case\targs_json\tsafety\texpected_exit\texpected_ux\trequires\ttier\ttargets\tassertions\tcleanup'
 
 
@@ -19,6 +19,8 @@ def api(path):
 def prepare(tag, distro, destination):
     if not re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', tag):
         raise ValueError('Invalid release tag')
+    signer = ('PyRo1121/omg' if tuple(map(int, tag[1:].split('.'))) <= (0, 1, 221)
+              else REPOSITORY)
     if distro not in ('arch', 'debian', 'ubuntu', 'fedora'):
         raise ValueError('Unsupported published distro')
     revision = api(f'commits/{tag}')['sha']
@@ -42,10 +44,10 @@ def prepare(tag, distro, destination):
     # before publishing the inventory that authorizes guest execution.
     subprocess.run([
         'gh', 'attestation', 'verify', str(destination / archive),
-        '--repo', REPOSITORY,
+        '--repo', signer,
         '--source-digest', revision,
         '--source-ref', f'refs/tags/{tag}',
-        '--signer-workflow', f'{REPOSITORY}/.github/workflows/release.yml',
+        '--signer-workflow', f'{signer}/.github/workflows/release.yml',
     ], check=True, timeout=180)
     (destination / 'cases.tsv').write_bytes(data)
     (destination / 'inventory-provenance.json').write_text(json.dumps({

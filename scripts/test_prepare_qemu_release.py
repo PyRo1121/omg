@@ -1,6 +1,9 @@
 import base64
 import importlib.util
 import json
+import os
+import re
+import shutil
 import subprocess
 from pathlib import Path
 import tempfile
@@ -13,6 +16,33 @@ spec.loader.exec_module(release)
 
 
 class ReleaseContractTests(unittest.TestCase):
+    def test_installer_uses_same_release_signer_cutover(self):
+        bash = os.environ.get('OMG_TEST_BASH') or (shutil.which('bash') if os.name != 'nt' else None)
+        if not bash:
+            self.skipTest('native Bash required')
+        installer = Path(__file__).parents[1].joinpath('install.sh').read_text(encoding='utf-8')
+        definitions = '\n'.join(re.search(r'^' + name + r'\(\) \{.*?^\}', installer, re.M | re.S)[0]
+                                for name in ('validate_bare_version', 'validate_version_tag', 'release_signer_repo'))
+        cases = {'v0.1.220': 'PyRo1121/omg', 'v0.1.221': 'PyRo1121/omg',
+                 'v0.1.222': 'omg-cli/omg', 'v0.1.222-rc.1': 'omg-cli/omg',
+                 'v0.2.0': 'omg-cli/omg', 'v1.0.0': 'omg-cli/omg',
+                 'v01.1.221': None, 'v0.1.221/other': None, '0.1.221': None}
+        for tag, expected in cases.items():
+            with self.subTest(tag=tag):
+                result = subprocess.run([bash, '-c', definitions + '\nrelease_signer_repo "$1"', 'test', tag],
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0 if expected else 1)
+                self.assertEqual(result.stdout.strip(), expected or '')
+
+    def test_organization_release_requires_organization_signer(self):
+        data = (release.HEADER + '\n').encode()
+        blob = {'encoding': 'base64', 'size': len(data), 'content': base64.b64encode(data).decode()}
+        with tempfile.TemporaryDirectory() as tmp, patch.object(release, 'api', side_effect=[{'sha': 'a' * 40}, blob, {'sha': 'a' * 40}]), patch.object(release.subprocess, 'run') as calls:
+            release.prepare('v0.1.222', 'ubuntu', Path(tmp))
+            verify = calls.call_args_list[1].args[0]
+            self.assertEqual(verify[verify.index('--repo') + 1], 'omg-cli/omg')
+            self.assertEqual(verify[verify.index('--signer-workflow') + 1], 'omg-cli/omg/.github/workflows/release.yml')
+
     def test_contract_is_pinned_to_resolved_release_not_main(self):
         data = (release.HEADER + '\nold-case\t[]\tread\t0\tpass\t-\thermetic\t-\t-\t-\n').encode()
         revision = 'a' * 40
@@ -28,10 +58,10 @@ class ReleaseContractTests(unittest.TestCase):
             self.assertEqual(verify.args[0], [
                 'gh', 'attestation', 'verify',
                 str(destination / 'omg-v0.1.220-x86_64-linux-arch.tar.gz'),
-                '--repo', release.REPOSITORY,
+                '--repo', 'PyRo1121/omg',
                 '--source-digest', revision,
                 '--source-ref', 'refs/tags/v0.1.220',
-                '--signer-workflow', release.REPOSITORY + '/.github/workflows/release.yml',
+                '--signer-workflow', 'PyRo1121/omg/.github/workflows/release.yml',
             ])
             self.assertTrue(verify.kwargs['check'])
             self.assertLessEqual(verify.kwargs['timeout'], 180)
