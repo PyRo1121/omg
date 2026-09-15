@@ -22,6 +22,11 @@ on:
         description: "Optional published source tag for an Ubuntu self-update smoke test"
         required: false
         default: ""
+      upgrade_method:
+        description: "Upgrade method: use installer for the one-time legacy signer migration"
+        type: choice
+        options: [self-update, installer]
+        default: self-update
   schedule:
     # Nightly, staggered off qemu-matrix's 03:17 slot. PR/dispatch runs
     # smoke but never file: filing is nightly-only (see file-issues).
@@ -42,11 +47,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Verify source release and exercise self-update
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_TAG: ${{ inputs.upgrade_from }}
           TARGET_TAG: ${{ needs.resolve-release.outputs.release_tag }}
+          UPGRADE_METHOD: ${{ inputs.upgrade_method }}
         shell: bash
         run: |
           set -euo pipefail
@@ -70,10 +79,18 @@ jobs:
             --source-ref "refs/tags/$SOURCE_TAG"
           tar -xzf "$archive" --strip-components=1 "${archive%.tar.gz}/omg"
           test "$(./omg --version)" = "omg ${SOURCE_TAG#v}"
-          ./omg self-update --version "${TARGET_TAG#v}"
+          case "$UPGRADE_METHOD" in
+            self-update) ./omg self-update --version "${TARGET_TAG#v}" ;;
+            installer)
+              INSTALL_DIR="$trial" OMG_VERSION="$TARGET_TAG" OMG_SKIP_SHELL=1 \
+                bash "$GITHUB_WORKSPACE/install.sh"
+              ;;
+            *) echo 'Invalid upgrade method' >&2; exit 1 ;;
+          esac
           test "$(./omg --version)" = "omg ${TARGET_TAG#v}"
           ./omg --help >/dev/null
-          printf 'Verified Ubuntu self-update: %s -> %s\n' "$SOURCE_TAG" "$TARGET_TAG" >> "$GITHUB_STEP_SUMMARY"
+          ./omg self-update --version "${TARGET_TAG#v}"
+          printf 'Verified Ubuntu upgrade (%s): %s -> %s\n' "$UPGRADE_METHOD" "$SOURCE_TAG" "$TARGET_TAG" >> "$GITHUB_STEP_SUMMARY"
 
   runner-fixtures:
     name: Runner fixtures

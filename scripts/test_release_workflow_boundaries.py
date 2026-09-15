@@ -21,6 +21,30 @@ def step_script(block, name):
 
 
 class ReleaseWorkflowBoundaryTests(unittest.TestCase):
+    def test_published_upgrade_requires_explicit_installer_method(self):
+        workflow = (WORKFLOWS / 'release-smoke.yml').read_text(encoding='utf-8')
+        script = step_script(job_block(workflow, 'upgrade'),
+                             'Verify source release and exercise self-update')
+        dispatch = 'case "$UPGRADE_METHOD"' + script.split('case "$UPGRADE_METHOD"', 1)[1].split('esac', 1)[0] + 'esac'
+        for method in ('self-update', 'installer', 'unexpected'):
+            with self.subTest(method=method), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / 'omg').write_bytes(b'#!/bin/sh\nprintf "self:%s\\n" "$*" >> calls\n')
+                (root / 'omg').chmod(0o700)
+                (root / 'install.sh').write_bytes(b'#!/bin/sh\nprintf "installer:%s:%s:%s\\n" "$INSTALL_DIR" "$OMG_VERSION" "$OMG_SKIP_SHELL" >> calls\n')
+                env = dict(os.environ, UPGRADE_METHOD=method, TARGET_TAG='v0.1.222',
+                           trial=root.as_posix(), GITHUB_WORKSPACE=root.as_posix())
+                result = subprocess.run([BASH, '-c', dispatch], cwd=root, env=env,
+                                        capture_output=True, text=True, encoding='utf-8', timeout=10)
+                self.assertEqual(result.returncode, 1 if method == 'unexpected' else 0, result.stderr)
+                calls = root / 'calls'
+                if method == 'unexpected':
+                    self.assertFalse(calls.exists())
+                elif method == 'self-update':
+                    self.assertEqual(calls.read_text().strip(), 'self:self-update --version 0.1.222')
+                else:
+                    self.assertEqual(calls.read_text().strip(), f'installer:{root.as_posix()}:v0.1.222:1')
+
     def test_published_upgrade_selects_source_signer_before_download(self):
         workflow = (WORKFLOWS / 'release-smoke.yml').read_text(encoding='utf-8')
         script = step_script(job_block(workflow, 'upgrade'),
