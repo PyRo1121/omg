@@ -48,7 +48,11 @@ def install(controller):
             or host.get("Privileged") is not False
             or not {"NET_RAW", "NET_ADMIN"}.issubset(set(host.get("CapDrop") or []))
             or host.get("Dns") != list(RESOLVERS)):
-        raise ValueError("controller network/capability configuration is not confined")
+        observed = dict(name=container["Name"], running=container["State"]["Running"],
+                        networks=list(networks), privileged=host.get("Privileged"),
+                        cap_drop=host.get("CapDrop"), dns=host.get("Dns"),
+                        ipv6=networks.get("bridge", {}).get("GlobalIPv6Address"))
+        raise ValueError("controller network/capability configuration is not confined: " + json.dumps(observed))
     address = str(ipaddress.IPv4Address(networks["bridge"]["IPAddress"]))
     execute(["iptables", "-w", "5", "-S", "DOCKER-USER"])
     execute(["iptables", "-w", "5", "-N", chain])
