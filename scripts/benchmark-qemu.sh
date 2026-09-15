@@ -381,6 +381,17 @@ ssh-keygen -q -t ed25519 -N '' -f guest-host-key
   sed 's/^/    /' guest-host-key
   printf '  ed25519_public: '
   cat guest-host-key.pub
+  # Arch waits for time-sync.target before cloud-final starts SSH. Keep clock
+  # synchronization within the controller's explicit NTP destination policy.
+  cat <<'CLOCK'
+bootcmd:
+  - |
+    if [ "$(systemctl show -p LoadState --value systemd-timesyncd.service)" != not-found ]; then
+      mkdir -p /etc/systemd/timesyncd.conf.d
+      printf '[Time]\nNTP=\nNTP=162.159.200.1 162.159.200.123\nFallbackNTP=\n' > /etc/systemd/timesyncd.conf.d/99-omg-qemu.conf
+      systemctl restart --no-block systemd-timesyncd.service
+    fi
+CLOCK
 } > user-data
 chmod 600 user-data
 printf 'instance-id: omg-qemu-fresh\n' > meta-data

@@ -11,6 +11,7 @@ PRIVATE = ("0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8",
            "169.254.0.0/16", "172.16.0.0/12", "192.0.0.0/24", "192.168.0.0/16",
            "198.18.0.0/15", "224.0.0.0/4", "240.0.0.0/4")
 RESOLVERS = ("1.1.1.1", "9.9.9.9")
+TIME_SERVERS = ("162.159.200.1", "162.159.200.123")
 
 
 def execute(argv, check=True):
@@ -34,6 +35,8 @@ def rules(address):
     for resolver in RESOLVERS:
         for protocol in ("udp", "tcp"):
             yield ["-d", resolver, "-p", protocol, "--dport", "53", "-j", "RETURN"]
+    for server in TIME_SERVERS:
+        yield ["-d", server, "-p", "udp", "--dport", "123", "-j", "RETURN"]
     yield ["-p", "tcp", "-m", "multiport", "--dports", "80,443", "-j", "RETURN"]
     yield ["-j", "REJECT"]
 
@@ -71,7 +74,7 @@ def install(controller):
     if probe.returncode == 0 or len(matched) != 1 or int(matched[0][0]) < 1:
         raise ValueError("metadata rejection was not observed at the firewall")
     return dict(schema_version=1, chain=chain, metadata_block_verified=True,
-                scope="public-http-https-and-explicit-dns", ipv6="unconfigured")
+                scope="public-http-https-and-explicit-dns-ntp", ipv6="unconfigured")
 
 
 def remove(controller):

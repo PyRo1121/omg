@@ -21,6 +21,15 @@ class EgressTests(unittest.TestCase):
             self.assertLess(rules.index(["-d", network, "-j", "REJECT"]), web)
         self.assertEqual(rules[-1], ["-j", "REJECT"])
 
+    def test_ntp_is_limited_to_boot_configured_public_servers(self):
+        rules = list(EGRESS.rules("172.17.0.2"))
+        ntp = [rule for rule in rules if "123" in rule]
+        self.assertEqual(ntp, [["-d", server, "-p", "udp", "--dport", "123", "-j", "RETURN"]
+                               for server in EGRESS.TIME_SERVERS])
+        source = Path(__file__).with_name("benchmark-qemu.sh").read_text()
+        self.assertIn("NTP=" + " ".join(EGRESS.TIME_SERVERS), source)
+        self.assertIn("restart --no-block systemd-timesyncd.service", source)
+
     def test_cleanup_refuses_live_controller_before_touching_firewall(self):
         with patch.object(EGRESS, "execute", return_value=subprocess.CompletedProcess([], 0, NAME + "\n", "")) as run:
             with self.assertRaises(ValueError):

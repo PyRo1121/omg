@@ -54,13 +54,16 @@ network namespace as the guest user with no new privileges. Networked cases are
 explicit, including older inventory rows whose tier names incorrectly imply
 offline operation. Their expected exits and required coverage are unchanged.
 
-The controller's host firewall permits public HTTP/HTTPS and DNS to two explicit
-resolvers. It rejects private, link-local/metadata and runner-local destinations
+The controller's host firewall permits public HTTP/HTTPS, DNS to two explicit
+resolvers and NTP to two configured public time servers. It rejects private, link-local/metadata and runner-local destinations
 and other outbound ports. A metadata connection probe must increment the reject
 rule's packet counter before setup continues. The controller has neither
 `NET_RAW` nor `NET_ADMIN`; the rule is removed only after controller removal is
 verified. This is an address/port policy, not a domain allowlist. Public web
 destinations remain reachable for distro mirrors and runtime downloads.
+Time-server addresses follow [Cloudflare's published NTP endpoints](https://developers.cloudflare.com/time-services/ntp/usage/);
+the guest time service uses the same addresses so Arch's boot-time synchronization
+does not require arbitrary outbound UDP.
 
 One independent reset trial per tool and operation checks OMG and native
 install/remove behavior, package state, boot identity and health. Separate
