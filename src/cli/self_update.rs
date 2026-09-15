@@ -551,8 +551,46 @@ const GH_CANDIDATES: &[&str] = &[];
 fn locate_gh() -> Option<std::path::PathBuf> {
     GH_CANDIDATES
         .iter()
-        .map(std::path::PathBuf::from)
-        .find(|path| path.is_file())
+        .find_map(|path| trusted_attestation_helper(std::path::Path::new(path)))
+}
+
+fn trusted_attestation_helper(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let owner = nix::unistd::geteuid().as_raw();
+        let trusted_namespace = |path: &std::path::Path| {
+            path.is_absolute()
+                && path.ancestors().all(|entry| {
+                    let Ok(metadata) = fs::symlink_metadata(entry) else {
+                        return false;
+                    };
+                    let trusted_owner = metadata.uid() == 0 || metadata.uid() == owner;
+                    // A root-owned sticky directory protects each owned child
+                    // from replacement by other users (e.g. /tmp).
+                    let sticky_root_directory =
+                        metadata.is_dir() && metadata.uid() == 0 && metadata.mode() & 0o1000 != 0;
+                    trusted_owner
+                        && (metadata.file_type().is_symlink()
+                            || metadata.mode() & 0o022 == 0
+                            || sticky_root_directory)
+                })
+        };
+        // Validate the original name too: an attacker-owned symlink to a
+        // root-owned program such as `true` is not an attestation verifier.
+        if !trusted_namespace(path) {
+            return None;
+        }
+        let resolved = fs::canonicalize(path).ok()?;
+        let metadata = fs::metadata(&resolved).ok()?;
+        (metadata.is_file() && metadata.mode() & 0o111 != 0 && trusted_namespace(&resolved))
+            .then_some(resolved)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        None
+    }
 }
 
 fn verify_attestation(archive_path: &std::path::Path, tag: &str) -> Result<bool> {
@@ -662,6 +700,47 @@ mod tests {
         for tag in ["0.1.221", "v0.1.221/other", "v01.1.221", "v0.1.221\n"] {
             assert!(attestation_repository(tag).is_err());
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn attestation_helper_rejects_writable_files_and_symlink_namespaces() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let helper = root.join("gh");
+        fs::write(&helper, "#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(&helper, fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(trusted_attestation_helper(&helper), Some(helper.clone()));
+        let link = root.join("gh-link");
+        symlink(&helper, &link).unwrap();
+        assert_eq!(trusted_attestation_helper(&link), Some(helper.clone()));
+        fs::set_permissions(&helper, fs::Permissions::from_mode(0o777)).unwrap();
+        assert!(trusted_attestation_helper(&helper).is_none());
+        assert!(trusted_attestation_helper(&link).is_none());
+        fs::set_permissions(&helper, fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(trusted_attestation_helper(&helper).is_none());
+        fs::set_permissions(&helper, fs::Permissions::from_mode(0o755)).unwrap();
+        let shared = root.join("shared");
+        fs::create_dir(&shared).unwrap();
+        fs::set_permissions(&shared, fs::Permissions::from_mode(0o777)).unwrap();
+        symlink(&helper, shared.join("gh")).unwrap();
+        assert!(trusted_attestation_helper(&shared.join("gh")).is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn elevated_verifier_rejects_another_users_helper() {
+        if !crate::core::is_root() {
+            return;
+        }
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        let helper = temp.path().canonicalize().unwrap().join("gh");
+        fs::write(&helper, "#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(&helper, fs::Permissions::from_mode(0o755)).unwrap();
+        nix::unistd::chown(&helper, Some(nix::unistd::Uid::from_raw(65534)), None).unwrap();
+        assert!(trusted_attestation_helper(&helper).is_none());
     }
 
     #[test]
