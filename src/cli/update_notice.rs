@@ -23,7 +23,7 @@ mod unix {
         notified: u64,
     }
 
-    fn elapsed(now: u64, then: u64, interval: u64) -> bool {
+    const fn elapsed(now: u64, then: u64, interval: u64) -> bool {
         then == 0 || now < then || now - then >= interval
     }
 

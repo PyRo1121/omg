@@ -39,7 +39,7 @@ OMG brings system packages, language runtimes, and project tasks into one CLI. U
 
 ## Security Built Into Installation
 
-The upcoming release expands protection across downloads, builds, filesystem writes, and privileged package transactions. The hardening work is tracked in [PR #399](https://github.com/PyRo1121/omg/pull/399). This section describes the current development branch; check the [release notes](https://github.com/PyRo1121/omg/releases) for what is included in your installed version.
+Version 0.1.221 includes the merged hardening across downloads, builds, filesystem writes, and privileged package transactions. The [release overview and complete commit ledger](docs/releases/v0.1.221.md) link the security work and compatibility changes since 0.1.220. Check the [published releases](https://github.com/PyRo1121/omg/releases) against your installed version.
 
 | Boundary | Protection |
 | :--- | :--- |
@@ -85,6 +85,10 @@ omg env check
 ---
 
 ## Installation
+
+Existing Bash, Zsh and Fish hooks can show a quiet update notice when a terminal
+opens. Checks run in the background at most daily; installation remains explicit.
+See [terminal update notices and opt-out](docs/update-notices.md).
 
 Release artifacts are cryptographically signed and attested through GitHub Actions. Verification requires `curl` and GitHub CLI (`gh`).
 

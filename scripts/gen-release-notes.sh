@@ -65,6 +65,14 @@ echo ""
 echo "## What's New in v${version}"
 echo ""
 
+# Versioned editorial notes supplement the generated commit changelog. The
+# version is validated above; no user-controlled path or shell code is evaluated.
+release_summary="docs/releases/v${version}.md"
+if [[ -f "$release_summary" ]]; then
+  cat "$release_summary"
+  echo ""
+fi
+
 if "$script_dir/extract-release-notes.sh" "${version}"; then
   echo "✓ Extracted changelog for v${version}" >&2
 else
