@@ -6,23 +6,30 @@ tag=v0.1.218
 staged_dir=
 release_dir=
 inventory_file=
+inventory_policy=
+image_policy=
 arch=
 print_pins=false
 benchmark=false
 transaction_samples=0
 inventory_tiers=
 inventory_mutations=false
+inventory_isolation=false
+storage_faults=false
+restrict_egress=false
 report_inventory='[]'
 inventory_product_failure=false
 root="$HOME/.cache/build-targets/omg-qemu-benchmark"
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 while (($#)); do
   case "$1" in
-    --distro|--release|--staged-dir|--release-dir|--inventory-file|--evidence-dir|--inventory-tiers|--arch)
+    --distro|--release|--staged-dir|--release-dir|--inventory-file|--inventory-policy|--image-policy|--evidence-dir|--inventory-tiers|--arch)
       [[ $# -ge 2 && -n "$2" ]] || exit 2
       case "$1" in
         --distro) distro=$2 ;; --release) tag=$2 ;; --staged-dir) staged_dir=$2 ;; --evidence-dir) root=$2 ;;
         --release-dir) release_dir=$2 ;; --inventory-file) inventory_file=$2 ;;
+        --inventory-policy) inventory_policy=$2 ;;
+        --image-policy) image_policy=$2 ;;
         --inventory-tiers) inventory_tiers=$2 ;; --arch) arch=$2 ;;
       esac
       shift 2 ;;
@@ -32,6 +39,9 @@ while (($#)); do
       benchmark=true; transaction_samples=$2; shift 2 ;;
     --print-pins) print_pins=true; shift ;;
     --inventory-allow-mutations) inventory_mutations=true; shift ;;
+    --inventory-isolate-hermetic) inventory_isolation=true; shift ;;
+    --storage-faults) storage_faults=true; shift ;;
+    --restrict-egress) restrict_egress=true; shift ;;
     --help)
       cat <<'HELP'
 Usage: scripts/benchmark-qemu.sh [--distro all|arch|debian|ubuntu|fedora]
@@ -39,6 +49,9 @@ Usage: scripts/benchmark-qemu.sh [--distro all|arch|debian|ubuntu|fedora]
   [--staged-dir DIR | --release-dir DIR] [--inventory-file TSV]
   [--evidence-dir DIR] [--benchmark] [--benchmark-transactions COUNT]
   [--print-pins] [--inventory-tiers CSV] [--inventory-allow-mutations]
+  [--inventory-policy JSON]
+  [--image-policy JSON]
+  [--inventory-isolate-hermetic]
 
 Runs disposable KVM guests with pinned images, reboot, sudo, package lifecycle,
 and optional warm read-query timing. Host and guest architecture must match;
@@ -52,6 +65,7 @@ revision. Prepare both with scripts/prepare-qemu-release.py:
   scripts/benchmark-qemu.sh --distro arch --release vVERSION --release-dir published --inventory-file published/cases.tsv --inventory-tiers hermetic,container
 
 Inventory rows run over SSH after a passing lifecycle (scripts/qemu-inventory.sh).
+CI requires --inventory-policy to pin the selection and permitted skips.
 --benchmark-transactions COUNT runs independently reset install/remove trials
 (1-100 per tool). Requires Docker, KVM, jq, and coreutils. Direct published
 downloads need gh; release preparation and benchmarks need Python 3.
@@ -111,7 +125,7 @@ pins_for() {
   firmware_code=/usr/share/OVMF/OVMF_CODE_4M.fd
   firmware_vars_src=/usr/share/OVMF/OVMF_VARS_4M.fd
   guest_uname=x86_64
-  controller_image=debian:bookworm@sha256:813017f3d62be4b5891a7acca6a01bdcd4b8513daa81b1ab99d3a50385b26931
+  controller_image=debian:trixie@sha256:6788062a1b42ac281f053ac876170b79a3eaed5d61383b8ed7eaca6c6965f3b1
   case "$pin_distro-$pin_arch" in
     arch-x86_64)
       image_url=https://geo.mirror.pkgbuild.com/images/latest/Arch-Linux-x86_64-cloudimg-20260901.583572.qcow2
@@ -159,7 +173,7 @@ pins_for() {
     firmware_code=/usr/share/AAVMF/AAVMF_CODE.fd
     firmware_vars_src=/usr/share/AAVMF/AAVMF_VARS.fd
     guest_uname=aarch64
-    controller_image=debian:bookworm@sha256:5eac3978974cfa26a880057766c683e55c5763355d30a8beecbd263e0e1621d9
+    controller_image=debian:trixie@sha256:0aa0908407cce3da2a90c1d80acc6ca5ca57401ed63eecfa8149b7ba3cc40829
   fi
 }
 
@@ -190,10 +204,15 @@ if [[ "$distro" == all ]]; then
   [[ -z "$staged_dir" ]] || args+=(--staged-dir "$staged_dir")
   [[ -z "$release_dir" ]] || args+=(--release-dir "$release_dir")
   [[ -z "$inventory_file" ]] || args+=(--inventory-file "$inventory_file")
+  [[ -z "$inventory_policy" ]] || args+=(--inventory-policy "$inventory_policy")
+  [[ -z "$image_policy" ]] || args+=(--image-policy "$image_policy")
   [[ "$benchmark" == false ]] || args+=(--benchmark)
   [[ "$transaction_samples" == 0 ]] || args+=(--benchmark-transactions "$transaction_samples")
   [[ -z "$inventory_tiers" ]] || args+=(--inventory-tiers "$inventory_tiers")
   [[ "$inventory_mutations" == false ]] || args+=(--inventory-allow-mutations)
+  [[ "$inventory_isolation" == false ]] || args+=(--inventory-isolate-hermetic)
+  [[ "$storage_faults" == false ]] || args+=(--storage-faults)
+  [[ "$restrict_egress" == false ]] || args+=(--restrict-egress)
   jq -n --arg source "$source_kind" --arg suffix "$case_suffix" '["arch", "debian", "ubuntu", "fedora"] | map({case_id:("qemu-"+.+$suffix+"-lifecycle"), distro:., result:"NOT_RUN", artifact_source:$source, exit_code:null, elapsed_seconds:0})' > "$suite/results.json"
   for target in arch debian ubuntu fedora; do
     jq --arg target "$target" 'map(if .distro == $target then .result = "INCOMPLETE" else . end)' "$suite/results.json" > "$suite/results.next.json"
@@ -219,6 +238,8 @@ cleanup() {
   trap - EXIT
   if [[ ${started:-false} == true ]]; then
     safe_to_remove=false
+    # Preserve controller state before forced cleanup destroys the OOM/exit evidence.
+    timeout 15 docker inspect --format '{{json .State}}' "$controller" > "$work/controller-final-state.json" 2>> "$work/cleanup.log" || { rc=3; result=HARNESS_ERROR; }
     timeout --kill-after=5s 60s docker rm --force "$controller" >> "$work/cleanup.log" 2>&1 || { rc=3; result=HARNESS_ERROR; }
     if remaining=$(timeout 15 docker ps -aq --filter "name=^/${controller}$") && [[ -z "$remaining" ]]; then
       printf 'verified absent: %s\n' "$controller" >> "$work/cleanup.log"
@@ -226,6 +247,9 @@ cleanup() {
     else rc=3; result=HARNESS_ERROR; fi
   fi
   if [[ "$safe_to_remove" == true ]]; then
+  if [[ ${egress_started:-false} == true ]]; then
+    timeout 60 sudo -n python3 "$here/qemu-controller-egress.py" remove "$controller" >> "$work/cleanup.log" 2>&1 || { rc=3; result=HARNESS_ERROR; }
+  fi
   # Only the stopped controller's owned disposable disks live here, not evidence.
   rm -rf "$work/guest/transaction-disks" || { rc=3; result=HARNESS_ERROR; }
   [[ ! -e "$work/guest/transaction-disks" ]] || { rc=3; result=HARNESS_ERROR; }
@@ -313,11 +337,24 @@ read -r digest filename extra < "$work/release/$archive.sha256"
 (cd "$work/release" && sha256sum -c "$archive.sha256") > "$work/release-checksum.txt"
 printf 'distro=%s\narch=%s\nrelease=%s\nartifact_source=%s\nimage_url=%s\nimage_digest=%s\nfirmware=%s\nqemu=%s -machine %s\ncontroller=%s\ncase_id=%s\n' "$distro" "$arch" "$tag" "$source_kind" "$image_url" "$image_hash" "$firmware" "$qemu_bin" "$qemu_machine" "$controller_image" "$case_id" > "$work/metadata.txt"
 started=true
-timeout 120 docker run -d --name "$controller" --cpus 2 --memory 3g --memory-swap 3g --device /dev/kvm \
+timeout 120 docker run -d --name "$controller" --cpus 2 --memory 3g --memory-swap 3g --pids-limit 512 --log-opt max-size=10m --log-opt max-file=2 --device /dev/kvm \
+  --cap-drop NET_RAW --cap-drop NET_ADMIN --dns 1.1.1.1 --dns 9.9.9.9 \
   --mount "type=bind,src=$work,dst=/work" --workdir /work \
   "$controller_image" sleep infinity > "$work/controller-id.txt"
+if [[ "$restrict_egress" == true ]]; then
+  egress_started=true
+  timeout 120 sudo -n python3 "$here/qemu-controller-egress.py" install "$controller" \
+    > "$work/egress-policy.json" 2> "$work/egress-policy.log"
+fi
 timeout --kill-after=5s 600 docker exec "$controller" sh -c "apt-get -o APT::Update::Error-Mode=any -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update && DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends $qemu_pkg qemu-utils cloud-image-utils openssh-client curl ca-certificates $firmware_pkg jq" > "$work/controller-setup.log" 2>&1
-timeout 360 docker exec "$controller" bash -c 'set -e; cd /work/guest; curl --fail --location --max-time 300 -o base.qcow2 "$1"; printf "%s  base.qcow2\n" "$2" | "$3" -c -; "$4" --version; qemu-img info base.qcow2' _ "$image_url" "$image_hash" "$hash_tool" "$qemu_bin" > "$work/image-setup.log" 2>&1
+cp "$here/check-qemu-controller.sh" "$work/check-qemu-controller.sh"
+timeout 30 docker exec "$controller" bash /work/check-qemu-controller.sh "$qemu_pkg" > "$work/controller-security.log" 2>&1
+timeout 360 docker exec "$controller" bash -c 'set -e; cd /work/guest; curl --fail --location --max-time 300 -o base.qcow2 "$1"; printf "%s  base.qcow2\n" "$2" | "$3" -c -' _ "$image_url" "$image_hash" "$hash_tool" > "$work/image-setup.log" 2>&1
+if [[ -n "$image_policy" ]]; then
+  timeout 90 python3 "$here/verify-qemu-image.py" --manifest "$image_policy" --identity "$distro-$arch" \
+    --url "$image_url" --digest "$image_hash" --image "$work/guest/base.qcow2" > "$work/image-provenance.json"
+fi
+timeout 30 docker exec -w /work/guest "$controller" bash -c '"$1" --version; qemu-img info base.qcow2' _ "$qemu_bin" >> "$work/image-setup.log" 2>&1
 cat > "$work/boot.sh" <<'BOOT'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -344,6 +381,17 @@ ssh-keygen -q -t ed25519 -N '' -f guest-host-key
   sed 's/^/    /' guest-host-key
   printf '  ed25519_public: '
   cat guest-host-key.pub
+  # Arch waits for time-sync.target before cloud-final starts SSH. Keep clock
+  # synchronization within the controller's explicit NTP destination policy.
+  cat <<'CLOCK'
+bootcmd:
+  - |
+    if [ "$(systemctl show -p LoadState --value systemd-timesyncd.service)" != not-found ]; then
+      mkdir -p /etc/systemd/timesyncd.conf.d
+      printf '[Time]\nNTP=\nNTP=162.159.200.1 162.159.200.123\nFallbackNTP=\n' > /etc/systemd/timesyncd.conf.d/99-omg-qemu.conf
+      systemctl restart --no-block systemd-timesyncd.service
+    fi
+CLOCK
 } > user-data
 chmod 600 user-data
 printf 'instance-id: omg-qemu-fresh\n' > meta-data
@@ -360,7 +408,7 @@ if [[ "$1" == uefi ]]; then
   firmware=(-drive if=pflash,format=raw,readonly=on,file="$3" -drive if=pflash,format=raw,file="$vm_vars")
 fi
 nohup "$5" -machine "$6,accel=kvm" -cpu host -smp 2 -m 1536 \
-  -runas 65534:65534 \
+  -run-with user=65534:65534 \
   -sandbox on,obsolete=deny,spawn=deny,resourcecontrol=deny \
   -monitor none \
   "${firmware[@]}" -display none -serial "file:$vm_serial" \
@@ -375,7 +423,7 @@ for attempt in {1..100}; do
   if ! kill -0 "$qemu_pid" 2>/dev/null; then cat qemu-startup.log; exit 1; fi
   sleep 0.1
 done
-# QEMU 7.2 drops privileges after opening devices and enabling seccomp. Keep
+# QEMU drops privileges after opening devices and enabling seccomp. Keep
 # setuid available for that drop; verify the resulting process cannot retain
 # root IDs/capabilities or gain privileges through exec. Never fall back to root.
 qemu_pid=$(<qemu.pid)
@@ -422,12 +470,16 @@ if [[ -n "$inventory_tiers" ]]; then
   # guest); /work is bind-mounted there.
   cp "$here/qemu-inventory.sh" "$work/qemu-inventory.sh"
   cp "$tsv" "$work/cases.tsv"
+  if [[ "$inventory_isolation" == true ]]; then
+    cp "$inventory_policy" "$work/inventory-policy.json"
+  fi
 fi
 if [[ "$benchmark" == true ]]; then
   cp "$here/../benchmark-hyperfine.sh" "$work/benchmark-hyperfine.sh"
   cp "$here/record-benchmark-run.py" "$work/record-benchmark-run.py"
   if [[ "$transaction_samples" != 0 ]]; then
     cp "$here/qemu-transactions.sh" "$work/qemu-transactions.sh"
+    cp "$here/check-qemu-health.py" "$work/check-qemu-health.py"
     sha256sum "$work/qemu-transactions.sh" > "$work/transaction-runner-sha256.txt"
   fi
   sha256sum "$work/benchmark-hyperfine.sh" "$work/record-benchmark-run.py" > "$work/benchmark-driver-sha256.txt"
@@ -526,9 +578,9 @@ esac
 # never acceptable product refusals. Keep this after the lifecycle probe.
 if [[ -n "$inventory_tiers" ]]; then
   case "$distro" in
-    arch) sudo -n pacman -S --noconfirm --needed git make curl python ;;
-    debian|ubuntu) sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git make curl python3 ;;
-    fedora) sudo -n dnf install -y git make curl python3 podman ;;
+    arch) sudo -n pacman -S --noconfirm --needed git make curl python strace ;;
+    debian|ubuntu) sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git make curl python3 strace ;;
+    fedora) sudo -n dnf install -y git make curl python3 strace podman ;;
   esac > evidence/inventory-setup.txt 2>&1 || exit 120
   # The hermetic `new` row exercises the missing-toolchain refusal. A guest
   # with Cargo installed is a different fixture, not a product failure.
@@ -651,6 +703,10 @@ if [[ "$transaction_samples" != 0 && "$rc" == 0 ]]; then
         for ((round=1;round<=transaction_samples;round++)); do
           printf -v trial_id '%s-%s-%03d' "$operation" "$tool" "$round"
           evidence="$work/transactions/trials/$trial_id/transaction-trial"
+          trial_boot=$(jq -er --arg id "$trial_id" '.results[] | select(.id==$id) | .boot_id' "$summary")
+          python3 "$here/check-qemu-health.py" verify-trial \
+            --guest "$work/transactions/trials/$trial_id/health.json" \
+            --serial "$work/transactions/trials/$trial_id/serial.log" --boot-id "$trial_boot" || exit 1
           python3 "$work/record-benchmark-run.py" --validate-only --scenario "$operation" --source "$evidence" || exit 1
           read -r actual_binary _ < "$evidence/binary-sha256.txt"
           [[ "$actual_binary" == "$expected_binary" ]] || exit 1
@@ -693,6 +749,7 @@ if [[ -n "$inventory_tiers" && "$rc" == 0 ]]; then
   inv_args=(--work /work --distro "$distro" --tiers "$inventory_tiers" --tag "$tag"
     --binary "/home/bench/omg-${tag}-${arch}-linux-${distro}/omg" --tsv /work/cases.tsv)
   [[ "$inventory_mutations" == false ]] || inv_args+=(--allow-mutations)
+  [[ "$inventory_isolation" == false ]] || inv_args+=(--isolate-hermetic --network-policy /work/inventory-policy.json)
   inventory_rc=0
   timeout --kill-after=5s 3600 docker exec -w /work "$controller" bash /work/qemu-inventory.sh "${inv_args[@]}" > "$work/inventory.log" 2>&1 || inventory_rc=$?
   # Validate identity and values even for interrupted reports. Partial
@@ -733,6 +790,53 @@ elif [[ -n "$inventory_tiers" ]]; then
     $ids | map({case_id:., distro:$distro, artifact_source:"inventory",
       result:"BLOCKED", exit_code:-1, elapsed_seconds:0})' > "$work/inventory/results.json"
   printf '{"complete":false,"reason":"guest lifecycle failed"}\n' > "$work/inventory/summary.json"
+fi
+if [[ -n "$inventory_policy" ]]; then
+  policy_rc=0
+  python3 "$here/check-qemu-inventory.py" --policy "$inventory_policy" --inventory "$tsv" \
+    --results "$work/inventory/results.json" --summary "$work/inventory/summary.json" \
+    --distro "$distro" --tiers "$inventory_tiers" > "$work/inventory-admission.json" || policy_rc=$?
+  if [[ "$policy_rc" != 0 ]]; then
+    [[ "$rc" != 0 ]] || rc=120
+    inventory_harness_error=true
+  fi
+fi
+if [[ "$storage_faults" == true && "$rc" == 0 ]]; then
+  quoted_fault_binary=$(jq -rn --arg b "/home/bench/omg-${tag}-${arch}-linux-${distro}/omg" '$b | @sh')
+  fault_setup='set -eu; token=$(cat /proc/sys/kernel/random/uuid); printf "%s\n" "$token" > /run/omg-qemu-storage-faults; chmod 444 /run/omg-qemu-storage-faults; exec unshare --mount --propagation private python3 - --binary "$1" --token "$token"'
+  quoted_fault_setup=$(jq -rn --arg s "$fault_setup" '$s | @sh')
+  fault_rc=0
+  timeout --kill-after=5s 180s docker exec -i -w /work/guest "$controller" \
+    ssh -i client-key -p 2222 -o BatchMode=yes -o ConnectTimeout=5 \
+      -o ServerAliveInterval=5 -o ServerAliveCountMax=3 \
+      -o StrictHostKeyChecking=yes -o UserKnownHostsFile=known_hosts \
+      bench@127.0.0.1 "sudo -n bash -c $quoted_fault_setup bash $quoted_fault_binary" \
+      < "$here/qemu-storage-faults.py" > "$work/storage-faults.json" 2> "$work/storage-faults.log" || fault_rc=$?
+  if [[ "$fault_rc" == 1 && -f "$work/storage-faults.json" && $(wc -c < "$work/storage-faults.json") -le 65536 ]] &&
+     jq -e '.schema_version==1 and .scope=="privacy-export-atomic-write" and .complete==false and .failure_kind=="product"' "$work/storage-faults.json" >/dev/null; then
+    rc=1
+  elif [[ "$fault_rc" != 0 ]] || ! python3 "$here/qemu-storage-faults.py" --receipt "$work/storage-faults.json" >> "$work/storage-faults.log" 2>&1; then
+    rc=120
+  fi
+fi
+# Health is an independent admission gate after the selected test work. Query
+# boot-scoped kernel/crash identity only, never raw cores or process environments.
+health_rc=0
+timeout --kill-after=5s 60s docker exec -i -w /work/guest "$controller" \
+  ssh -i client-key -p 2222 -o BatchMode=yes -o ConnectTimeout=5 \
+    -o ServerAliveInterval=5 -o ServerAliveCountMax=3 \
+    -o StrictHostKeyChecking=yes -o UserKnownHostsFile=known_hosts \
+    bench@127.0.0.1 sudo -n python3 - collect \
+  < "$here/check-qemu-health.py" > "$work/guest-health.json" 2> "$work/health-validation.log" || health_rc=$?
+timeout 15 docker inspect --format '{{json .State}}' "$controller" > "$work/controller-health.json" 2>> "$work/health-validation.log" || health_rc=120
+if [[ "$health_rc" == 0 ]]; then
+  python3 "$here/check-qemu-health.py" verify --guest "$work/guest-health.json" \
+    --serial "$work/guest/serial.log" --controller "$work/controller-health.json" \
+    >> "$work/health-validation.log" 2>&1 || health_rc=120
+fi
+if [[ "$health_rc" != 0 ]]; then
+  printf 'Final guest/controller health failed admission\n' >&2
+  [[ "$rc" != 0 ]] || rc=120
 fi
 # Verdict map: only proven-rig codes are HARNESS_ERROR. Per the GNU
 # coreutils manual, timeout exits 124 when the managed command times out

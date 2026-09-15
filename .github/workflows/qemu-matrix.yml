@@ -22,17 +22,7 @@ name: QEMU Matrix
 on:
   push:
     branches: [main]
-    paths:
-      - "src/**"
-      - "tests/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "build.rs"
-      - "rust-toolchain.toml"
-      - ".cargo/**"
-      - "benchmark-hyperfine.sh"
-      - "scripts/**"
-      - ".github/workflows/qemu-matrix.yml"
+    # Every main commit needs exact-commit evidence for the release gate.
   pull_request:
     branches: [main]
     paths:
@@ -49,7 +39,20 @@ on:
       - "scripts/prepare-qemu-release.py"
       - "scripts/test_prepare_qemu_release.py"
       - "scripts/test_qemu_process_isolation.py"
+      - "scripts/check-qemu-controller.sh"
+      - "scripts/check-qemu-health.py"
+      - "scripts/check-qemu-inventory.py"
+      - "scripts/verify-qemu-image.py"
+      - "scripts/test_qemu_image_provenance.py"
+      - "scripts/test_qemu_inventory_policy.py"
+      - "scripts/test_qemu_health.py"
+      - "scripts/test_qemu_network_scope.py"
+      - "scripts/test_qemu_controller_floor.py"
       - "scripts/qemu-transactions.sh"
+      - "scripts/qemu-storage-faults.py"
+      - "scripts/qemu-controller-egress.py"
+      - "scripts/test_qemu_egress.py"
+      - "scripts/test_qemu_storage_faults.py"
       - "scripts/qemu-inventory.sh"
       - "scripts/test-release-smoke.sh"
       - "scripts/release-smoke.sh"
@@ -129,12 +132,17 @@ jobs:
           python3 -m unittest discover -s tests -p test_qemu_verdict.py
           python3 -m unittest discover -s scripts -p test_prepare_qemu_release.py
           python3 -m unittest discover -s scripts -p test_qemu_process_isolation.py
+          python3 -m unittest discover -s scripts -p test_qemu_controller_floor.py
 
       - name: Verify harness and reporting fixtures before guest builds
         run: |
           ./scripts/test-release-smoke.sh
           ./scripts/test-qa-file-issue.sh
           python3 -m unittest discover -s scripts -p test_ci_smoke_report.py
+          sudo -n python3 -m unittest discover -s scripts -p test_qemu_health.py
+          python3 -m unittest discover -s scripts -p test_qemu_network_scope.py
+          python3 -m unittest discover -s scripts -p test_qemu_storage_faults.py
+          python3 -m unittest discover -s scripts -p test_qemu_egress.py
           sudo -n python3 -m unittest discover -s scripts -p test_export_qemu_evidence.py
 
       - name: Resolve selection
@@ -576,7 +584,7 @@ jobs:
           ls -l /dev/kvm
 
       - name: Download staged binaries
-        if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.staged)
+        if: needs.prepare.outputs.staged == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: staged-${{ matrix.distro }}
@@ -592,16 +600,32 @@ jobs:
 
       - name: Run disposable guest lifecycle + read benchmarks + inventory rows
         # Staged runs exercise hermetic/container inventory; published runs add network/PTY coverage.
+        env:
+          STAGED: ${{ needs.prepare.outputs.staged }}
         run: |
-          args=(--distro "${{ matrix.distro }}" --release "${{ needs.prepare.outputs.tag }}" --benchmark --evidence-dir "$RUNNER_TEMP/qemu-evidence")
-          if [[ "${{ github.event_name }}" == 'pull_request' || "${{ inputs.staged }}" == 'true' ]]; then
+          args=(--distro "${{ matrix.distro }}" --release "${{ needs.prepare.outputs.tag }}" --benchmark --evidence-dir "$RUNNER_TEMP/qemu-evidence" --inventory-policy tests/qemu-inventory-policy.json --image-policy tests/qemu-image-provenance/manifest.json)
+          if [[ "$STAGED" == 'true' ]]; then
             args+=(--staged-dir staged --inventory-tiers "hermetic,container" --inventory-allow-mutations)
           else
             # No nested-container: guests have no docker-in-guest (yet).
             # Declared-ux rows (self-update-*, daemon-foreground) self-skip.
             args+=(--release-dir published --inventory-file published/cases.tsv --inventory-tiers "hermetic,qemu,container,network,pty" --inventory-allow-mutations)
           fi
+          args+=(--inventory-isolate-hermetic)
+          args+=(--benchmark-transactions 1)
+          args+=(--storage-faults)
+          args+=(--restrict-egress)
           ./scripts/benchmark-qemu.sh "${args[@]}"
+
+      - name: Preserve setup failure evidence
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+          DISTRO: ${{ matrix.distro }}
+        run: |
+          python3 scripts/ci-smoke-report.py ensure-failure --distro "$DISTRO" \
+            --case-id "qemu-$DISTRO-lifecycle" --status "$JOB_STATUS" \
+            --evidence-root "$RUNNER_TEMP/qemu-evidence"
 
       - name: Export allowlisted guest evidence
         if: always()
@@ -702,7 +726,23 @@ jobs:
         run: |
           ./scripts/benchmark-qemu.sh --arch aarch64 --distro "${{ matrix.distro }}" --benchmark --evidence-dir "$RUNNER_TEMP/qemu-evidence" \
             --release "${{ needs.prepare.outputs.tag }}" \
+            --inventory-policy tests/qemu-inventory-policy.json \
+            --image-policy tests/qemu-image-provenance/manifest.json \
+            --inventory-isolate-hermetic \
+            --benchmark-transactions 1 \
+            --storage-faults \
+            --restrict-egress \
             --staged-dir staged --inventory-tiers hermetic,container --inventory-allow-mutations
+
+      - name: Preserve setup failure evidence
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+          DISTRO: ${{ matrix.distro }}
+        run: |
+          python3 scripts/ci-smoke-report.py ensure-failure --distro "$DISTRO" \
+            --case-id "qemu-$DISTRO-aarch64-lifecycle" --status "$JOB_STATUS" \
+            --evidence-root "$RUNNER_TEMP/qemu-evidence"
 
       - name: Export allowlisted guest evidence
         if: always()
@@ -731,44 +771,8 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  #########################################################################
-  # STAGE 3: file/update one issue per QA failure (nightly only).
-  # One-time bootstrap: create the `qa-failure` label in repo settings.
-  #########################################################################
-  file-issues:
-    name: "File QA issues"
-    needs: guest
-    if: always() && github.event_name == 'schedule'
-    permissions:
-      contents: read
-      issues: write
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          ref: ${{ github.sha }}
-
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          pattern: qemu-evidence-*
-          path: evidence/
-          merge-multiple: false
-
-      - name: File or update failure issues
-        if: github.event_name != 'pull_request'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-          shopt -s nullglob globstar
-          reports=(evidence/**/results.json)
-          (( ${#reports[@]} > 0 )) || { echo "::error::No guest results downloaded"; exit 1; }
-          for results in "${reports[@]}"; do
-            ./scripts/qa-file-issue.sh "$results" --run-url "$run_url" --source qemu-matrix
-          done
-
+  # qemu-report.yml handles all completed events from trusted default-branch
+  # code. Guest execution never receives issue-write permission.
   summary:
     name: "QEMU matrix result"
     needs: [prepare, arm-runner-health, build-staged, build-staged-ubuntu, build-staged-arm, build-staged-ubuntu-arm, guest, guest-arm]

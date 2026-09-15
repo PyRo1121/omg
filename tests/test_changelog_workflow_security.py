@@ -18,14 +18,16 @@ class ChangelogWorkflowSecurityTests(unittest.TestCase):
         self.assertIn("taiki-e/install-action@", generation)
         self.assertIn("actions/upload-artifact@", generation)
 
-    def test_only_publisher_receives_write_permission(self):
-        publisher = TEXT.split("  publish-changelog:\n", 1)[1]
-        self.assertEqual(1, TEXT.count("contents: write"))
-        self.assertIn("needs: generate-changelog", publisher)
-        self.assertIn("if: needs.generate-changelog.outputs.changed == 'true'", publisher)
-        self.assertIn("permissions:\n      contents: write", publisher)
-        self.assertIn("actions/download-artifact@", publisher)
-        self.assertNotIn("taiki-e/install-action@", publisher)
+    def test_generated_updates_cannot_bypass_main_review_rules(self):
+        benchmark = WORKFLOW.with_name("benchmark.yml").read_text(encoding="utf-8")
+        for workflow in (TEXT, benchmark):
+            self.assertNotIn("contents: write", workflow)
+            self.assertNotIn("git push", workflow)
+            self.assertNotIn("secrets.GITHUB_TOKEN", workflow)
+            self.assertIn("actions/upload-artifact@", workflow)
+            self.assertIn("persist-credentials: false", workflow)
+        self.assertIn("retention-days: 30", TEXT)
+        self.assertIn("benchmark-history-for-review", benchmark)
 
 
 if __name__ == "__main__":

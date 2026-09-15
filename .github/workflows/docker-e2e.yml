@@ -3,17 +3,7 @@ name: Docker E2E Tests
 on:
   push:
     branches: [main]
-    paths:
-      - "src/**"
-      - "tests/docker_e2e.rs"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "build.rs"
-      - "rust-toolchain.toml"
-      - ".cargo/**"
-      - "Dockerfile.arch-e2e"
-      - ".dockerignore"
-      - ".github/workflows/docker-e2e.yml"
+    # Every main commit needs exact-commit evidence for the release gate.
   pull_request:
     branches: [main]
     paths:

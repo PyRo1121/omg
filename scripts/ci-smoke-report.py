@@ -10,6 +10,8 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import stat
+import tempfile
 
 
 def configure():
@@ -53,15 +55,61 @@ def status(distro, case_id, state, evidence):
         completed = subprocess.run(["bash", str(reporter), str(results)],
                                    capture_output=True, text=True, timeout=15, check=False)
         output = completed.stdout + completed.stderr
-        failed = completed.returncode != 0
+        delivery_code = completed.returncode if 0 <= completed.returncode <= 255 else 255
     except (OSError, subprocess.TimeoutExpired) as error:
         output = f"Sentry reporting unavailable: {type(error).__name__}\n"
-        failed = True
+        delivery_code = 255
     (evidence / "reporting.log").write_text(output, encoding="utf-8")
+    (evidence / "reporting-status.json").write_text(
+        json.dumps({"exit_code": delivery_code}) + "\n", encoding="utf-8"
+    )
     print(output, end="")
-    if failed:
+    if delivery_code:
         print("::warning::Sentry delivery failed; original job failure and local evidence are preserved")
     return 0
+
+
+def ensure_failure(distro, case_id, state, evidence_root):
+    """Preserve failures before lifecycle reporting, without duplicating a failure.
+
+    A valid lifecycle receipt proves setup completed. Later inventory/export
+    failures have their own evidence and must not be mislabeled setup failures.
+    """
+    if state in ("success", "skipped"):
+        return status(distro, case_id, state, evidence_root)
+    if evidence_root.is_symlink():
+        raise ValueError("symlink evidence root")
+    evidence_root.mkdir(parents=True, exist_ok=True)
+    runs = list(evidence_root.glob("run-*"))
+    if len(runs) > 128:
+        raise ValueError("too many evidence runs")
+    for run in runs:
+        if run.is_symlink() or not run.is_dir():
+            continue
+        try:
+            descriptor = os.open(run / "results.json", os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+            with os.fdopen(descriptor, "rb") as stream:
+                info = os.fstat(stream.fileno())
+                if not stat.S_ISREG(info.st_mode) or info.st_size > 1024 * 1024:
+                    continue
+                payload = json.loads(stream.read(1024 * 1024 + 1))
+            if not isinstance(payload, list) or len(payload) != 1:
+                continue
+            row = payload[0]
+            if (isinstance(row, dict) and row.get("case_id") == case_id
+                    and row.get("distro") == distro
+                    and row.get("result") in ("PASS", "HARNESS_ERROR", "PRODUCT_FAIL")
+                    and type(row.get("exit_code")) is int
+                    and (row["exit_code"] == 0 if row["result"] == "PASS" else 1 <= row["exit_code"] <= 255)
+                    and type(row.get("elapsed_seconds")) in (int, float)
+                    and 0 <= row["elapsed_seconds"] <= 86400):
+                print("Existing lifecycle evidence preserved")
+                return 0
+        except (OSError, ValueError):
+            # Invalid evidence cannot suppress a setup failure report.
+            continue
+    fallback = Path(tempfile.mkdtemp(prefix="run-setup-", dir=evidence_root))
+    return status(distro, case_id, state, fallback)
 
 
 def verify(evidence_root):
@@ -107,6 +155,11 @@ def main():
     report.add_argument("--case-id", required=True)
     report.add_argument("--status", required=True)
     report.add_argument("--evidence-dir", type=Path, required=True)
+    fallback = commands.add_parser("ensure-failure")
+    fallback.add_argument("--distro", required=True)
+    fallback.add_argument("--case-id", required=True)
+    fallback.add_argument("--status", required=True)
+    fallback.add_argument("--evidence-root", type=Path, required=True)
     verify_parser = commands.add_parser("verify")
     verify_parser.add_argument("--evidence-root", type=Path, required=True)
     args = parser.parse_args()
@@ -115,6 +168,8 @@ def main():
             return configure()
         if args.command == "verify":
             return verify(args.evidence_root)
+        if args.command == "ensure-failure":
+            return ensure_failure(args.distro, args.case_id, args.status, args.evidence_root)
         return status(args.distro, args.case_id, args.status, args.evidence_dir)
     except (ValueError, KeyError, OSError):
         print("::error::Invalid Sentry configuration or reporting input; check configuration and paths")

@@ -12,21 +12,26 @@ trap 'rc=$?; if [[ "$rc" == 2 ]]; then printf "error: invalid inventory configur
 work=""; distro=""; tiers=""; tag=""; binary=""; tsv=""
 allow_mutations=false
 allow_credentialed=false
+isolate_hermetic=false
+network_scope=unconfined
+network_policy=""
 row_timeout=120
 ssh_port=2222
 ssh_user=bench
 while (($#)); do
   case "$1" in
-    --work|--distro|--tiers|--tag|--binary|--tsv|--row-timeout|--ssh-port|--ssh-user)
+    --work|--distro|--tiers|--tag|--binary|--tsv|--row-timeout|--ssh-port|--ssh-user|--network-policy)
       [[ $# -ge 2 && -n "$2" ]] || exit 2
       case "$1" in
         --work) work=$2 ;; --distro) distro=$2 ;; --tiers) tiers=$2 ;;
         --tag) tag=$2 ;; --binary) binary=$2 ;; --tsv) tsv=$2 ;;
+        --network-policy) network_policy=$2 ;;
         --row-timeout) row_timeout=$2 ;; --ssh-port) ssh_port=$2 ;; --ssh-user) ssh_user=$2 ;;
       esac
       shift 2 ;;
     --allow-mutations) allow_mutations=true; shift ;;
     --allow-credentialed) allow_credentialed=true; shift ;;
+    --isolate-hermetic) isolate_hermetic=true; shift ;;
     --help) printf 'Usage: qemu-inventory.sh --work DIR --distro D --tiers CSV --tag TAG --binary GUEST_PATH --tsv FILE [--allow-mutations] [--allow-credentialed] [--row-timeout S]\nRuns TSV-selected rows in the guest at 127.0.0.1 and writes evidence.\n'; exit 0 ;;
     *) printf 'error: unknown argument %s\n' "$1" >&2; exit 2 ;;
   esac
@@ -43,6 +48,15 @@ for tier in "${requested_tiers[@]}"; do
   case "$tier" in hermetic|container|qemu|network|credentialed|pty|nested-container) ;; *) exit 2 ;; esac
 done
 [[ -f "$tsv" ]] || exit 2
+scopes='{}'
+if [[ "$isolate_hermetic" == true ]]; then
+  [[ -f "$network_policy" && ! -L "$network_policy" && $(wc -c < "$network_policy") -le 1048576 ]] || exit 2
+  inventory_digest=$(sha256sum "$tsv"); inventory_digest=${inventory_digest%% *}
+  scopes=$(jq -ce --arg digest "$inventory_digest" '
+    .inventories[$digest].cases | select(type=="array" and length>0) |
+    if all(.[]; .network_scope=="offline" or .network_scope=="network") then
+      map({key:.id,value:.network_scope}) | from_entries else error("invalid network scope") end' "$network_policy")
+fi
 
 root=$(cd "$work" && pwd)
 guest="$root/guest"
@@ -71,8 +85,8 @@ printf '{"complete":false}\n' > "$out/summary.json"
 pass=0; fail=0; skipped=0
 record() { # case_id result exit_code elapsed
   local entry
-  entry=$(jq -n --arg c "$1" --arg d "$distro" --arg r "$2" --argjson e "$3" --argjson s "$4" \
-    '{case_id:$c, distro:$d, result:$r, artifact_source:"inventory", exit_code:$e, elapsed_seconds:$s}')
+  entry=$(jq -n --arg c "$1" --arg d "$distro" --arg r "$2" --argjson e "$3" --argjson s "$4" --arg scope "$network_scope" \
+    '{case_id:$c, distro:$d, result:$r, artifact_source:"inventory", exit_code:$e, elapsed_seconds:$s, network_scope:$scope}')
   jq --slurpfile e <(printf '%s' "$entry") '. + [$e[0]]' "$summary_tmp" > "$summary_tmp.next"
   mv "$summary_tmp.next" "$summary_tmp"
 }
@@ -176,6 +190,10 @@ while IFS=$'\t' read -r case args_json safety _expected_exit expected_ux require
     if [[ "$want" == *",$t,"* ]]; then hit=true; break; fi
   done
   if [[ "$hit" == false ]]; then continue; fi
+  network_scope=unconfined
+  if [[ "$isolate_hermetic" == true ]]; then
+    network_scope=$(jq -er --arg id "$case" '.[$id]' <<< "$scopes")
+  fi
   # Declaration-only rows are parse-level, covered by cli_comprehensive.
   if [[ "$expected_ux" == declared ]]; then
     record "qemu-$distro-$case" SKIPPED -1 0; skipped=$((skipped+1)); continue
@@ -212,6 +230,9 @@ while IFS=$'\t' read -r case args_json safety _expected_exit expected_ux require
   blocked=false
   while [[ "$next" != - ]]; do
     if ! prereq_runnable "$next"; then blocked=true; break; fi
+    if [[ "$network_scope" == offline && $(jq -r --arg id "$next" '.[$id]' <<< "$scopes") != offline ]]; then
+      blocked=true; break
+    fi
     chain=("$next" "${chain[@]}")
     next="${row_requires[$next]}"
   done
@@ -255,6 +276,12 @@ while IFS=$'\t' read -r case args_json safety _expected_exit expected_ux require
   # transport/tool failures cannot satisfy an expected product refusal.
   remote+="; printf '\nOMG_QEMU_RECEIPT:%s:%s:%s\n' \"\$execution_phase\" \"\$rc\" \"\$assertion\""
   remote="bash -c $(jq -rn --arg s "$remote" '$s | @sh')"
+  if [[ "$network_scope" == offline ]]; then
+    # Put the supervisor AND its receipt inside the namespace. A namespace
+    # setup failure must be a transport/harness error, never an expected CLI
+    # refusal. Drop back to the SSH user before creating fixtures or running OMG.
+    remote="sudo -n unshare --net -- setpriv --reuid=\"\$(id -u)\" --regid=\"\$(id -g)\" --clear-groups --no-new-privs env HOME=\"\$HOME\" USER='$ssh_user' LOGNAME='$ssh_user' $remote"
+  fi
   start=$SECONDS
   transport=0
   budget=$(( (row_timeout + 5) * (${#chain[@]} + 1) + 15 ))

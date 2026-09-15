@@ -320,11 +320,18 @@ case "$1" in
         work=${argument#type=bind,src=}
         work=${work%,dst=/work}
         touch "$work/guest/"{client-key,guest-host-key,user-data,seed.img,overlay.qcow2,base.qcow2,vars.fd,qemu.pid}
+        printf '%s\n' "${FAKE_QEMU_SERIAL:-Linux version 6.12 fixture}" > "$work/guest/serial.log"
       fi
     done
     printf '%s\n' "$work" > "$FAKE_QEMU_STATE"
     printf 'fixture-controller\n' ;;
   exec)
+      if [[ "${!#}" == collect ]]; then
+        cat >/dev/null
+        [[ "${FAKE_QEMU_HEALTH_MISSING:-0}" == 0 ]] || exit 1
+        printf '{"schema_version":1,"complete":true,"boot_id":"00000000-1111-2222-3333-444444444444","kernel_bytes":100,"fatal_signatures":[],"product_crashes":[]}\n'
+        exit 0
+      fi
     for argument in "$@"; do
       if [[ "$argument" == /work/qemu-inventory.sh ]]; then
         work=$(<"$FAKE_QEMU_STATE")
@@ -372,6 +379,7 @@ case "$1" in
     [[ ${FAKE_QEMU_CLEANUP_FAIL:-0} == 0 ]] || exit 1
     rm -f "$FAKE_QEMU_STATE" ;;
   ps) [[ ! -f "$FAKE_QEMU_STATE" ]] || printf 'fixture-controller\n' ;;
+  inspect) printf '{"Running":true,"OOMKilled":%s,"ExitCode":0}\n' "${FAKE_QEMU_OOM:-false}" ;;
   *) exit 99 ;;
 esac
 EOF
@@ -396,12 +404,16 @@ done
 [[ -n "$child_result" ]] || fail 'interrupted QEMU child did not record its exit'
 
 export FAKE_QEMU_INFO_EXIT=0 FAKE_QEMU_STATE="$scratch/qemu-controller"
-for scenario in pass product-failure product-exit-three timeout cleanup-failure transport-failure missing-receipt; do
+for scenario in pass product-failure product-exit-three timeout cleanup-failure transport-failure missing-receipt kernel-crash controller-oom missing-health; do
   export FAKE_QEMU_GUEST_EXIT=0 FAKE_QEMU_CLEANUP_FAIL=0 FAKE_QEMU_MISSING_RECEIPT=0
+  export FAKE_QEMU_SERIAL='Linux version 6.12 fixture' FAKE_QEMU_OOM=false FAKE_QEMU_HEALTH_MISSING=0
   unset FAKE_QEMU_TRANSPORT_EXIT
   expected_rc=0
   expected_result=PASS
   case "$scenario" in
+    kernel-crash) export FAKE_QEMU_SERIAL='Kernel panic - not syncing: fixture'; expected_rc=120; expected_result=HARNESS_ERROR ;;
+    controller-oom) export FAKE_QEMU_OOM=true; expected_rc=120; expected_result=HARNESS_ERROR ;;
+    missing-health) export FAKE_QEMU_HEALTH_MISSING=1; expected_rc=120; expected_result=HARNESS_ERROR ;;
     product-failure) export FAKE_QEMU_GUEST_EXIT=1; expected_rc=1; expected_result=PRODUCT_FAIL ;;
     product-exit-three) export FAKE_QEMU_GUEST_EXIT=3; expected_rc=3; expected_result=PRODUCT_FAIL ;;
     timeout) export FAKE_QEMU_GUEST_EXIT=124; expected_rc=124; expected_result=PRODUCT_FAIL ;;
@@ -426,6 +438,7 @@ for scenario in pass product-failure product-exit-three timeout cleanup-failure 
   fi
 done
 export FAKE_QEMU_GUEST_EXIT=0 FAKE_QEMU_CLEANUP_FAIL=0 FAKE_QEMU_MISSING_RECEIPT=0
+export FAKE_QEMU_SERIAL='Linux version 6.12 fixture' FAKE_QEMU_OOM=false FAKE_QEMU_HEALTH_MISSING=0
 unset FAKE_QEMU_TRANSPORT_EXIT
 export FAKE_QEMU_BENCHMARK=1
 for shape in missing partial; do

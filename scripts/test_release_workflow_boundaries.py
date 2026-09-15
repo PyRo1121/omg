@@ -21,6 +21,15 @@ def step_script(block, name):
 
 
 class ReleaseWorkflowBoundaryTests(unittest.TestCase):
+    def test_immutable_tag_waits_for_other_workflows_without_waiting_on_itself(self):
+        block = job_block((WORKFLOWS / 'ci.yml').read_text(), 'release-tag')
+        tag = block.index('git tag "$TAG" "$GITHUB_SHA"')
+        for workflow in ('benchmark.yml', 'audit.yml', 'secrets.yml', 'codeql.yml',
+                         'coverage.yml', 'docker-e2e.yml', 'qemu-matrix.yml'):
+            self.assertLess(block.index(f'scripts/require-workflow-success.sh {workflow}'), tag)
+        self.assertNotIn('scripts/require-workflow-success.sh ci.yml', block)
+        self.assertIn('ci-success]', block)
+
     def test_dispatch_executes_exact_gates_without_evaluating_input(self):
         release = (WORKFLOWS / 'release.yml').read_text(encoding='utf-8')
         script = step_script(job_block(release, 'gate-on-ci'),
@@ -53,6 +62,11 @@ class ReleaseWorkflowBoundaryTests(unittest.TestCase):
         for workflow in ('ci.yml', 'benchmark.yml', 'audit.yml', 'secrets.yml',
                          'codeql.yml', 'coverage.yml', 'docker-e2e.yml', 'qemu-matrix.yml'):
             self.assertIn(f'scripts/require-workflow-success.sh {workflow} "$GITHUB_SHA"', gate)
+            source = (WORKFLOWS / workflow).read_text(encoding='utf-8')
+            push = re.search(r'^  push:\n((?:    .*\n)+)', source, re.M)
+            self.assertIsNotNone(push, workflow)
+            self.assertIn('branches: [main]', push[1], workflow)
+            self.assertNotRegex(push[1], r'paths(?:-ignore)?:', workflow)
 
     def test_fixture_and_single_tag_gate_all_smoke_jobs(self):
         text = (WORKFLOWS / 'release-smoke.yml').read_text()
@@ -127,11 +141,13 @@ class ReleaseWorkflowBoundaryTests(unittest.TestCase):
         self.assertIn('echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"', debian)
         benchmark = (WORKFLOWS / 'benchmark.yml').read_text(encoding='utf-8')
         push = benchmark.split('  push:\n', 1)[1].split('  schedule:', 1)[0]
-        for build_input in ('Cargo.toml', 'Cargo.lock', 'build.rs', 'rust-toolchain.toml', '.cargo/**'):
-            self.assertIn(build_input, push)
+        # All main pushes include build-input changes and workflow-only fixes.
+        self.assertNotRegex(push, r'paths(?:-ignore)?:')
         self.assertIn('branches: [main]', push)
         self.assertIn('workflow_dispatch:', benchmark)
         self.assertIn('      - name: Upload Benchmark Report\n        if: always()', benchmark)
+        ci = (WORKFLOWS / 'ci.yml').read_text(encoding='utf-8')
+        self.assertIn("should-build: ${{ github.event_name == 'push' || steps.changes.outputs.rust == 'true' }}", ci)
 
     def test_publication_requires_tag_but_branch_dry_run_remains_valid(self):
         text = (WORKFLOWS / 'release.yml').read_text(encoding='utf-8')

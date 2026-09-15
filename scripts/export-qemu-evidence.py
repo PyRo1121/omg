@@ -21,9 +21,14 @@ RUN = r"run-[a-zA-Z0-9-]+"
 HOST_FILES = {
     "results.json", "sentry-results.json", "metadata.txt", "host-metadata.txt",
     "cleanup.log", "reporting.log", "reporting-status.json", "kvm-probe.log", "engine-preflight.log",
-    "controller-setup.log", "image-setup.log", "boot.log", "guest-check.log",
+    "controller-setup.log", "controller-security.log", "image-setup.log", "boot.log", "guest-check.log",
     "evidence-copy.log", "benchmark-validation.log", "transactions.log",
     "transaction-validation.log", "inventory.log",
+    "guest-health.json", "controller-health.json", "controller-final-state.json", "health-validation.log",
+    "inventory-admission.json",
+    "storage-faults.json", "storage-faults.log",
+    "egress-policy.json", "egress-policy.log",
+    "image-provenance.json",
     "benchmark-driver-sha256.txt", "cases.tsv", "controller-id.txt", "release-checksum.txt",
 }
 GUEST_FILES = {
@@ -106,7 +111,7 @@ def allowed_file(parts):
         ) is not None
     if len(parent) == 3 and parent[:2] == ("transactions", "trials"):
         return name in {"disk-create.log", "serial.log", "boot.log", "guest.log", "copy.log",
-                        "validation.log", "stop.log"}
+                        "validation.log", "stop.log", "health.json", "health.log"}
     return benchmark_file(name) or (
         len(parent) == 4 and parent[:2] == ("transactions", "trials")
         and parent[3] == "transaction-trial" and name in TRANSACTION_FILES

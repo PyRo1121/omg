@@ -2,7 +2,7 @@
 # Optimized for speed, reliability, and comprehensive coverage
 #
 # Key Features:
-# - Path filtering: Only runs when relevant files change
+# - PR path filtering: Avoid redundant platform builds for documentation
 # - Quick gate: Fast checks run first, gate expensive builds
 # - Matrix strategy: 6 platforms tested in parallel
 # - cargo-nextest: 10-35% faster test execution
@@ -15,24 +15,7 @@ name: CI
 on:
   push:
     branches: [main]
-    paths:
-      - "build.rs"
-      - "install.sh"
-      - "benchmark.sh"
-      - "benchmark-hyperfine.sh"
-      - "src/**"
-      - "tests/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "Makefile"
-      - "benches/**"
-      - "fuzz/**"
-      - "scripts/**"
-      - "rust-toolchain.toml"
-      - ".cargo/**"
-      - ".config/**"
-      - "deny.toml"
-      - ".github/workflows/ci.yml"
+    # Every main commit needs exact-commit evidence for the release gate.
   # Always report the required check on PRs. The job-level change filter
   # below skips platform builds for documentation/configuration-only changes.
   pull_request:
@@ -76,7 +59,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
-      should-build: ${{ steps.changes.outputs.rust }}
+      should-build: ${{ github.event_name == 'push' || steps.changes.outputs.rust == 'true' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -819,7 +802,7 @@ jobs:
     needs: [quick-gate, portable, linux-matrix, sandbox-cancellation, feature-intersections, macos, ubuntu, ci-success]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 100
     permissions:
       contents: write
       actions: write
@@ -857,6 +840,15 @@ jobs:
           fi
 
           scripts/require-workflow-success.sh benchmark.yml "$GITHUB_SHA" Benchmark
+          # Version tags are immutable. Validate the other workflows BEFORE
+          # creating a tag, so a failed candidate cannot consume a version.
+          # CI's own platform jobs are required through this job's needs.
+          scripts/require-workflow-success.sh audit.yml "$GITHUB_SHA" "Security Audit"
+          scripts/require-workflow-success.sh secrets.yml "$GITHUB_SHA" "Secret Scanning"
+          scripts/require-workflow-success.sh codeql.yml "$GITHUB_SHA" CodeQL
+          scripts/require-workflow-success.sh coverage.yml "$GITHUB_SHA" Coverage
+          scripts/require-workflow-success.sh docker-e2e.yml "$GITHUB_SHA" "Docker E2E"
+          scripts/require-workflow-success.sh qemu-matrix.yml "$GITHUB_SHA" "Staged QEMU"
 
           git tag "$TAG" "$GITHUB_SHA"
           git push origin "refs/tags/${TAG}"

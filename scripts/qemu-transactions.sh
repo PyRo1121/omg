@@ -263,6 +263,10 @@ for operation in install remove; do
         cmp "$output/$operation-manual-before.names" "$evidence/manual-before.names"
       else cp "$evidence/manual-before.names" "$output/$operation-manual-before.names"; fi
       phase=cleanup
+      remote_argv sudo -n python3 - collect < /work/check-qemu-health.py \
+        > "$trial/health.json" 2> "$trial/health.log"
+      python3 /work/check-qemu-health.py verify-trial --guest "$trial/health.json" \
+        --serial "$trial/serial.log" --boot-id "$boot_id" >> "$trial/health.log" 2>&1
       stop_guest > "$trial/stop.log" 2>&1
       rm -f "$disk" "$vars"
       set_result PASS 0

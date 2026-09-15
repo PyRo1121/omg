@@ -3,16 +3,7 @@ name: CodeQL Analysis
 on:
   push:
     branches: [main]
-    paths:
-      - "src/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "build.rs"
-      - "rust-toolchain.toml"
-      - ".cargo/**"
-      - ".github/codeql.yml"
-      - ".github/workflows/**"
-      - ".github/actions/**"
+    # Every main commit needs exact-commit evidence for the release gate.
   pull_request:
     branches: [main]
     paths:
