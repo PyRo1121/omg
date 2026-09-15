@@ -29,6 +29,11 @@ feat(config)!: support layered mise project environments
 - **Arch**: Add AUR-only update scope
 ### 🐛 Bug Fixes
 
+- **Test**: Verify all hardened release prerequisite calls
+- **Ci**: Scope the public cache namespace scanner exception
+- **Release**: Require current security and staged guest evidence
+- **Ci**: Preserve QEMU spawn isolation and cache compiled dependencies
+- **Security**: Verify QEMU provenance and drop guest process privileges
 - **Test**: Exercise CI path protections with valid relative fixtures
 - **Security**: Satisfy hardened CI writer lint
 - **Security**: Refuse redirected container config writes
