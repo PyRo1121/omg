@@ -576,7 +576,7 @@ jobs:
           ls -l /dev/kvm
 
       - name: Download staged binaries
-        if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.staged)
+        if: needs.prepare.outputs.staged == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: staged-${{ matrix.distro }}
@@ -592,9 +592,11 @@ jobs:
 
       - name: Run disposable guest lifecycle + read benchmarks + inventory rows
         # Staged runs exercise hermetic/container inventory; published runs add network/PTY coverage.
+        env:
+          STAGED: ${{ needs.prepare.outputs.staged }}
         run: |
           args=(--distro "${{ matrix.distro }}" --release "${{ needs.prepare.outputs.tag }}" --benchmark --evidence-dir "$RUNNER_TEMP/qemu-evidence")
-          if [[ "${{ github.event_name }}" == 'pull_request' || "${{ inputs.staged }}" == 'true' ]]; then
+          if [[ "$STAGED" == 'true' ]]; then
             args+=(--staged-dir staged --inventory-tiers "hermetic,container" --inventory-allow-mutations)
           else
             # No nested-container: guests have no docker-in-guest (yet).

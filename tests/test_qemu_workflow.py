@@ -82,6 +82,27 @@ class QemuWorkflowTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(values['tag'], 'v1.2.3')
 
+    def test_guest_uses_resolved_artifact_mode_for_every_event(self):
+        download = step('Download staged binaries')
+        self.assertIn("if: needs.prepare.outputs.staged == 'true'", download)
+        guest = step('Run disposable guest lifecycle + read benchmarks + inventory rows')
+        self.assertIn('STAGED: ${{ needs.prepare.outputs.staged }}', guest)
+        script = literal(guest, 'run', 8)
+        script = script.replace('${{ matrix.distro }}', 'arch').replace('${{ needs.prepare.outputs.tag }}', 'v1.2.3')
+        # Execute the real argument-selection shell, substituting only the VM launch.
+        script = script.replace('./scripts/benchmark-qemu.sh', 'printf "%s\\n"')
+        for event, staged in [('push', True), ('pull_request', True),
+                              ('workflow_dispatch', True), ('workflow_dispatch', False),
+                              ('schedule', False)]:
+            with self.subTest(event=event, staged=staged), tempfile.TemporaryDirectory() as tmp:
+                result, _ = self.run_script(script, {'STAGED': str(staged).lower(),
+                    'RUNNER_TEMP': tmp, 'GITHUB_EVENT_NAME': event}, Path(tmp))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                args = result.stdout.splitlines()
+                self.assertEqual('--staged-dir' in args, staged)
+                self.assertEqual('--release-dir' in args, not staged)
+                self.assertEqual('--inventory-file' in args, not staged)
+
     def test_pull_request_never_selects_configurable_arm_runner(self):
         with tempfile.TemporaryDirectory() as tmp:
             result, values = self.selection(Path(tmp), True, 'all', 'all', event_name='pull_request')
