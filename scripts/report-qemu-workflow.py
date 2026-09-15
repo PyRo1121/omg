@@ -12,6 +12,7 @@ import zipfile
 
 MAX_DOWNLOAD = 16 * 1024 * 1024
 FAILURES = {"FAIL", "PRODUCT_FAIL", "HARNESS_ERROR", "BLOCKED"}
+DISTROS = ("arch", "debian", "ubuntu", "fedora")
 
 
 def api(path, limit=1024 * 1024):
@@ -32,13 +33,33 @@ def identity(event, live, repository):
             or live["workflow_id"] != run["workflow_id"]
             or live["path"] != ".github/workflows/qemu-matrix.yml"
             or live["status"] != "completed"
-            or live["event"] not in ("push", "pull_request", "workflow_dispatch", "schedule")
+            or live["event"] not in ("push", "workflow_dispatch", "schedule")
             or not re.fullmatch(r"[0-9a-f]{40}", live["head_sha"])):
         raise ValueError("workflow identity or attempt mismatch")
     return live
 
 
-def archive_rows(content):
+def canonical_case_ids(policy):
+    inventories = policy.get("inventories") if isinstance(policy, dict) else None
+    if not isinstance(inventories, dict) or not inventories:
+        raise ValueError("invalid inventory policy")
+    identifiers = set()
+    for snapshot in inventories.values():
+        cases = snapshot.get("cases") if isinstance(snapshot, dict) else None
+        if not isinstance(cases, list):
+            raise ValueError("invalid inventory policy cases")
+        for case in cases:
+            case_id = case.get("id") if isinstance(case, dict) else None
+            if not isinstance(case_id, str) or not re.fullmatch(r"[a-z0-9][a-z0-9_.-]{0,120}", case_id):
+                raise ValueError("invalid inventory policy case")
+            identifiers.update(f"qemu-{distro}-{case_id}" for distro in DISTROS)
+    identifiers.update(f"qemu-{distro}-lifecycle" for distro in DISTROS)
+    identifiers.update(f"qemu-{distro}-aarch64-lifecycle" for distro in DISTROS)
+    identifiers.add("qemu-matrix-workflow")
+    return identifiers
+
+
+def archive_rows(content, allowed_cases):
     if len(content) > MAX_DOWNLOAD:
         raise ValueError("artifact download exceeds limit")
     rows = []
@@ -65,6 +86,7 @@ def archive_rows(content):
                 if (not isinstance(row, dict)
                         or not isinstance(row.get("case_id"), str)
                         or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,127}", row["case_id"])
+                        or row["case_id"] not in allowed_cases
                         or row.get("distro") not in ("arch", "debian", "ubuntu", "fedora")
                         or row.get("result") not in FAILURES | {"PASS", "SKIPPED"}
                         or type(row.get("exit_code")) is not int
@@ -100,6 +122,9 @@ def main():
     if type(run_id) is not int or run_id <= 0:
         raise ValueError("invalid run ID")
     run = identity(event, json.loads(api(f"repos/{repository}/actions/runs/{run_id}")), repository)
+    allowed_cases = canonical_case_ids(json.loads(
+        Path("tests/qemu-inventory-policy.json").read_text()
+    ))
     # Superseding an interactive run is not itself a product failure.
     if run["conclusion"] in ("cancelled", "skipped"):
         print("Cancelled/skipped run retained in Actions; no failure issue generated")
@@ -123,7 +148,10 @@ def main():
                 raise ValueError("stale or expired artifact")
             if type(artifact["id"]) is not int or artifact["size_in_bytes"] > MAX_DOWNLOAD:
                 raise ValueError("invalid artifact identity or size")
-            rows.extend(archive_rows(api(f"repos/{repository}/actions/artifacts/{artifact['id']}/zip", MAX_DOWNLOAD)))
+            rows.extend(archive_rows(
+                api(f"repos/{repository}/actions/artifacts/{artifact['id']}/zip", MAX_DOWNLOAD),
+                allowed_cases,
+            ))
         selected = projection(rows, successful_main)
     except (ValueError, KeyError, zipfile.BadZipFile, subprocess.SubprocessError):
         selected = []

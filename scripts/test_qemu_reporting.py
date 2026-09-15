@@ -28,7 +28,10 @@ class ReportingBoundaryTests(unittest.TestCase):
 
     def test_projection_removes_untrusted_fields_without_extraction(self):
         row = dict(self.row(), command="do not execute", environment={"secret": "private"})
-        result = REPORT.archive_rows(self.archive("run-a/inventory/results.json", json.dumps([row])))
+        result = REPORT.archive_rows(
+            self.archive("run-a/inventory/results.json", json.dumps([row])),
+            {row["case_id"]},
+        )
         self.assertEqual(result, [self.row()])
 
     def test_poisoned_archive_members_and_results_fail(self):
@@ -39,7 +42,25 @@ class ReportingBoundaryTests(unittest.TestCase):
                                     ("run-a/results.json", "x" * (1024 * 1024 + 1), 0)):
             with self.subTest(name=name, mode=mode):
                 with self.assertRaises(ValueError):
-                    REPORT.archive_rows(self.archive(name, content, mode))
+                    REPORT.archive_rows(self.archive(name, content, mode), {self.row()["case_id"]})
+
+    def test_report_rows_must_use_default_branch_case_identities(self):
+        with self.assertRaises(ValueError):
+            REPORT.archive_rows(
+                self.archive("run-a/results.json", json.dumps([
+                    dict(self.row(), case_id="attacker-selected-case")
+                ])),
+                {self.row()["case_id"]},
+            )
+
+    def test_policy_expands_only_reviewed_cases_and_lifecycle_receipts(self):
+        policy = {"inventories": {"digest": {"cases": [
+            {"id": "search", "tiers": ["hermetic"], "allowed_skips": {}}
+        ]}}}
+        cases = REPORT.canonical_case_ids(policy)
+        self.assertIn("qemu-arch-search", cases)
+        self.assertIn("qemu-fedora-aarch64-lifecycle", cases)
+        self.assertIn("qemu-matrix-workflow", cases)
 
     def test_pr_or_non_main_success_never_closes_issues(self):
         self.assertEqual(REPORT.projection([self.row("PASS")], False), [])
@@ -49,13 +70,18 @@ class ReportingBoundaryTests(unittest.TestCase):
     def test_identity_binds_repo_workflow_commit_and_attempt(self):
         live = dict(repository={"full_name": "owner/repo"}, id=10, run_attempt=2,
                     head_sha="a" * 40, workflow_id=20, path=".github/workflows/qemu-matrix.yml",
-                    status="completed", event="pull_request")
+                    status="completed", event="push")
         event = dict(repository={"full_name": "owner/repo"}, workflow_run=copy.deepcopy(live))
         self.assertEqual(REPORT.identity(event, live, "owner/repo"), live)
         for key, value in (("id", 11), ("run_attempt", 1), ("head_sha", "b" * 40),
-                           ("path", ".github/workflows/evil.yml"), ("event", "pull_request_target")):
+                           ("path", ".github/workflows/evil.yml"), ("event", "pull_request"),
+                           ("event", "pull_request_target")):
             with self.subTest(key=key), self.assertRaises(ValueError):
                 REPORT.identity(event, dict(live, **{key: value}), "owner/repo")
+
+    def test_privileged_report_job_excludes_pull_request_runs(self):
+        text = (ROOT / ".github/workflows/qemu-report.yml").read_text()
+        self.assertIn("if: github.event.workflow_run.event != 'pull_request'", text)
 
     def test_reporter_checks_out_default_sha_and_never_executes_artifacts(self):
         text = (ROOT / ".github/workflows/qemu-report.yml").read_text()

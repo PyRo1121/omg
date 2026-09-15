@@ -46,10 +46,11 @@ Ad hoc local inventories may run without this release policy.
 
 ## Failure reporting
 
-`qemu-report.yml` uses `workflow_run` to report completed QEMU failures from PRs,
-pushes, manual runs and scheduled runs. It checks out the default-branch SHA,
-never the triggering PR. Issue-write permission and PR-failure Sentry reporting
-remain in this trusted follow-up. ZIP members are parsed as bounded data without
+`qemu-report.yml` uses `workflow_run` to report completed QEMU failures from
+pushes, manual runs and scheduled runs. Pull-request runs cannot enter this
+privileged job: their artifacts are controlled by the proposed change, while a
+`workflow_run` job has secrets and a write token. The reporter checks out the
+default-branch SHA. ZIP members are parsed as bounded data without
 extraction or execution. Repository, workflow, commit and run-attempt identities
 are checked against GitHub before processing; old-attempt artifacts cannot close
 a current failure.
@@ -61,7 +62,8 @@ case failures also produce an aggregate issue linking the full evidence.
 Superseded/cancelled and skipped runs remain visible in Actions without opening
 product-failure issues. Recurring failures use the existing case fingerprint.
 Only a successful push run whose commit still equals current `main` can close
-matching issues. PR success and older green runs cannot authorize closure.
+matching issues. PR runs and older green runs cannot create, update, or close
+issues.
 
 The reporter becomes active after its workflow lands on the default branch.
 Confirm an actual completed-run report after merging; local parser tests alone

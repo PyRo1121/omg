@@ -13,6 +13,9 @@ concurrency:
 
 jobs:
   report:
+    # workflow_run has secrets and a write token. Never let pull-request
+    # artifacts drive this privileged reporter, even though they are parsed.
+    if: github.event.workflow_run.event != 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
