@@ -15,6 +15,7 @@ transaction_samples=0
 inventory_tiers=
 inventory_mutations=false
 inventory_isolation=false
+storage_faults=false
 report_inventory='[]'
 inventory_product_failure=false
 root="$HOME/.cache/build-targets/omg-qemu-benchmark"
@@ -38,6 +39,7 @@ while (($#)); do
     --print-pins) print_pins=true; shift ;;
     --inventory-allow-mutations) inventory_mutations=true; shift ;;
     --inventory-isolate-hermetic) inventory_isolation=true; shift ;;
+    --storage-faults) storage_faults=true; shift ;;
     --help)
       cat <<'HELP'
 Usage: scripts/benchmark-qemu.sh [--distro all|arch|debian|ubuntu|fedora]
@@ -207,6 +209,7 @@ if [[ "$distro" == all ]]; then
   [[ -z "$inventory_tiers" ]] || args+=(--inventory-tiers "$inventory_tiers")
   [[ "$inventory_mutations" == false ]] || args+=(--inventory-allow-mutations)
   [[ "$inventory_isolation" == false ]] || args+=(--inventory-isolate-hermetic)
+  [[ "$storage_faults" == false ]] || args+=(--storage-faults)
   jq -n --arg source "$source_kind" --arg suffix "$case_suffix" '["arch", "debian", "ubuntu", "fedora"] | map({case_id:("qemu-"+.+$suffix+"-lifecycle"), distro:., result:"NOT_RUN", artifact_source:$source, exit_code:null, elapsed_seconds:0})' > "$suite/results.json"
   for target in arch debian ubuntu fedora; do
     jq --arg target "$target" 'map(if .distro == $target then .result = "INCOMPLETE" else . end)' "$suite/results.json" > "$suite/results.next.json"
@@ -552,9 +555,9 @@ esac
 # never acceptable product refusals. Keep this after the lifecycle probe.
 if [[ -n "$inventory_tiers" ]]; then
   case "$distro" in
-    arch) sudo -n pacman -S --noconfirm --needed git make curl python ;;
-    debian|ubuntu) sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git make curl python3 ;;
-    fedora) sudo -n dnf install -y git make curl python3 podman ;;
+    arch) sudo -n pacman -S --noconfirm --needed git make curl python strace ;;
+    debian|ubuntu) sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git make curl python3 strace ;;
+    fedora) sudo -n dnf install -y git make curl python3 strace podman ;;
   esac > evidence/inventory-setup.txt 2>&1 || exit 120
   # The hermetic `new` row exercises the missing-toolchain refusal. A guest
   # with Cargo installed is a different fixture, not a product failure.
@@ -773,6 +776,21 @@ if [[ -n "$inventory_policy" ]]; then
   if [[ "$policy_rc" != 0 ]]; then
     [[ "$rc" != 0 ]] || rc=120
     inventory_harness_error=true
+  fi
+fi
+if [[ "$storage_faults" == true && "$rc" == 0 ]]; then
+  quoted_fault_binary=$(jq -rn --arg b "/home/bench/omg-${tag}-${arch}-linux-${distro}/omg" '$b | @sh')
+  fault_setup='set -eu; token=$(cat /proc/sys/kernel/random/uuid); printf "%s\n" "$token" > /run/omg-qemu-storage-faults; chmod 444 /run/omg-qemu-storage-faults; exec unshare --mount --propagation private python3 - --binary "$1" --token "$token"'
+  quoted_fault_setup=$(jq -rn --arg s "$fault_setup" '$s | @sh')
+  fault_rc=0
+  timeout --kill-after=5s 180s docker exec -i -w /work/guest "$controller" \
+    ssh -i client-key -p 2222 -o BatchMode=yes -o ConnectTimeout=5 \
+      -o ServerAliveInterval=5 -o ServerAliveCountMax=3 \
+      -o StrictHostKeyChecking=yes -o UserKnownHostsFile=known_hosts \
+      bench@127.0.0.1 "sudo -n bash -c $quoted_fault_setup bash $quoted_fault_binary" \
+      < "$here/qemu-storage-faults.py" > "$work/storage-faults.json" 2> "$work/storage-faults.log" || fault_rc=$?
+  if [[ "$fault_rc" != 0 ]] || ! python3 "$here/qemu-storage-faults.py" --receipt "$work/storage-faults.json" >> "$work/storage-faults.log" 2>&1; then
+    rc=120
   fi
 fi
 # Health is an independent admission gate after the selected test work. Query
