@@ -110,7 +110,7 @@ defaults:
 jobs:
   prepare:
     name: "Resolve test selection and provenance"
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     outputs:
       staged: ${{ steps.selection.outputs.staged }}
@@ -236,7 +236,7 @@ jobs:
       cancel-in-progress: ${{ github.event_name != 'schedule' }}
     needs: prepare
     if: needs.prepare.outputs.staged == 'true' && needs.prepare.outputs.x64 == 'true' && needs.prepare.outputs.build-x64 != '[]'
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -301,7 +301,7 @@ jobs:
     name: "Staged build (ubuntu)"
     needs: prepare
     if: needs.prepare.outputs.staged == 'true' && needs.prepare.outputs.x64 == 'true' && (github.event_name != 'workflow_dispatch' || inputs.distro == 'all' || inputs.distro == 'ubuntu')
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -394,7 +394,7 @@ jobs:
       cancel-in-progress: ${{ github.event_name != 'schedule' }}
     needs: [prepare, arm-runner-health]
     if: needs.prepare.outputs.staged == 'true' && needs.prepare.outputs.arm64 == 'true' && needs.prepare.outputs.build-arm64 != '[]'
-    runs-on: ubuntu-24.04-arm
+    runs-on: blacksmith-4vcpu-ubuntu-2404-arm
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -455,7 +455,7 @@ jobs:
     name: "Staged build arm64 (ubuntu)"
     needs: [prepare, arm-runner-health]
     if: needs.prepare.outputs.staged == 'true' && needs.prepare.outputs.arm64 == 'true' && (github.event_name != 'workflow_dispatch' || inputs.distro == 'all' || inputs.distro == 'ubuntu')
-    runs-on: ubuntu-24.04-arm
+    runs-on: blacksmith-4vcpu-ubuntu-2404-arm
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -524,7 +524,7 @@ jobs:
       !cancelled() && needs.prepare.result == 'success' && needs.prepare.outputs.x64 == 'true' &&
       (needs.build-staged.result == 'success' || needs.build-staged.result == 'skipped') &&
       (needs.build-staged-ubuntu.result == 'success' || needs.build-staged-ubuntu.result == 'skipped')
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 90
     strategy:
       fail-fast: false
@@ -777,7 +777,7 @@ jobs:
     name: "QEMU matrix result"
     needs: [prepare, arm-runner-health, build-staged, build-staged-ubuntu, build-staged-arm, build-staged-ubuntu-arm, guest, guest-arm]
     if: always()
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
