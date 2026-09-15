@@ -38,11 +38,15 @@ def bounded_file(path):
 
 def query(argv):
     # File-backed capture bounds Python memory even if a guest is very noisy.
-    with tempfile.TemporaryFile() as output:
-        completed = subprocess.run(argv, stdout=output, stderr=subprocess.DEVNULL,
+    with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors:
+        completed = subprocess.run(argv, stdout=output, stderr=errors,
                                    timeout=15, check=False)
         if completed.returncode != 0 or output.tell() > LIMIT:
-            raise ValueError(f"health query failed: exit={completed.returncode}, bytes={output.tell()}")
+            errors.seek(0)
+            detail = errors.read(4096).decode("utf-8", errors="replace")
+            detail = re.sub(r"[^a-zA-Z0-9 ._:/=()\n-]", "?", detail)
+            kind = "kernel" if "--dmesg" in argv else "crash"
+            raise ValueError(f"{kind} health query failed: exit={completed.returncode}, bytes={output.tell()}: {detail}")
         output.seek(0)
         return output.read(LIMIT + 1).decode("utf-8", errors="strict")
 

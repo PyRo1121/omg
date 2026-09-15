@@ -132,6 +132,7 @@ jobs:
           ./scripts/test-release-smoke.sh
           ./scripts/test-qa-file-issue.sh
           python3 -m unittest discover -s scripts -p test_ci_smoke_report.py
+          sudo -n python3 -m unittest discover -s scripts -p test_qemu_health.py
           sudo -n python3 -m unittest discover -s scripts -p test_export_qemu_evidence.py
 
       - name: Resolve selection

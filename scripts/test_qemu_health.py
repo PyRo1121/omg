@@ -1,5 +1,7 @@
 import importlib.util
 import json
+import os
+import shutil
 from pathlib import Path
 import tempfile
 import unittest
@@ -30,6 +32,13 @@ class HealthTests(unittest.TestCase):
 
     def test_clean_health_passes(self):
         self.assertEqual(self.verify(), 0)
+
+    @unittest.skipUnless(os.name == "posix" and hasattr(os, "geteuid") and os.geteuid() == 0
+                         and shutil.which("journalctl"), "Native root journal query runs in Linux QEMU preparation")
+    def test_native_systemd_collection(self):
+        receipt = HEALTH.collect()
+        self.assertTrue(receipt["complete"])
+        self.assertGreater(receipt["kernel_bytes"], 0)
 
     def test_collector_binds_optional_boot_argument_and_accepts_no_crashes(self):
         with patch.object(HEALTH.Path, "read_text", return_value=self.payload["boot_id"]), \
