@@ -53,13 +53,20 @@ jobs:
           [[ "$SOURCE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           [[ "$TARGET_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           test "$SOURCE_TAG" != "$TARGET_TAG"
+          source_signer=omg-cli/omg
+          if [[ "$SOURCE_TAG" == v0.0.* ]] || {
+            [[ "$SOURCE_TAG" =~ ^v0\.1\.([0-9]{1,3})$ ]] &&
+              (( 10#${BASH_REMATCH[1]} <= 221 ))
+          }; then
+            source_signer=PyRo1121/omg
+          fi
           trial=$(mktemp -d)
           cd "$trial"
           archive="omg-${SOURCE_TAG}-x86_64-linux-ubuntu.tar.gz"
-          gh release download "$SOURCE_TAG" --repo PyRo1121/omg --pattern "$archive" --pattern "$archive.sha256"
+          gh release download "$SOURCE_TAG" --repo omg-cli/omg --pattern "$archive" --pattern "$archive.sha256"
           sha256sum --check "$archive.sha256"
-          gh attestation verify "$archive" --repo PyRo1121/omg \
-            --signer-workflow PyRo1121/omg/.github/workflows/release.yml \
+          gh attestation verify "$archive" --repo "$source_signer" \
+            --signer-workflow "$source_signer/.github/workflows/release.yml" \
             --source-ref "refs/tags/$SOURCE_TAG"
           tar -xzf "$archive" --strip-components=1 "${archive%.tar.gz}/omg"
           test "$(./omg --version)" = "omg ${SOURCE_TAG#v}"

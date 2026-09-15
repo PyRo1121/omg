@@ -21,6 +21,26 @@ def step_script(block, name):
 
 
 class ReleaseWorkflowBoundaryTests(unittest.TestCase):
+    def test_published_upgrade_selects_source_signer_before_download(self):
+        workflow = (WORKFLOWS / 'release-smoke.yml').read_text(encoding='utf-8')
+        script = step_script(job_block(workflow, 'upgrade'),
+                             'Verify source release and exercise self-update')
+        selection = script.split('trial=$(mktemp -d)', 1)[0]
+        for tag, expected in [('v0.1.220', 'PyRo1121/omg'),
+                              ('v0.1.221', 'PyRo1121/omg'),
+                              ('v0.1.222', 'omg-cli/omg'),
+                              ('v0.2.0', 'omg-cli/omg'),
+                              ('v1.0.0', 'omg-cli/omg')]:
+            with self.subTest(tag=tag):
+                result = subprocess.run(
+                    [BASH, '-c', selection + '\nprintf "%s" "$source_signer"'],
+                    env=dict(os.environ, SOURCE_TAG=tag, TARGET_TAG='v9.9.9'),
+                    capture_output=True, text=True, encoding='utf-8', timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, expected)
+        self.assertIn('--repo "$source_signer"', script)
+        self.assertIn('--signer-workflow "$source_signer/.github/workflows/release.yml"', script)
+
     def test_immutable_tag_waits_for_other_workflows_without_waiting_on_itself(self):
         block = job_block((WORKFLOWS / 'ci.yml').read_text(), 'release-tag')
         tag = block.index('git tag "$TAG" "$GITHUB_SHA"')
