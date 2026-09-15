@@ -267,6 +267,20 @@ pub fn after_command() {
     }
 }
 
+/// Handle the private shell protocol before telemetry, logging or runtime startup.
+pub fn try_handle(args: &[String]) -> bool {
+    if !(args.len() == 2 || (args.len() == 3 && args[2] == "--refresh"))
+        || args.get(1).map(String::as_str) != Some("__update-notice")
+    {
+        return false;
+    }
+    #[cfg(unix)]
+    if let Err(error) = unix::run(args.len() == 3) {
+        tracing::debug!("Update notice unavailable: {error:#}");
+    }
+    true
+}
+
 #[cfg(test)]
 mod command_tests {
     use super::command_notice_allowed;
@@ -293,18 +307,4 @@ mod command_tests {
             assert!(!command_notice_allowed(&args), "{args:?}");
         }
     }
-}
-
-/// Handle the private shell protocol before telemetry, logging or runtime startup.
-pub fn try_handle(args: &[String]) -> bool {
-    if !(args.len() == 2 || (args.len() == 3 && args[2] == "--refresh"))
-        || args.get(1).map(String::as_str) != Some("__update-notice")
-    {
-        return false;
-    }
-    #[cfg(unix)]
-    if let Err(error) = unix::run(args.len() == 3) {
-        tracing::debug!("Update notice unavailable: {error:#}");
-    }
-    true
 }
