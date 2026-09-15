@@ -60,10 +60,12 @@ def collect():
     boot_id = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
     if not BOOT_ID.fullmatch(boot_id):
         raise ValueError("invalid guest boot identity")
-    kernel = query(["journalctl", "--boot=" + boot_id, "--dmesg", "--quiet", "--no-pager", "--output=cat"])
+    # /proc uses UUID hyphens; journalctl's boot descriptor requires 32 hex digits.
+    journal_boot = boot_id.replace("-", "")
+    kernel = query(["journalctl", "--boot=" + journal_boot, "--dmesg", "--quiet", "--no-pager", "--output=cat"])
     if not kernel.strip() or kernel.strip() == "-- No entries --":
         raise ValueError("missing boot kernel evidence")
-    cores = query(["journalctl", "--boot=" + boot_id, "--quiet", "--no-pager", "--output=json",
+    cores = query(["journalctl", "--boot=" + journal_boot, "--quiet", "--no-pager", "--output=json",
                    "--output-fields=COREDUMP_COMM,COREDUMP_SIGNAL",
                    "MESSAGE_ID=fc2e22bc6ee647b6b90729ab34a250b1"])
     crashes = []

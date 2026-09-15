@@ -47,7 +47,7 @@ class HealthTests(unittest.TestCase):
         self.assertTrue(receipt["complete"])
         self.assertEqual(receipt["product_crashes"], [])
         for call in query.call_args_list:
-            self.assertIn("--boot=" + self.payload["boot_id"], call.args[0])
+            self.assertIn("--boot=" + self.payload["boot_id"].replace("-", ""), call.args[0])
             self.assertIn("--quiet", call.args[0])
             self.assertNotIn("--boot", call.args[0])
 
