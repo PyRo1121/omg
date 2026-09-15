@@ -52,6 +52,7 @@ pub mod telemetry;
 pub mod tool;
 pub mod tui;
 pub mod ui;
+pub mod update_notice;
 pub mod why;
 pub mod workspace;
 

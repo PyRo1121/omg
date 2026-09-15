@@ -728,6 +728,10 @@ fn main() {
 
     let mut args: Vec<String> = std::env::args().collect();
 
+    if omg_lib::cli::update_notice::try_handle(&args) {
+        std::process::exit(0);
+    }
+
     if let Some(show_all) = root_help_selection(&args) {
         finish(omg_lib::cli::help::print_root_help(show_all));
     }

@@ -334,7 +334,7 @@ fn parse_version(raw: &str) -> Result<Version> {
     Version::parse(trimmed).with_context(|| format!("invalid semantic version: {raw:?}"))
 }
 
-async fn fetch_latest_version() -> Result<Version> {
+pub(super) async fn fetch_latest_version() -> Result<Version> {
     let safe_url = crate::core::http::redact_url(LATEST_VERSION_URL);
     let response = send_get(LATEST_VERSION_URL, &safe_url).await?;
     let body = read_bounded_body(response, MAX_LATEST_VERSION_BYTES, &safe_url).await?;
