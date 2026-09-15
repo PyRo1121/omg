@@ -3,15 +3,7 @@ name: Code Coverage
 on:
   push:
     branches: [main]
-    paths:
-      - "src/**"
-      - "tests/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "build.rs"
-      - "rust-toolchain.toml"
-      - ".cargo/**"
-      - ".github/workflows/coverage.yml"
+    # Every main commit needs exact-commit evidence for the release gate.
   pull_request:
     branches: [main]
   workflow_dispatch:

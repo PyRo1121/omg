@@ -22,17 +22,7 @@ name: QEMU Matrix
 on:
   push:
     branches: [main]
-    paths:
-      - "src/**"
-      - "tests/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "build.rs"
-      - "rust-toolchain.toml"
-      - ".cargo/**"
-      - "benchmark-hyperfine.sh"
-      - "scripts/**"
-      - ".github/workflows/qemu-matrix.yml"
+    # Every main commit needs exact-commit evidence for the release gate.
   pull_request:
     branches: [main]
     paths:

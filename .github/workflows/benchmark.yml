@@ -3,20 +3,7 @@ name: Benchmark
 on:
   push:
     branches: [main]
-    paths:
-      - ".github/workflows/benchmark.yml"
-      - "src/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "build.rs"
-      - "rust-toolchain.toml"
-      - ".cargo/**"
-      - "benchmark.sh"
-      - "benchmark-hyperfine.sh"
-      - "benches/**"
-      - "benchmarks/**"
-      - "scripts/check-perf-regression.py"
-      - "scripts/test_check_perf_regression.py"
+    # Every main commit needs exact-commit evidence for the release gate.
   schedule:
     - cron: "0 0 * * 0"
   workflow_dispatch:

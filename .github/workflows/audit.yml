@@ -3,13 +3,7 @@ name: Security Audit
 on:
   push:
     branches: [main]
-    paths:
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "deny.toml"
-      - "rust-toolchain.toml"
-      - ".cargo/**"
-      - ".github/workflows/audit.yml"
+    # Every main commit needs exact-commit evidence for the release gate.
   pull_request:
     branches: [main]
     paths:
