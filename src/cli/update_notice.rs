@@ -77,7 +77,8 @@ mod unix {
             metadata.is_file()
                 && metadata.nlink() == 1
                 && metadata.uid() == owner
-                && metadata.mode() & 0o077 == 0
+                // The six group/other permission bits must all be clear.
+                && metadata.mode().trailing_zeros() >= 6
                 && metadata.len() <= MAX_CACHE,
             "Unsafe notice cache"
         );
