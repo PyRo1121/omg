@@ -34,6 +34,18 @@ class ReportingBoundaryTests(unittest.TestCase):
         )
         self.assertEqual(result, [self.row()])
 
+    def test_transaction_receipts_do_not_poison_case_reporting(self):
+        output = io.BytesIO()
+        case = self.row("PASS")
+        with zipfile.ZipFile(output, "w") as archive:
+            archive.writestr("run-a/results.json", json.dumps([case]))
+            archive.writestr("run-a/inventory/results.json", json.dumps([self.row()]))
+            archive.writestr("run-a/transactions/results.json", json.dumps([
+                {"id": "install-native-001", "operation": "install", "result": "PASS"}
+            ]))
+        self.assertEqual(REPORT.archive_rows(output.getvalue(), {case["case_id"]}),
+                         [case, self.row()])
+
     def test_poisoned_archive_members_and_results_fail(self):
         for name, content, mode in (("../results.json", "[]", 0),
                                     ("/results.json", "[]", 0),

@@ -75,7 +75,10 @@ def archive_rows(content, allowed_cases):
                     or stat.S_ISLNK(mode) or member.filename in seen):
                 raise ValueError("unsafe artifact member")
             seen.add(member.filename)
-            if path.name != "results.json":
+            # Transaction trials use their own `results.json` schema (`id`,
+            # `operation`, ...). They are checked by the guest verifier; this
+            # reporter only consumes lifecycle and inventory case rows.
+            if path.name != "results.json" or path.parent.name == "transactions":
                 continue
             if member.file_size > 1024 * 1024:
                 raise ValueError("result exceeds limit")
