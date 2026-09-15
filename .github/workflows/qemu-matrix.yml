@@ -236,7 +236,9 @@ jobs:
       cancel-in-progress: ${{ github.event_name != 'schedule' }}
     needs: prepare
     if: needs.prepare.outputs.staged == 'true' && needs.prepare.outputs.x64 == 'true' && needs.prepare.outputs.build-x64 != '[]'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    env:
+      CARGO_BUILD_JOBS: "8"
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -301,7 +303,9 @@ jobs:
     name: "Staged build (ubuntu)"
     needs: prepare
     if: needs.prepare.outputs.staged == 'true' && needs.prepare.outputs.x64 == 'true' && (github.event_name != 'workflow_dispatch' || inputs.distro == 'all' || inputs.distro == 'ubuntu')
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    env:
+      CARGO_BUILD_JOBS: "8"
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

@@ -81,7 +81,9 @@ jobs:
   build-arch:
     name: "Build Arch"
     needs: gate-on-ci
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    env:
+      CARGO_BUILD_JOBS: "8"
     timeout-minutes: 30
     container: archlinux:latest@sha256:b0deabeb3d283da2c7f7dbf0eea051b7b2cd0554e0b737cc457fd21683bdcdd1
     steps:
@@ -128,11 +130,12 @@ jobs:
   build-debian:
     name: "Build Debian"
     needs: gate-on-ci
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 30
     container:
       image: debian:bookworm@sha256:813017f3d62be4b5891a7acca6a01bdcd4b8513daa81b1ab99d3a50385b26931
     env:
+      CARGO_BUILD_JOBS: "8"
       DEBIAN_FRONTEND: noninteractive
       CARGO_HOME: /usr/local/cargo
       RUSTUP_HOME: /usr/local/rustup
@@ -192,7 +195,9 @@ jobs:
   build-ubuntu:
     name: "Build Ubuntu"
     needs: gate-on-ci
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    env:
+      CARGO_BUILD_JOBS: "8"
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -235,7 +240,9 @@ jobs:
   build-fedora:
     name: "Build Fedora"
     needs: gate-on-ci
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    env:
+      CARGO_BUILD_JOBS: "8"
     timeout-minutes: 30
     container:
       image: fedora:latest@sha256:6c75d5bf57cb0fa5aa4b92c6a83c86c791644496d9ac230de7711f5b8ec3b898
