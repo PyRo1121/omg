@@ -44,7 +44,7 @@ jobs:
     name: Published Ubuntu upgrade
     if: github.event_name == 'workflow_dispatch' && inputs.upgrade_from != ''
     needs: resolve-release
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -94,7 +94,7 @@ jobs:
 
   runner-fixtures:
     name: Runner fixtures
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -109,7 +109,7 @@ jobs:
 
   resolve-release:
     name: Resolve release once
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       release_tag: ${{ steps.release.outputs.release_tag }}
@@ -131,7 +131,7 @@ jobs:
   smoke:
     needs: [runner-fixtures, resolve-release]
     name: "Smoke ${{ matrix.distro }}"
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -282,7 +282,7 @@ jobs:
     permissions:
       contents: read
       issues: write
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
