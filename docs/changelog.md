@@ -20,6 +20,14 @@ See the [release overview and complete commit ledger](releases/v0.1.221.md).
 
 - Upgrade rustls to 0.23.45 for RUSTSEC-2026-0285 (TLS 1.3 handshake encryption-level validation), including the fuzz lockfile.
 
+### QEMU and release assurance
+
+- Require patched QEMU controllers, reviewed guest-image provenance, exact inventory/skip policies, isolated offline tests and restricted controller egress.
+- Require reset install/remove trials and boot-scoped health checks; add privacy-export storage fault and recovery tests.
+- Preserve setup-failure evidence and report trusted push/manual/nightly failures using default-branch code. Daybreak's reporter changes exclude PR runs and require reviewed case identities.
+- Gate immutable release-tag creation on current independent workflow evidence; enforce main/check and release-tag rules.
+- Add expiring image reviews and advance maintenance warnings. [Control scope and limitations](ci-security-controls.md).
+
 ### Terminal update notices
 
 - Existing interactive Bash, Zsh and Fish hooks advise about newer OMG releases using a daily background check. No automatic installation. [Behavior and opt-out](update-notices.md).
