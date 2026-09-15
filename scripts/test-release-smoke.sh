@@ -326,13 +326,13 @@ case "$1" in
     printf '%s\n' "$work" > "$FAKE_QEMU_STATE"
     printf 'fixture-controller\n' ;;
   exec)
-    for argument in "$@"; do
-      if [[ "$argument" == collect ]]; then
+      if [[ "${!#}" == collect ]]; then
         cat >/dev/null
         [[ "${FAKE_QEMU_HEALTH_MISSING:-0}" == 0 ]] || exit 1
         printf '{"schema_version":1,"complete":true,"boot_id":"00000000-1111-2222-3333-444444444444","kernel_bytes":100,"fatal_signatures":[],"product_crashes":[]}\n'
         exit 0
       fi
+    for argument in "$@"; do
       if [[ "$argument" == /work/qemu-inventory.sh ]]; then
         work=$(<"$FAKE_QEMU_STATE")
         if [[ -n "${FAKE_INVENTORY_RESULT:-}" ]]; then
