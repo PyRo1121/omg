@@ -1,0 +1,2775 @@
+{
+  "schema_version": 1,
+  "profiles": {
+    "hermetic,container": [
+      "hermetic",
+      "container"
+    ],
+    "hermetic,qemu,container,network,pty": [
+      "hermetic",
+      "qemu",
+      "container",
+      "network",
+      "pty"
+    ]
+  },
+  "inventories": {
+    "3ee94b1a6aa0b8299c4e88ac7491394a97a41b831b9b9b43758d022fdea7f7ac": {
+      "releases": [
+        "v0.1.220"
+      ],
+      "cases": [
+        {
+          "id": "search",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "install",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "remove",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "update",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "info",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "why",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "outdated",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "size",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "blame",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "diff",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "snapshot-create",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "snapshot-list",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "snapshot-restore",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "snapshot-delete",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "ci-init",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "ci-validate",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "ci-cache",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "migrate-export",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "migrate-import",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "clean",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "explicit",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "explicit-shortcut",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "sync",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "use",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "list",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "hook",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "hooks-install",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "hooks-status",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "hooks-run",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "hooks-uninstall",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "workspace-init",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "workspace-add",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "workspace-list",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "workspace-run",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "workspace-diff",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "workspace-check",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "workspace-status",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "workspace-remove",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "hook-env",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "daemon",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "config",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "config-get",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "config-set",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "config-list",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "config-validate",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "config-path",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "config-reset",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "privacy",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "privacy-status",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "privacy-export",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "privacy-opt-out",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "privacy-opt-in",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "generate-man",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "daemon-status",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "completions",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "complete",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "which",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "status",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "doctor",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "audit",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "audit-scan",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "audit-sbom",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "audit-secrets",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "audit-log",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "audit-verify",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "audit-policy",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "audit-slsa",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "audit-slsa-identity",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "audit-licenses",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "audit-fix",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "audit-export",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "audit-eol",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "run",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "new",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "tool-install",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "tool-list",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "tool-remove",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "tool-update",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "tool-search",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "tool-registry",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "env-capture",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "env-check",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "env-share",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "env-sync",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "team-init",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "team-join-help",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "team-status",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "team-push",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "team-pull",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "team-members",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "team-dashboard",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "team-roles-list",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "team-golden-create",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "team-golden-list",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "team-golden-delete",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "team-compliance",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "team-activity",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "container-status",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "container-run",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "container-shell",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "container-build",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "container-list",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "container-images",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "container-pull",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "container-stop",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "container-exec",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "container-init",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "account-link",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "account-link-stdin",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "account-status",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "account-unlink",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "fleet-status",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "enterprise-reports",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "enterprise-policy-show",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "enterprise-audit-export",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "enterprise-license-scan",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "history",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "rollback",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "dash",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "stats",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "metrics",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "self-update",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "init",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "completions-install",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "runtime-python-install",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "outdated-json",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "search-quiet",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "status-verbose",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "info-verbose",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "workspace-readd-after-remove",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "workspace-run-success",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "all-commands-help",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "search-flags",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "install-flags",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "remove-flags",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "update-dry-run-yes",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "why-reverse",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "size-tree",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "diff-from",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "snapshot-restore-yes",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "ci-init-advanced",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "clean-flags",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "use-uninstall",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "list-available",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "hook-uninstall",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "hooks-install-force",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "workspace-run-flags",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "complete-full",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "audit-log-flags",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "audit-licenses-filter-policy",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "audit-licenses-export",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "audit-fix-flags",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "audit-export-flags",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "run-parallel",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "run-all",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "team-golden-create-flags",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "team-compliance-export",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "team-compliance-enforce",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "enterprise-reports-type",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "enterprise-policy-scope",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "enterprise-audit-export-flags",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "enterprise-license-scan-export",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "history-flags",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "rollback-yes",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "release-package-search-tree",
+          "tiers": [
+            "container"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "release-package-install-tree",
+          "tiers": [
+            "container"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "release-package-remove-tree",
+          "tiers": [
+            "container"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "update-fast",
+          "tiers": [
+            "container"
+          ],
+          "allowed_skips": {
+            "arch": "declared-cli-shape-only",
+            "debian": "declared-cli-shape-only",
+            "ubuntu": "declared-cli-shape-only",
+            "fedora": "declared-cli-shape-only"
+          }
+        },
+        {
+          "id": "update-turbo",
+          "tiers": [
+            "container"
+          ],
+          "allowed_skips": {
+            "arch": "declared-cli-shape-only",
+            "debian": "declared-cli-shape-only",
+            "ubuntu": "declared-cli-shape-only",
+            "fedora": "declared-cli-shape-only"
+          }
+        },
+        {
+          "id": "daemon-foreground",
+          "tiers": [
+            "container"
+          ],
+          "allowed_skips": {
+            "arch": "declared-cli-shape-only",
+            "debian": "declared-cli-shape-only",
+            "ubuntu": "declared-cli-shape-only",
+            "fedora": "declared-cli-shape-only"
+          }
+        },
+        {
+          "id": "doctor-network",
+          "tiers": [
+            "network"
+          ],
+          "allowed_skips": {
+            "arch": "declared-cli-shape-only",
+            "debian": "declared-cli-shape-only",
+            "ubuntu": "declared-cli-shape-only",
+            "fedora": "declared-cli-shape-only"
+          }
+        },
+        {
+          "id": "doctor-eol",
+          "tiers": [
+            "network"
+          ],
+          "allowed_skips": {
+            "arch": "declared-cli-shape-only",
+            "debian": "declared-cli-shape-only",
+            "ubuntu": "declared-cli-shape-only",
+            "fedora": "declared-cli-shape-only"
+          }
+        },
+        {
+          "id": "doctor-turbo",
+          "tiers": [
+            "qemu"
+          ],
+          "allowed_skips": {
+            "arch": "declared-cli-shape-only",
+            "debian": "declared-cli-shape-only",
+            "ubuntu": "declared-cli-shape-only",
+            "fedora": "declared-cli-shape-only"
+          }
+        },
+        {
+          "id": "run-watch",
+          "tiers": [
+            "pty"
+          ],
+          "allowed_skips": {
+            "arch": "declared-cli-shape-only",
+            "debian": "declared-cli-shape-only",
+            "ubuntu": "declared-cli-shape-only",
+            "fedora": "declared-cli-shape-only"
+          }
+        },
+        {
+          "id": "env-share-flags",
+          "tiers": [
+            "network",
+            "credentialed"
+          ],
+          "allowed_skips": {
+            "arch": "declared-cli-shape-only",
+            "debian": "declared-cli-shape-only",
+            "ubuntu": "declared-cli-shape-only",
+            "fedora": "declared-cli-shape-only"
+          }
+        },
+        {
+          "id": "self-update-force",
+          "tiers": [
+            "network"
+          ],
+          "allowed_skips": {
+            "arch": "declared-cli-shape-only",
+            "debian": "declared-cli-shape-only",
+            "ubuntu": "declared-cli-shape-only",
+            "fedora": "declared-cli-shape-only"
+          }
+        },
+        {
+          "id": "self-update-version",
+          "tiers": [
+            "network"
+          ],
+          "allowed_skips": {
+            "arch": "declared-cli-shape-only",
+            "debian": "declared-cli-shape-only",
+            "ubuntu": "declared-cli-shape-only",
+            "fedora": "declared-cli-shape-only"
+          }
+        },
+        {
+          "id": "container-run-detached",
+          "tiers": [
+            "nested-container"
+          ],
+          "allowed_skips": {
+            "arch": "declared-cli-shape-only",
+            "debian": "declared-cli-shape-only",
+            "ubuntu": "declared-cli-shape-only",
+            "fedora": "declared-cli-shape-only"
+          }
+        },
+        {
+          "id": "container-run-interactive",
+          "tiers": [
+            "nested-container",
+            "pty"
+          ],
+          "allowed_skips": {
+            "arch": "declared-cli-shape-only",
+            "debian": "declared-cli-shape-only",
+            "ubuntu": "declared-cli-shape-only",
+            "fedora": "declared-cli-shape-only"
+          }
+        },
+        {
+          "id": "container-shell-flags",
+          "tiers": [
+            "nested-container",
+            "pty"
+          ],
+          "allowed_skips": {
+            "arch": "declared-cli-shape-only",
+            "debian": "declared-cli-shape-only",
+            "ubuntu": "declared-cli-shape-only",
+            "fedora": "declared-cli-shape-only"
+          }
+        },
+        {
+          "id": "container-build-flags",
+          "tiers": [
+            "nested-container"
+          ],
+          "allowed_skips": {
+            "arch": "declared-cli-shape-only",
+            "debian": "declared-cli-shape-only",
+            "ubuntu": "declared-cli-shape-only",
+            "fedora": "declared-cli-shape-only"
+          }
+        },
+        {
+          "id": "clean-yes",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "install-review",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "update-review",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "update-no-sync",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        }
+      ]
+    },
+    "0ad44bc9a0422488e294e4b869c6769aa60dad3144d75e985acccc41625c9984": {
+      "releases": [
+        "v0.1.221"
+      ],
+      "cases": [
+        {
+          "id": "search",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "install",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "remove",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "update",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "info",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "why",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "outdated",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "size",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "blame",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "diff",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "snapshot-create",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "snapshot-list",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "snapshot-restore",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "snapshot-delete",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "ci-init",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "ci-validate",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "ci-cache",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "migrate-export",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "migrate-import",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "clean",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "explicit",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "explicit-shortcut",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "sync",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "use",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "list",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "hook",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "hooks-install",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "hooks-status",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "hooks-run",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "hooks-uninstall",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "workspace-init",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "workspace-add",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "workspace-list",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "workspace-run",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "workspace-diff",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "workspace-check",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "workspace-status",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "workspace-remove",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "hook-env",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "daemon",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "config",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "config-get",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "config-set",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "config-list",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "config-validate",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "config-path",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "config-reset",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "privacy",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "privacy-status",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "privacy-export",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "privacy-opt-out",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "privacy-opt-in",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "generate-man",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "daemon-status",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "completions",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "complete",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "which",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "status",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "doctor",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "audit",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "audit-scan",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "audit-sbom",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "audit-secrets",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "audit-log",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "audit-verify",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "audit-policy",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "audit-slsa",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "audit-slsa-identity",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "audit-licenses",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "audit-fix",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "audit-export",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "audit-eol",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "run",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "new",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "tool-install",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "tool-list",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "tool-remove",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "tool-update",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "tool-search",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "tool-registry",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "env-capture",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "env-check",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "env-share",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "env-sync",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "team-init",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "team-join-help",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "team-status",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "team-push",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "team-pull",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "team-members",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "team-dashboard",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "team-roles-list",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "team-golden-create",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "team-golden-list",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "team-golden-delete",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "team-compliance",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "team-activity",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "container-status",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "container-run",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "container-shell",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "container-build",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "container-list",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "container-images",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "container-pull",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "container-stop",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "container-exec",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "container-init",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "account-link",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "account-link-stdin",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "account-status",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "account-unlink",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "fleet-status",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "enterprise-reports",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "enterprise-policy-show",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "enterprise-audit-export",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "enterprise-license-scan",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "history",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "rollback",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "dash",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "stats",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "metrics",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "self-update",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "init",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "completions-install",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "runtime-python-install",
+          "tiers": [
+            "container"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "outdated-json",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "search-quiet",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "status-verbose",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "info-verbose",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "workspace-readd-after-remove",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "workspace-run-success",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "all-commands-help",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "search-flags",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "install-flags",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "remove-flags",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "update-dry-run-yes",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "why-reverse",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "size-tree",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "diff-from",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "snapshot-restore-yes",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "ci-init-advanced",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "clean-flags",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "use-uninstall",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "list-available",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "hook-uninstall",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "hooks-install-force",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "workspace-run-flags",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "complete-full",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "audit-log-flags",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "audit-licenses-filter-policy",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "audit-licenses-export",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "audit-fix-flags",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "audit-export-flags",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "run-parallel",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "run-all",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "team-golden-create-flags",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "team-compliance-export",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "team-compliance-enforce",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "enterprise-reports-type",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "enterprise-policy-scope",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "enterprise-audit-export-flags",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "enterprise-license-scan-export",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "history-flags",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "rollback-yes",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "release-package-search-tree",
+          "tiers": [
+            "container"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "release-package-install-tree",
+          "tiers": [
+            "container"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "release-package-remove-tree",
+          "tiers": [
+            "container"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "update-fast",
+          "tiers": [
+            "container"
+          ],
+          "allowed_skips": {
+            "arch": "declared-cli-shape-only",
+            "debian": "declared-cli-shape-only",
+            "ubuntu": "declared-cli-shape-only",
+            "fedora": "declared-cli-shape-only"
+          }
+        },
+        {
+          "id": "update-turbo",
+          "tiers": [
+            "container"
+          ],
+          "allowed_skips": {
+            "arch": "declared-cli-shape-only",
+            "debian": "declared-cli-shape-only",
+            "ubuntu": "declared-cli-shape-only",
+            "fedora": "declared-cli-shape-only"
+          }
+        },
+        {
+          "id": "daemon-foreground",
+          "tiers": [
+            "container"
+          ],
+          "allowed_skips": {
+            "arch": "declared-cli-shape-only",
+            "debian": "declared-cli-shape-only",
+            "ubuntu": "declared-cli-shape-only",
+            "fedora": "declared-cli-shape-only"
+          }
+        },
+        {
+          "id": "doctor-network",
+          "tiers": [
+            "network"
+          ],
+          "allowed_skips": {
+            "arch": "declared-cli-shape-only",
+            "debian": "declared-cli-shape-only",
+            "ubuntu": "declared-cli-shape-only",
+            "fedora": "declared-cli-shape-only"
+          }
+        },
+        {
+          "id": "doctor-eol",
+          "tiers": [
+            "network"
+          ],
+          "allowed_skips": {
+            "arch": "declared-cli-shape-only",
+            "debian": "declared-cli-shape-only",
+            "ubuntu": "declared-cli-shape-only",
+            "fedora": "declared-cli-shape-only"
+          }
+        },
+        {
+          "id": "doctor-turbo",
+          "tiers": [
+            "qemu"
+          ],
+          "allowed_skips": {
+            "arch": "declared-cli-shape-only",
+            "debian": "declared-cli-shape-only",
+            "ubuntu": "declared-cli-shape-only",
+            "fedora": "declared-cli-shape-only"
+          }
+        },
+        {
+          "id": "run-watch",
+          "tiers": [
+            "pty"
+          ],
+          "allowed_skips": {
+            "arch": "declared-cli-shape-only",
+            "debian": "declared-cli-shape-only",
+            "ubuntu": "declared-cli-shape-only",
+            "fedora": "declared-cli-shape-only"
+          }
+        },
+        {
+          "id": "env-share-flags",
+          "tiers": [
+            "network",
+            "credentialed"
+          ],
+          "allowed_skips": {
+            "arch": "declared-cli-shape-only",
+            "debian": "declared-cli-shape-only",
+            "ubuntu": "declared-cli-shape-only",
+            "fedora": "declared-cli-shape-only"
+          }
+        },
+        {
+          "id": "self-update-force",
+          "tiers": [
+            "network"
+          ],
+          "allowed_skips": {
+            "arch": "declared-cli-shape-only",
+            "debian": "declared-cli-shape-only",
+            "ubuntu": "declared-cli-shape-only",
+            "fedora": "declared-cli-shape-only"
+          }
+        },
+        {
+          "id": "self-update-version",
+          "tiers": [
+            "network"
+          ],
+          "allowed_skips": {
+            "arch": "declared-cli-shape-only",
+            "debian": "declared-cli-shape-only",
+            "ubuntu": "declared-cli-shape-only",
+            "fedora": "declared-cli-shape-only"
+          }
+        },
+        {
+          "id": "container-run-detached",
+          "tiers": [
+            "nested-container"
+          ],
+          "allowed_skips": {
+            "arch": "declared-cli-shape-only",
+            "debian": "declared-cli-shape-only",
+            "ubuntu": "declared-cli-shape-only",
+            "fedora": "declared-cli-shape-only"
+          }
+        },
+        {
+          "id": "container-run-interactive",
+          "tiers": [
+            "nested-container",
+            "pty"
+          ],
+          "allowed_skips": {
+            "arch": "declared-cli-shape-only",
+            "debian": "declared-cli-shape-only",
+            "ubuntu": "declared-cli-shape-only",
+            "fedora": "declared-cli-shape-only"
+          }
+        },
+        {
+          "id": "container-shell-flags",
+          "tiers": [
+            "nested-container",
+            "pty"
+          ],
+          "allowed_skips": {
+            "arch": "declared-cli-shape-only",
+            "debian": "declared-cli-shape-only",
+            "ubuntu": "declared-cli-shape-only",
+            "fedora": "declared-cli-shape-only"
+          }
+        },
+        {
+          "id": "container-build-flags",
+          "tiers": [
+            "nested-container"
+          ],
+          "allowed_skips": {
+            "arch": "declared-cli-shape-only",
+            "debian": "declared-cli-shape-only",
+            "ubuntu": "declared-cli-shape-only",
+            "fedora": "declared-cli-shape-only"
+          }
+        },
+        {
+          "id": "clean-yes",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "install-review",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "update-review",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "update-no-sync",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        },
+        {
+          "id": "update-aur-only",
+          "tiers": [
+            "hermetic"
+          ],
+          "allowed_skips": {}
+        }
+      ]
+    }
+  }
+}

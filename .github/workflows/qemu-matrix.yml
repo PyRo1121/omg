@@ -41,6 +41,8 @@ on:
       - "scripts/test_qemu_process_isolation.py"
       - "scripts/check-qemu-controller.sh"
       - "scripts/check-qemu-health.py"
+      - "scripts/check-qemu-inventory.py"
+      - "scripts/test_qemu_inventory_policy.py"
       - "scripts/test_qemu_health.py"
       - "scripts/test_qemu_controller_floor.py"
       - "scripts/qemu-transactions.sh"
@@ -590,7 +592,7 @@ jobs:
         env:
           STAGED: ${{ needs.prepare.outputs.staged }}
         run: |
-          args=(--distro "${{ matrix.distro }}" --release "${{ needs.prepare.outputs.tag }}" --benchmark --evidence-dir "$RUNNER_TEMP/qemu-evidence")
+          args=(--distro "${{ matrix.distro }}" --release "${{ needs.prepare.outputs.tag }}" --benchmark --evidence-dir "$RUNNER_TEMP/qemu-evidence" --inventory-policy tests/qemu-inventory-policy.json)
           if [[ "$STAGED" == 'true' ]]; then
             args+=(--staged-dir staged --inventory-tiers "hermetic,container" --inventory-allow-mutations)
           else
@@ -709,6 +711,7 @@ jobs:
         run: |
           ./scripts/benchmark-qemu.sh --arch aarch64 --distro "${{ matrix.distro }}" --benchmark --evidence-dir "$RUNNER_TEMP/qemu-evidence" \
             --release "${{ needs.prepare.outputs.tag }}" \
+            --inventory-policy tests/qemu-inventory-policy.json \
             --staged-dir staged --inventory-tiers hermetic,container --inventory-allow-mutations
 
       - name: Preserve setup failure evidence
@@ -748,44 +751,8 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  #########################################################################
-  # STAGE 3: file/update one issue per QA failure (nightly only).
-  # One-time bootstrap: create the `qa-failure` label in repo settings.
-  #########################################################################
-  file-issues:
-    name: "File QA issues"
-    needs: guest
-    if: always() && github.event_name == 'schedule'
-    permissions:
-      contents: read
-      issues: write
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          ref: ${{ github.sha }}
-
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          pattern: qemu-evidence-*
-          path: evidence/
-          merge-multiple: false
-
-      - name: File or update failure issues
-        if: github.event_name != 'pull_request'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-          shopt -s nullglob globstar
-          reports=(evidence/**/results.json)
-          (( ${#reports[@]} > 0 )) || { echo "::error::No guest results downloaded"; exit 1; }
-          for results in "${reports[@]}"; do
-            ./scripts/qa-file-issue.sh "$results" --run-url "$run_url" --source qemu-matrix
-          done
-
+  # qemu-report.yml handles all completed events from trusted default-branch
+  # code. Guest execution never receives issue-write permission.
   summary:
     name: "QEMU matrix result"
     needs: [prepare, arm-runner-health, build-staged, build-staged-ubuntu, build-staged-arm, build-staged-ubuntu-arm, guest, guest-arm]

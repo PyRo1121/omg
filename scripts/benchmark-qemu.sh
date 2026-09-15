@@ -6,6 +6,7 @@ tag=v0.1.218
 staged_dir=
 release_dir=
 inventory_file=
+inventory_policy=
 arch=
 print_pins=false
 benchmark=false
@@ -18,11 +19,12 @@ root="$HOME/.cache/build-targets/omg-qemu-benchmark"
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 while (($#)); do
   case "$1" in
-    --distro|--release|--staged-dir|--release-dir|--inventory-file|--evidence-dir|--inventory-tiers|--arch)
+    --distro|--release|--staged-dir|--release-dir|--inventory-file|--inventory-policy|--evidence-dir|--inventory-tiers|--arch)
       [[ $# -ge 2 && -n "$2" ]] || exit 2
       case "$1" in
         --distro) distro=$2 ;; --release) tag=$2 ;; --staged-dir) staged_dir=$2 ;; --evidence-dir) root=$2 ;;
         --release-dir) release_dir=$2 ;; --inventory-file) inventory_file=$2 ;;
+        --inventory-policy) inventory_policy=$2 ;;
         --inventory-tiers) inventory_tiers=$2 ;; --arch) arch=$2 ;;
       esac
       shift 2 ;;
@@ -39,6 +41,7 @@ Usage: scripts/benchmark-qemu.sh [--distro all|arch|debian|ubuntu|fedora]
   [--staged-dir DIR | --release-dir DIR] [--inventory-file TSV]
   [--evidence-dir DIR] [--benchmark] [--benchmark-transactions COUNT]
   [--print-pins] [--inventory-tiers CSV] [--inventory-allow-mutations]
+  [--inventory-policy JSON]
 
 Runs disposable KVM guests with pinned images, reboot, sudo, package lifecycle,
 and optional warm read-query timing. Host and guest architecture must match;
@@ -52,6 +55,7 @@ revision. Prepare both with scripts/prepare-qemu-release.py:
   scripts/benchmark-qemu.sh --distro arch --release vVERSION --release-dir published --inventory-file published/cases.tsv --inventory-tiers hermetic,container
 
 Inventory rows run over SSH after a passing lifecycle (scripts/qemu-inventory.sh).
+CI requires --inventory-policy to pin the selection and permitted skips.
 --benchmark-transactions COUNT runs independently reset install/remove trials
 (1-100 per tool). Requires Docker, KVM, jq, and coreutils. Direct published
 downloads need gh; release preparation and benchmarks need Python 3.
@@ -190,6 +194,7 @@ if [[ "$distro" == all ]]; then
   [[ -z "$staged_dir" ]] || args+=(--staged-dir "$staged_dir")
   [[ -z "$release_dir" ]] || args+=(--release-dir "$release_dir")
   [[ -z "$inventory_file" ]] || args+=(--inventory-file "$inventory_file")
+  [[ -z "$inventory_policy" ]] || args+=(--inventory-policy "$inventory_policy")
   [[ "$benchmark" == false ]] || args+=(--benchmark)
   [[ "$transaction_samples" == 0 ]] || args+=(--benchmark-transactions "$transaction_samples")
   [[ -z "$inventory_tiers" ]] || args+=(--inventory-tiers "$inventory_tiers")
@@ -737,6 +742,16 @@ elif [[ -n "$inventory_tiers" ]]; then
     $ids | map({case_id:., distro:$distro, artifact_source:"inventory",
       result:"BLOCKED", exit_code:-1, elapsed_seconds:0})' > "$work/inventory/results.json"
   printf '{"complete":false,"reason":"guest lifecycle failed"}\n' > "$work/inventory/summary.json"
+fi
+if [[ -n "$inventory_policy" ]]; then
+  policy_rc=0
+  python3 "$here/check-qemu-inventory.py" --policy "$inventory_policy" --inventory "$tsv" \
+    --results "$work/inventory/results.json" --summary "$work/inventory/summary.json" \
+    --distro "$distro" --tiers "$inventory_tiers" > "$work/inventory-admission.json" || policy_rc=$?
+  if [[ "$policy_rc" != 0 ]]; then
+    [[ "$rc" != 0 ]] || rc=120
+    inventory_harness_error=true
+  fi
 fi
 # Health is an independent admission gate after the selected test work. Query
 # boot-scoped kernel/crash identity only, never raw cores or process environments.

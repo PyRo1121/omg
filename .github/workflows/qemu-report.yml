@@ -1,0 +1,40 @@
+name: QEMU Failure Reporting
+
+on:
+  workflow_run:
+    workflows: [QEMU Matrix]
+    types: [completed]
+
+permissions: {}
+
+concurrency:
+  group: qemu-trusted-reporting
+  cancel-in-progress: false
+
+jobs:
+  report:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    steps:
+      - name: Check out trusted default-branch reporter
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # workflow_run's SHA is the default branch, never the triggering PR.
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Configure trusted telemetry
+        env:
+          OMG_SMOKE_SENTRY_DSN: ${{ secrets.OMG_SMOKE_SENTRY_DSN }}
+        run: python3 scripts/ci-smoke-report.py configure
+
+      - name: Validate run identity and report bounded evidence
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OMG_SMOKE_ENVIRONMENT: qemu-matrix
+          OMG_SMOKE_RELEASE: unknown
+        run: python3 scripts/report-qemu-workflow.py
