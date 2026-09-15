@@ -111,7 +111,7 @@ pins_for() {
   firmware_code=/usr/share/OVMF/OVMF_CODE_4M.fd
   firmware_vars_src=/usr/share/OVMF/OVMF_VARS_4M.fd
   guest_uname=x86_64
-  controller_image=debian:bookworm@sha256:813017f3d62be4b5891a7acca6a01bdcd4b8513daa81b1ab99d3a50385b26931
+  controller_image=debian:trixie@sha256:6788062a1b42ac281f053ac876170b79a3eaed5d61383b8ed7eaca6c6965f3b1
   case "$pin_distro-$pin_arch" in
     arch-x86_64)
       image_url=https://geo.mirror.pkgbuild.com/images/latest/Arch-Linux-x86_64-cloudimg-20260901.583572.qcow2
@@ -159,7 +159,7 @@ pins_for() {
     firmware_code=/usr/share/AAVMF/AAVMF_CODE.fd
     firmware_vars_src=/usr/share/AAVMF/AAVMF_VARS.fd
     guest_uname=aarch64
-    controller_image=debian:bookworm@sha256:5eac3978974cfa26a880057766c683e55c5763355d30a8beecbd263e0e1621d9
+    controller_image=debian:trixie@sha256:0aa0908407cce3da2a90c1d80acc6ca5ca57401ed63eecfa8149b7ba3cc40829
   fi
 }
 
@@ -317,6 +317,8 @@ timeout 120 docker run -d --name "$controller" --cpus 2 --memory 3g --memory-swa
   --mount "type=bind,src=$work,dst=/work" --workdir /work \
   "$controller_image" sleep infinity > "$work/controller-id.txt"
 timeout --kill-after=5s 600 docker exec "$controller" sh -c "apt-get -o APT::Update::Error-Mode=any -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update && DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends $qemu_pkg qemu-utils cloud-image-utils openssh-client curl ca-certificates $firmware_pkg jq" > "$work/controller-setup.log" 2>&1
+cp "$here/check-qemu-controller.sh" "$work/check-qemu-controller.sh"
+timeout 30 docker exec "$controller" bash /work/check-qemu-controller.sh "$qemu_pkg" > "$work/controller-security.log" 2>&1
 timeout 360 docker exec "$controller" bash -c 'set -e; cd /work/guest; curl --fail --location --max-time 300 -o base.qcow2 "$1"; printf "%s  base.qcow2\n" "$2" | "$3" -c -; "$4" --version; qemu-img info base.qcow2' _ "$image_url" "$image_hash" "$hash_tool" "$qemu_bin" > "$work/image-setup.log" 2>&1
 cat > "$work/boot.sh" <<'BOOT'
 #!/usr/bin/env bash
@@ -375,7 +377,7 @@ for attempt in {1..100}; do
   if ! kill -0 "$qemu_pid" 2>/dev/null; then cat qemu-startup.log; exit 1; fi
   sleep 0.1
 done
-# QEMU 7.2 drops privileges after opening devices and enabling seccomp. Keep
+# QEMU drops privileges after opening devices and enabling seccomp. Keep
 # setuid available for that drop; verify the resulting process cannot retain
 # root IDs/capabilities or gain privileges through exec. Never fall back to root.
 qemu_pid=$(<qemu.pid)

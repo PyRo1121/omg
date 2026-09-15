@@ -39,6 +39,8 @@ on:
       - "scripts/prepare-qemu-release.py"
       - "scripts/test_prepare_qemu_release.py"
       - "scripts/test_qemu_process_isolation.py"
+      - "scripts/check-qemu-controller.sh"
+      - "scripts/test_qemu_controller_floor.py"
       - "scripts/qemu-transactions.sh"
       - "scripts/qemu-inventory.sh"
       - "scripts/test-release-smoke.sh"
@@ -119,6 +121,7 @@ jobs:
           python3 -m unittest discover -s tests -p test_qemu_verdict.py
           python3 -m unittest discover -s scripts -p test_prepare_qemu_release.py
           python3 -m unittest discover -s scripts -p test_qemu_process_isolation.py
+          python3 -m unittest discover -s scripts -p test_qemu_controller_floor.py
 
       - name: Verify harness and reporting fixtures before guest builds
         run: |
