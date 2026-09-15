@@ -33,6 +33,11 @@ class HealthTests(unittest.TestCase):
     def test_clean_health_passes(self):
         self.assertEqual(self.verify(), 0)
 
+    def test_trial_rejects_health_from_another_boot(self):
+        self.assertEqual(HEALTH.verify_guest(self.guest, self.serial, self.payload["boot_id"]), 0)
+        with self.assertRaises(ValueError):
+            HEALTH.verify_guest(self.guest, self.serial, "00000000-1111-2222-3333-555555555555")
+
     @unittest.skipUnless(os.name == "posix" and hasattr(os, "geteuid") and os.geteuid() == 0
                          and shutil.which("journalctl"), "Native root journal query runs in Linux QEMU preparation")
     def test_native_systemd_collection(self):

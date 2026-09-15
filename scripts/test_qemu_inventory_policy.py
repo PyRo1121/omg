@@ -21,8 +21,8 @@ class PolicyTests(unittest.TestCase):
         self.policy = self.root / "policy.json"
         self.policy.write_text(json.dumps({"profiles": {"hermetic": ["hermetic"]}, "inventories": {
             hashlib.sha256(self.inventory.read_bytes()).hexdigest(): {"cases": [
-                {"id": "required", "tiers": ["hermetic"], "allowed_skips": {}},
-                {"id": "optional", "tiers": ["hermetic"], "allowed_skips": {"arch": "declared-cli-shape-only"}},
+                {"id": "required", "tiers": ["hermetic"], "network_scope": "offline", "allowed_skips": {}},
+                {"id": "optional", "tiers": ["hermetic"], "network_scope": "offline", "allowed_skips": {"arch": "declared-cli-shape-only"}},
             ]}}}))
         self.results = self.root / "results.json"
         self.summary = self.root / "summary.json"
@@ -67,6 +67,16 @@ class PolicyTests(unittest.TestCase):
         self.rows[0]["network_scope"] = "unconfined"
         with self.assertRaises(ValueError):
             self.admit()
+
+    def test_published_and_current_network_dependencies_are_explicit(self):
+        rules = json.loads((ROOT / "tests/qemu-inventory-policy.json").read_text())
+        for inventory in rules["inventories"].values():
+            cases = {case["id"]: case for case in inventory["cases"]}
+            for identity in ("doctor", "update", "audit-sbom", "runtime-python-install", "container-list"):
+                self.assertEqual(cases[identity]["network_scope"], "network")
+                self.assertTrue(cases[identity]["network_reason"])
+            self.assertEqual(cases["info"]["network_scope"], "offline")
+            self.assertTrue(all(case["network_scope"] in ("network", "offline") for case in cases.values()))
 
     def test_product_failure_is_not_admitted(self):
         self.rows[0].update(result="FAIL", exit_code=1)

@@ -14,16 +14,18 @@ allow_mutations=false
 allow_credentialed=false
 isolate_hermetic=false
 network_scope=unconfined
+network_policy=""
 row_timeout=120
 ssh_port=2222
 ssh_user=bench
 while (($#)); do
   case "$1" in
-    --work|--distro|--tiers|--tag|--binary|--tsv|--row-timeout|--ssh-port|--ssh-user)
+    --work|--distro|--tiers|--tag|--binary|--tsv|--row-timeout|--ssh-port|--ssh-user|--network-policy)
       [[ $# -ge 2 && -n "$2" ]] || exit 2
       case "$1" in
         --work) work=$2 ;; --distro) distro=$2 ;; --tiers) tiers=$2 ;;
         --tag) tag=$2 ;; --binary) binary=$2 ;; --tsv) tsv=$2 ;;
+        --network-policy) network_policy=$2 ;;
         --row-timeout) row_timeout=$2 ;; --ssh-port) ssh_port=$2 ;; --ssh-user) ssh_user=$2 ;;
       esac
       shift 2 ;;
@@ -46,6 +48,15 @@ for tier in "${requested_tiers[@]}"; do
   case "$tier" in hermetic|container|qemu|network|credentialed|pty|nested-container) ;; *) exit 2 ;; esac
 done
 [[ -f "$tsv" ]] || exit 2
+scopes='{}'
+if [[ "$isolate_hermetic" == true ]]; then
+  [[ -f "$network_policy" && ! -L "$network_policy" && $(wc -c < "$network_policy") -le 1048576 ]] || exit 2
+  inventory_digest=$(sha256sum "$tsv"); inventory_digest=${inventory_digest%% *}
+  scopes=$(jq -ce --arg digest "$inventory_digest" '
+    .inventories[$digest].cases | select(type=="array" and length>0) |
+    if all(.[]; .network_scope=="offline" or .network_scope=="network") then
+      map({key:.id,value:.network_scope}) | from_entries else error("invalid network scope") end' "$network_policy")
+fi
 
 root=$(cd "$work" && pwd)
 guest="$root/guest"
@@ -181,8 +192,7 @@ while IFS=$'\t' read -r case args_json safety _expected_exit expected_ux require
   if [[ "$hit" == false ]]; then continue; fi
   network_scope=unconfined
   if [[ "$isolate_hermetic" == true ]]; then
-    network_scope=network
-    [[ "$tier" != hermetic ]] || network_scope=offline
+    network_scope=$(jq -er --arg id "$case" '.[$id]' <<< "$scopes")
   fi
   # Declaration-only rows are parse-level, covered by cli_comprehensive.
   if [[ "$expected_ux" == declared ]]; then
@@ -220,6 +230,9 @@ while IFS=$'\t' read -r case args_json safety _expected_exit expected_ux require
   blocked=false
   while [[ "$next" != - ]]; do
     if ! prereq_runnable "$next"; then blocked=true; break; fi
+    if [[ "$network_scope" == offline && $(jq -r --arg id "$next" '.[$id]' <<< "$scopes") != offline ]]; then
+      blocked=true; break
+    fi
     chain=("$next" "${chain[@]}")
     next="${row_requires[$next]}"
   done

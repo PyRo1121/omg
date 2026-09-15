@@ -23,7 +23,9 @@ def material(root, name):
 def policy(manifest, identity, url, digest, today=None):
     data = json.loads(manifest.read_text())
     today = today or datetime.now(timezone.utc).date()
-    if not date.fromisoformat(data["reviewed_on"]) <= today < date.fromisoformat(data["review_expires"]):
+    reviewed = date.fromisoformat(data["reviewed_on"])
+    expires = date.fromisoformat(data["review_expires"])
+    if not 1 <= (expires - reviewed).days <= 31 or not reviewed <= today < expires:
         raise ValueError("image provenance review is expired or future-dated")
     entry = data["images"][identity]
     if entry["url"] != url or entry["digest"] != digest or not url.startswith("https://"):

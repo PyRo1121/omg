@@ -444,12 +444,16 @@ if [[ -n "$inventory_tiers" ]]; then
   # guest); /work is bind-mounted there.
   cp "$here/qemu-inventory.sh" "$work/qemu-inventory.sh"
   cp "$tsv" "$work/cases.tsv"
+  if [[ "$inventory_isolation" == true ]]; then
+    cp "$inventory_policy" "$work/inventory-policy.json"
+  fi
 fi
 if [[ "$benchmark" == true ]]; then
   cp "$here/../benchmark-hyperfine.sh" "$work/benchmark-hyperfine.sh"
   cp "$here/record-benchmark-run.py" "$work/record-benchmark-run.py"
   if [[ "$transaction_samples" != 0 ]]; then
     cp "$here/qemu-transactions.sh" "$work/qemu-transactions.sh"
+    cp "$here/check-qemu-health.py" "$work/check-qemu-health.py"
     sha256sum "$work/qemu-transactions.sh" > "$work/transaction-runner-sha256.txt"
   fi
   sha256sum "$work/benchmark-hyperfine.sh" "$work/record-benchmark-run.py" > "$work/benchmark-driver-sha256.txt"
@@ -673,6 +677,10 @@ if [[ "$transaction_samples" != 0 && "$rc" == 0 ]]; then
         for ((round=1;round<=transaction_samples;round++)); do
           printf -v trial_id '%s-%s-%03d' "$operation" "$tool" "$round"
           evidence="$work/transactions/trials/$trial_id/transaction-trial"
+          trial_boot=$(jq -er --arg id "$trial_id" '.results[] | select(.id==$id) | .boot_id' "$summary")
+          python3 "$here/check-qemu-health.py" verify-trial \
+            --guest "$work/transactions/trials/$trial_id/health.json" \
+            --serial "$work/transactions/trials/$trial_id/serial.log" --boot-id "$trial_boot" || exit 1
           python3 "$work/record-benchmark-run.py" --validate-only --scenario "$operation" --source "$evidence" || exit 1
           read -r actual_binary _ < "$evidence/binary-sha256.txt"
           [[ "$actual_binary" == "$expected_binary" ]] || exit 1
@@ -715,7 +723,7 @@ if [[ -n "$inventory_tiers" && "$rc" == 0 ]]; then
   inv_args=(--work /work --distro "$distro" --tiers "$inventory_tiers" --tag "$tag"
     --binary "/home/bench/omg-${tag}-${arch}-linux-${distro}/omg" --tsv /work/cases.tsv)
   [[ "$inventory_mutations" == false ]] || inv_args+=(--allow-mutations)
-  [[ "$inventory_isolation" == false ]] || inv_args+=(--isolate-hermetic)
+  [[ "$inventory_isolation" == false ]] || inv_args+=(--isolate-hermetic --network-policy /work/inventory-policy.json)
   inventory_rc=0
   timeout --kill-after=5s 3600 docker exec -w /work "$controller" bash /work/qemu-inventory.sh "${inv_args[@]}" > "$work/inventory.log" 2>&1 || inventory_rc=$?
   # Validate identity and values even for interrupted reports. Partial

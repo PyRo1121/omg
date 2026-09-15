@@ -606,6 +606,7 @@ jobs:
             args+=(--release-dir published --inventory-file published/cases.tsv --inventory-tiers "hermetic,qemu,container,network,pty" --inventory-allow-mutations)
           fi
           args+=(--inventory-isolate-hermetic)
+          args+=(--benchmark-transactions 1)
           ./scripts/benchmark-qemu.sh "${args[@]}"
 
       - name: Preserve setup failure evidence
@@ -720,6 +721,7 @@ jobs:
             --inventory-policy tests/qemu-inventory-policy.json \
             --image-policy tests/qemu-image-provenance/manifest.json \
             --inventory-isolate-hermetic \
+            --benchmark-transactions 1 \
             --staged-dir staged --inventory-tiers hermetic,container --inventory-allow-mutations
 
       - name: Preserve setup failure evidence

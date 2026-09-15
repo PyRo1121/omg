@@ -85,7 +85,7 @@ def collect():
             "product_crashes": crashes}
 
 
-def verify(guest, serial, controller):
+def verify_guest(guest, serial, boot_id=None):
     payload = json.loads(bounded_file(guest))
     if (not isinstance(payload, dict) or payload.get("schema_version") != 1
             or payload.get("complete") is not True
@@ -99,6 +99,13 @@ def verify(guest, serial, controller):
     serial_text = bounded_file(serial)
     if not serial_text.strip() or crash_signatures(serial_text):
         raise ValueError("missing serial evidence or fatal guest signature")
+    if boot_id is not None and payload["boot_id"] != boot_id:
+        raise ValueError("health evidence belongs to a different trial boot")
+    return 0
+
+
+def verify(guest, serial, controller):
+    verify_guest(guest, serial)
     state = json.loads(bounded_file(controller))
     if (not isinstance(state, dict) or state.get("Running") is not True
             or state.get("OOMKilled") is not False
@@ -111,6 +118,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("collect")
+    trial = commands.add_parser("verify-trial")
+    trial.add_argument("--guest", type=Path, required=True)
+    trial.add_argument("--serial", type=Path, required=True)
+    trial.add_argument("--boot-id", required=True)
     admission = commands.add_parser("verify")
     for name in ("guest", "serial", "controller"):
         admission.add_argument("--" + name, type=Path, required=True)
@@ -119,6 +130,8 @@ def main():
         if args.command == "collect":
             print(json.dumps(collect()))
             return 0
+        if args.command == "verify-trial":
+            return verify_guest(args.guest, args.serial, args.boot_id)
         return verify(args.guest, args.serial, args.controller)
     except (OSError, ValueError, subprocess.TimeoutExpired) as error:
         print(f"QEMU health evidence failed admission: {error}", file=sys.stderr)

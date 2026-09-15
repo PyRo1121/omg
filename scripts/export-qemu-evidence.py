@@ -109,7 +109,7 @@ def allowed_file(parts):
         ) is not None
     if len(parent) == 3 and parent[:2] == ("transactions", "trials"):
         return name in {"disk-create.log", "serial.log", "boot.log", "guest.log", "copy.log",
-                        "validation.log", "stop.log"}
+                        "validation.log", "stop.log", "health.json", "health.log"}
     return benchmark_file(name) or (
         len(parent) == 4 and parent[:2] == ("transactions", "trials")
         and parent[3] == "transaction-trial" and name in TRANSACTION_FILES
