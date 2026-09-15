@@ -5,7 +5,7 @@
   "images": {
     "arch-x86_64": {
       "publisher": "arch",
-      "url": "https://geo.mirror.pkgbuild.com/images/latest/Arch-Linux-x86_64-cloudimg-20260901.583572.qcow2",
+      "url": "https://geo.mirror.pkgbuild.com/images/v20260901.583572/Arch-Linux-x86_64-cloudimg-20260901.583572.qcow2",
       "digest": "e3e688f97a71b265ce202905a504253f60f3680cf57d011a45411c43bedfa930",
       "algorithm": "sha256",
       "keyring": "arch.gpg",
