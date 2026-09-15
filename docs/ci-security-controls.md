@@ -64,6 +64,9 @@ destinations remain reachable for distro mirrors and runtime downloads.
 Time-server addresses follow [Cloudflare's published NTP endpoints](https://developers.cloudflare.com/time-services/ntp/usage/);
 the guest time service uses the same addresses so Arch's boot-time synchronization
 does not require arbitrary outbound UDP.
+The deny rules also cover [Azure's special platform address](https://learn.microsoft.com/en-us/azure/virtual-network/what-is-ip-address-168-63-129-16),
+`168.63.129.16`, which falls outside private and link-local address ranges.
+This restriction applies to controller traffic, not the runner's own Azure agent.
 
 One independent reset trial per tool and operation checks OMG and native
 install/remove behavior, package state, boot identity and health. Separate

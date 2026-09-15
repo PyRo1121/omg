@@ -19,6 +19,7 @@ class EgressTests(unittest.TestCase):
         self.assertLess(rules.index(["-m", "addrtype", "--dst-type", "LOCAL", "-j", "REJECT"]), web)
         for network in EGRESS.PRIVATE:
             self.assertLess(rules.index(["-d", network, "-j", "REJECT"]), web)
+        self.assertIn(["-d", "168.63.129.16/32", "-j", "REJECT"], rules)
         self.assertEqual(rules[-1], ["-j", "REJECT"])
 
     def test_ntp_is_limited_to_boot_configured_public_servers(self):
