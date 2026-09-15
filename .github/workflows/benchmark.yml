@@ -20,8 +20,26 @@ env:
   CARGO_INCREMENTAL: 0
 
 jobs:
+  workflow-helpers:
+    name: Test workflow helpers on Linux host
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Native journal and namespace probes require the host, not the
+      # restricted Arch benchmark container. Keep failures release-blocking.
+      - name: Test workflow helpers
+        run: |
+          python3 -m unittest discover -s scripts -p 'test_*.py'
+          sudo -n python3 -m unittest discover -s scripts -p test_qemu_health.py
+          sudo -n python3 -m unittest discover -s scripts -p test_export_qemu_evidence.py
+
   benchmark:
     name: Run Benchmarks
+    needs: workflow-helpers
     runs-on: ubuntu-latest
     container: archlinux:latest@sha256:b0deabeb3d283da2c7f7dbf0eea051b7b2cd0554e0b737cc457fd21683bdcdd1
     timeout-minutes: 30
@@ -49,9 +67,6 @@ jobs:
 
       - name: Git safe directory
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-
-      - name: Test workflow helpers
-        run: python3 -m unittest discover -s scripts -p 'test_*.py'
 
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
