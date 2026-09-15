@@ -276,6 +276,7 @@ ci-local-quick: check-shell-syntax
 	cargo check --all-targets --no-default-features --features pgp,license --locked
 	cargo check --manifest-path fuzz/Cargo.toml --all-targets --locked
 	python3 -m unittest discover -s scripts -p 'test_*.py'
+	python3 tests/test_terminal_update_notice.py
 
 ci-local-full: ci-local-quick
 	cargo clippy --all-targets --no-default-features --features pgp,license \

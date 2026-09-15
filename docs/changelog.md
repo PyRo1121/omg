@@ -11,6 +11,19 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ---
 
 ## [Unreleased]
+
+## [0.1.221] - 2026-09-15
+
+See the [release overview and complete commit ledger](releases/v0.1.221.md).
+
+### Dependency security
+
+- Upgrade rustls to 0.23.45 for RUSTSEC-2026-0285 (TLS 1.3 handshake encryption-level validation), including the fuzz lockfile.
+
+### Terminal update notices
+
+- Existing interactive Bash, Zsh and Fish hooks advise about newer OMG releases using a daily background check. No automatic installation. [Behavior and opt-out](update-notices.md).
+
 ### ⚠️  Breaking Changes
 
 - **Config**: Document mise environment layer migration ⚠️ **BREAKING CHANGE**

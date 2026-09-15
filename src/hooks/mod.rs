@@ -875,6 +875,11 @@ const ZSH_HOOK: &str = r#"
 # OMG Shell Hook for Zsh
 # Add to ~/.zshrc: eval "$(omg hook zsh)"
 
+if [[ -o interactive && -z ${_OMG_NOTICE_STARTED+x} ]]; then
+  typeset -g _OMG_NOTICE_STARTED=1
+  \command omg __update-notice
+fi
+
 zmodload zsh/datetime
 
 _omg_hook() {
@@ -983,6 +988,11 @@ const BASH_HOOK: &str = r#"
 # OMG Shell Hook for Bash
 # Add to ~/.bashrc: eval "$(omg hook bash)"
 
+if [[ $- == *i* && -z ${_OMG_NOTICE_STARTED+x} ]]; then
+  _OMG_NOTICE_STARTED=1
+  \command omg __update-notice
+fi
+
 _omg_hook() {
   local previous_exit_status=$?
   trap -- '' SIGINT
@@ -1068,6 +1078,11 @@ alias omg-uc='omg-updates-count'
 const FISH_HOOK: &str = r"
 # OMG Shell Hook for Fish
 # Add to ~/.config/fish/config.fish: omg hook fish | source
+
+if status is-interactive; and not set -q _OMG_NOTICE_STARTED
+  set -g _OMG_NOTICE_STARTED 1
+  command omg __update-notice
+end
 
 function _omg_hook --on-variable PWD --on-event fish_prompt
   if not set -q _OMG_PATH_BASE
