@@ -188,6 +188,11 @@ class SecurityBoundaryTests(unittest.TestCase):
         )
         self.assertEqual((pull_request.returncode, pull_request.stdout.strip()), (0, 'true false'))
         self.assertEqual((dispatch.returncode, dispatch.stdout.strip()), (0, 'true true'))
+        push = subprocess.run(
+            [bash, '--noprofile', '--norc', '-euo', 'pipefail', '-c', command],
+            env=dict(base, EVENT_NAME='push'), text=True, capture_output=True,
+        )
+        self.assertEqual((push.returncode, push.stdout.strip()), (0, 'true false'))
 
     def test_custom_arm_runner_permissions_are_preconfigured(self):
         body = TEXT.split('\n  guest-arm:\n', 1)[1].split('\n  #', 1)[0]

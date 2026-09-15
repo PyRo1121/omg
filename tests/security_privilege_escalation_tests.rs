@@ -797,7 +797,21 @@ install_from_release
             );
             let calls =
                 std::fs::read_to_string(fixture.path().join("gate-calls")).unwrap_or_default();
-            assert_eq!(calls.lines().count(), if value == "true" { 0 } else { 2 });
+            let expected = if value == "true" {
+                Vec::new()
+            } else {
+                vec![
+                    "ci.yml fixture-commit CI",
+                    "benchmark.yml fixture-commit Benchmark",
+                    "audit.yml fixture-commit Security Audit",
+                    "secrets.yml fixture-commit Secret Scanning",
+                    "codeql.yml fixture-commit CodeQL",
+                    "coverage.yml fixture-commit Coverage",
+                    "docker-e2e.yml fixture-commit Docker E2E",
+                    "qemu-matrix.yml fixture-commit Staged QEMU",
+                ]
+            };
+            assert_eq!(calls.lines().collect::<Vec<_>>(), expected);
         }
         assert!(
             read_checkout_file(".github/workflows/release.yml")

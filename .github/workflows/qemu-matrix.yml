@@ -3,7 +3,7 @@
 # Boots disposable KVM guests per distro and runs the package-lifecycle
 # guest check via scripts/benchmark-qemu.sh.
 # - schedule/dispatch default: published release guests, x86_64 (no build).
-# - pull_request: x86_64 per-distro builds packaged exactly like the release
+# - pull_request/main push: x86_64 per-distro builds packaged like the release
 #   recipe and tested via --staged-dir. ARM is excluded because its configurable
 #   runner must never execute untrusted pull-request code.
 # - aarch64 legs are staged workflow-dispatch only; guest runners use OMG_QEMU_ARM_RUNNER
@@ -20,6 +20,19 @@
 name: QEMU Matrix
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "build.rs"
+      - "rust-toolchain.toml"
+      - ".cargo/**"
+      - "benchmark-hyperfine.sh"
+      - "scripts/**"
+      - ".github/workflows/qemu-matrix.yml"
   pull_request:
     branches: [main]
     paths:
@@ -35,6 +48,7 @@ on:
       - "scripts/benchmark-qemu.sh"
       - "scripts/prepare-qemu-release.py"
       - "scripts/test_prepare_qemu_release.py"
+      - "scripts/test_qemu_process_isolation.py"
       - "scripts/qemu-transactions.sh"
       - "scripts/qemu-inventory.sh"
       - "scripts/test-release-smoke.sh"
@@ -114,6 +128,7 @@ jobs:
           python3 -m unittest discover -s tests -p test_qemu_workflow.py
           python3 -m unittest discover -s tests -p test_qemu_verdict.py
           python3 -m unittest discover -s scripts -p test_prepare_qemu_release.py
+          python3 -m unittest discover -s scripts -p test_qemu_process_isolation.py
 
       - name: Verify harness and reporting fixtures before guest builds
         run: |
@@ -164,7 +179,7 @@ jobs:
           REQUESTED_RELEASE_TAG: ${{ inputs.tag }}
           REQUESTED_DISTRO: ${{ inputs.distro || 'all' }}
           REQUESTED_ARCH: ${{ inputs.arch || 'all' }}
-          STAGED: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.staged) }}
+          STAGED: ${{ github.event_name == 'pull_request' || github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.staged) }}
           EVENT_NAME: ${{ github.event_name }}
           GH_TOKEN: ${{ github.event_name != 'pull_request' && secrets.GITHUB_TOKEN || '' }}
         run: |
@@ -179,7 +194,7 @@ jobs:
           x64=true
           arm64=false
           [[ "$REQUESTED_ARCH" != arm64 ]] || x64=false
-          if [[ "$STAGED" == true && "$EVENT_NAME" != pull_request && "$REQUESTED_ARCH" != x64 && "$REQUESTED_DISTRO" != arch ]]; then arm64=true; fi
+          if [[ "$STAGED" == true && "$EVENT_NAME" == workflow_dispatch && "$REQUESTED_ARCH" != x64 && "$REQUESTED_DISTRO" != arch ]]; then arm64=true; fi
           if [[ "$REQUESTED_DISTRO" == all ]]; then
             distros='["arch","debian","ubuntu","fedora"]'
             arm_distros='["debian","ubuntu","fedora"]'
@@ -239,14 +254,13 @@ jobs:
         with:
           toolchain: "1.95.0"
 
-      - name: Cache cargo registry
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Cache compiled dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-          key: qemu-staged-${{ matrix.distro }}-registry-${{ hashFiles('**/Cargo.lock') }}
+          prefix-key: qemu-staged-v1
+          key: x64-${{ matrix.distro }}-${{ hashFiles('.github/workflows/qemu-matrix.yml') }}
+          cache-bin: false
+          cache-on-failure: false
 
       - name: Run library and binary unit tests (including omgd)
         run: cargo test --lib --bins --no-default-features --features ${{ matrix.features }} --locked --no-fail-fast -- --test-threads=1
@@ -303,14 +317,13 @@ jobs:
         with:
           toolchain: "1.95.0"
 
-      - name: Cache cargo registry
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Cache compiled dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-          key: qemu-staged-ubuntu-registry-${{ hashFiles('**/Cargo.lock') }}
+          prefix-key: qemu-staged-v1
+          key: x64-ubuntu-${{ hashFiles('.github/workflows/qemu-matrix.yml') }}
+          cache-bin: false
+          cache-on-failure: false
 
       - name: Run library and binary unit tests (including omgd)
         run: cargo test --lib --bins --no-default-features --features debian,pgp,license --locked --no-fail-fast -- --test-threads=1
@@ -399,14 +412,13 @@ jobs:
         with:
           toolchain: "1.95.0"
 
-      - name: Cache cargo registry
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Cache compiled dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-          key: qemu-staged-arm-${{ matrix.distro }}-registry-${{ hashFiles('**/Cargo.lock') }}
+          prefix-key: qemu-staged-v1
+          key: arm64-${{ matrix.distro }}-${{ hashFiles('.github/workflows/qemu-matrix.yml') }}
+          cache-bin: false
+          cache-on-failure: false
 
       - name: Run library and binary unit tests (including omgd)
         run: cargo test --lib --bins --no-default-features --features ${{ matrix.features }} --locked --no-fail-fast -- --test-threads=1
@@ -459,14 +471,13 @@ jobs:
         with:
           toolchain: "1.95.0"
 
-      - name: Cache cargo registry
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Cache compiled dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-          key: qemu-staged-arm-ubuntu-registry-${{ hashFiles('**/Cargo.lock') }}
+          prefix-key: qemu-staged-v1
+          key: arm64-ubuntu-${{ hashFiles('.github/workflows/qemu-matrix.yml') }}
+          cache-bin: false
+          cache-on-failure: false
 
       - name: Run library and binary unit tests (including omgd)
         run: cargo test --lib --bins --no-default-features --features debian,pgp,license --locked --no-fail-fast -- --test-threads=1

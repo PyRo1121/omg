@@ -21,6 +21,39 @@ def step_script(block, name):
 
 
 class ReleaseWorkflowBoundaryTests(unittest.TestCase):
+    def test_dispatch_executes_exact_gates_without_evaluating_input(self):
+        release = (WORKFLOWS / 'release.yml').read_text(encoding='utf-8')
+        script = step_script(job_block(release, 'gate-on-ci'),
+                             'Require successful CI and benchmark runs for this commit')
+        expected = [
+            'ci.yml fixture-commit CI', 'benchmark.yml fixture-commit Benchmark',
+            'audit.yml fixture-commit Security Audit', 'secrets.yml fixture-commit Secret Scanning',
+            'codeql.yml fixture-commit CodeQL', 'coverage.yml fixture-commit Coverage',
+            'docker-e2e.yml fixture-commit Docker E2E', 'qemu-matrix.yml fixture-commit Staged QEMU',
+        ]
+        for value in ('true', 'false', '$(touch injected)'):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                gate = root / 'scripts/require-workflow-success.sh'
+                gate.parent.mkdir()
+                gate.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> gate-calls\n')
+                gate.chmod(0o700)
+                env = dict(os.environ, GITHUB_EVENT_NAME='workflow_dispatch',
+                           GITHUB_SHA='fixture-commit', GITHUB_REF='refs/tags/v1.2.3', DRY_RUN=value)
+                result = subprocess.run([BASH, '--noprofile', '--norc', '-e', '-o', 'pipefail', '-c', script],
+                                        cwd=root, env=env, capture_output=True, text=True, timeout=15)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertFalse((root / 'injected').exists())
+                calls = (root / 'gate-calls').read_text().splitlines() if (root / 'gate-calls').exists() else []
+                self.assertEqual(calls, [] if value == 'true' else expected)
+
+    def test_release_requires_all_security_and_guest_prerequisites(self):
+        release = (WORKFLOWS / 'release.yml').read_text(encoding='utf-8')
+        gate = job_block(release, 'gate-on-ci')
+        for workflow in ('ci.yml', 'benchmark.yml', 'audit.yml', 'secrets.yml',
+                         'codeql.yml', 'coverage.yml', 'docker-e2e.yml', 'qemu-matrix.yml'):
+            self.assertIn(f'scripts/require-workflow-success.sh {workflow} "$GITHUB_SHA"', gate)
+
     def test_fixture_and_single_tag_gate_all_smoke_jobs(self):
         text = (WORKFLOWS / 'release-smoke.yml').read_text()
         for job in ('smoke', 'smoke-macos'):

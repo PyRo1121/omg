@@ -6,39 +6,35 @@ commit="${2:?commit SHA is required}"
 label="${3:-$workflow}"
 repository="${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
 
-successful_run="$(
+latest_run="$(
   gh run list \
     --repo "$repository" \
     --workflow "$workflow" \
     --commit "$commit" \
-    --status success \
+    --event push \
     --limit 1 \
-    --json databaseId \
-    --jq '.[0].databaseId // empty'
+    --json databaseId,status,conclusion \
+    --jq '.[0] | select(. != null) | [.databaseId, .status, (.conclusion // "")] | @tsv'
 )"
-if [[ -n "$successful_run" ]]; then
-  echo "$label passed for $commit in run $successful_run"
+if [[ -z "$latest_run" ]]; then
+  echo "::error::No push-triggered $label run found for commit $commit" >&2
+  exit 1
+fi
+IFS=$'\t' read -r run_id run_status conclusion <<< "$latest_run"
+[[ "$run_id" =~ ^[0-9]+$ ]] || { echo "::error::Invalid workflow run identifier" >&2; exit 1; }
+if [[ "$run_status" == completed && "$conclusion" == success ]]; then
+  echo "$label passed for $commit in run $run_id"
   exit 0
 fi
-
-pending_run="$(
-  gh run list \
-    --repo "$repository" \
-    --workflow "$workflow" \
-    --commit "$commit" \
-    --limit 20 \
-    --json databaseId,status \
-    --jq '[.[] | select(.status == "in_progress" or .status == "queued")][0].databaseId // empty'
-)"
-if [[ -z "$pending_run" ]]; then
-  echo "::error::No successful or in-progress $label run found for commit $commit" >&2
+if [[ "$run_status" != in_progress && "$run_status" != queued ]]; then
+  echo "::error::Latest $label run $run_id did not succeed: $run_status/$conclusion" >&2
   exit 1
 fi
 
-echo "Waiting for $label run $pending_run on $commit"
-if ! gh run watch "$pending_run" --repo "$repository" --exit-status; then
-  echo "::error::$label run $pending_run failed for commit $commit" >&2
+echo "Waiting for $label run $run_id on $commit"
+if ! gh run watch "$run_id" --repo "$repository" --exit-status; then
+  echo "::error::$label run $run_id failed for commit $commit" >&2
   exit 1
 fi
 
-echo "$label passed for $commit in run $pending_run"
+echo "$label passed for $commit in run $run_id"
