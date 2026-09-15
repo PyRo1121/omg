@@ -191,7 +191,7 @@ class ReleaseWorkflowBoundaryTests(unittest.TestCase):
         self.assertIn('workflow_dispatch:', benchmark)
         self.assertIn('      - name: Upload Benchmark Report\n        if: always()', benchmark)
         ci = (WORKFLOWS / 'ci.yml').read_text(encoding='utf-8')
-        self.assertIn("should-build: ${{ github.event_name == 'push' || steps.changes.outputs.rust == 'true' }}", ci)
+        self.assertIn("should-build: ${{ github.event_name == 'push' || steps.changes.outputs.required == 'true' }}", ci)
 
     def test_publication_requires_tag_but_branch_dry_run_remains_valid(self):
         text = (WORKFLOWS / 'release.yml').read_text(encoding='utf-8')

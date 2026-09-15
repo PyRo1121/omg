@@ -59,7 +59,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
-      should-build: ${{ github.event_name == 'push' || steps.changes.outputs.rust == 'true' }}
+      should-build: ${{ github.event_name == 'push' || steps.changes.outputs.required == 'true' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -67,37 +67,30 @@ jobs:
           fetch-depth: 0
 
       - name: Detect changes
-        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: changes
-        with:
-          filters: |
-            rust:
-              - 'src/**'
-              - 'tests/**'
-              - 'Cargo.toml'
-              - 'Cargo.lock'
-              - 'build.rs'
-              - 'benches/**'
-              - 'fuzz/**'
-              - 'rust-toolchain.toml'
-              - '.cargo/**'
-              - '.config/**'
-              - '.github/workflows/ci.yml'
+        run: python3 scripts/ci-change-scope.py
+
+      - name: Validate change classification
+        run: python3 -m unittest discover -s scripts -p test_ci_change_scope.py
 
       - name: Install Rust
+        if: steps.changes.outputs.required == 'true'
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           toolchain: "1.95.0"
           components: rustfmt, clippy
 
       - name: Setup cache
-        if: inputs.skip-cache != true
+        if: steps.changes.outputs.required == 'true' && inputs.skip-cache != true
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           prefix-key: "v1-quick-gate"
           shared-key: "quick-gate"
 
       - name: Check local CI targets
+        if: steps.changes.outputs.required == 'true'
+        env:
+          CI_LOCAL_TARGET_DIR: ${{ github.workspace }}/target
         run: make ci-local-quick
 
       - name: Verify installer destination safety
