@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 SPEC = importlib.util.spec_from_file_location("qemu_health", Path(__file__).with_name("check-qemu-health.py"))
 HEALTH = importlib.util.module_from_spec(SPEC)
@@ -29,6 +30,17 @@ class HealthTests(unittest.TestCase):
 
     def test_clean_health_passes(self):
         self.assertEqual(self.verify(), 0)
+
+    def test_collector_binds_optional_boot_argument_and_accepts_no_crashes(self):
+        with patch.object(HEALTH.Path, "read_text", return_value=self.payload["boot_id"]), \
+                patch.object(HEALTH, "query", side_effect=["Linux version 6.12\n", ""]) as query:
+            receipt = HEALTH.collect()
+        self.assertTrue(receipt["complete"])
+        self.assertEqual(receipt["product_crashes"], [])
+        for call in query.call_args_list:
+            self.assertIn("--boot=" + self.payload["boot_id"], call.args[0])
+            self.assertIn("--quiet", call.args[0])
+            self.assertNotIn("--boot", call.args[0])
 
     def test_injected_crashes_cannot_pass(self):
         for message in ("Kernel panic - not syncing: fatal exception",

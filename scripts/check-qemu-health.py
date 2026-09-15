@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import stat
 import subprocess
+import sys
 import tempfile
 
 LIMIT = 1024 * 1024
@@ -41,7 +42,7 @@ def query(argv):
         completed = subprocess.run(argv, stdout=output, stderr=subprocess.DEVNULL,
                                    timeout=15, check=False)
         if completed.returncode != 0 or output.tell() > LIMIT:
-            raise ValueError("health query failed or exceeded limit")
+            raise ValueError(f"health query failed: exit={completed.returncode}, bytes={output.tell()}")
         output.seek(0)
         return output.read(LIMIT + 1).decode("utf-8", errors="strict")
 
@@ -55,10 +56,10 @@ def collect():
     boot_id = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
     if not BOOT_ID.fullmatch(boot_id):
         raise ValueError("invalid guest boot identity")
-    kernel = query(["journalctl", "--boot", boot_id, "--dmesg", "--no-pager", "--output=cat"])
+    kernel = query(["journalctl", "--boot=" + boot_id, "--dmesg", "--quiet", "--no-pager", "--output=cat"])
     if not kernel.strip() or kernel.strip() == "-- No entries --":
         raise ValueError("missing boot kernel evidence")
-    cores = query(["journalctl", "--boot", boot_id, "--no-pager", "--output=json",
+    cores = query(["journalctl", "--boot=" + boot_id, "--quiet", "--no-pager", "--output=json",
                    "--output-fields=COREDUMP_COMM,COREDUMP_SIGNAL",
                    "MESSAGE_ID=fc2e22bc6ee647b6b90729ab34a250b1"])
     crashes = []
@@ -109,8 +110,8 @@ def main():
             print(json.dumps(collect()))
             return 0
         return verify(args.guest, args.serial, args.controller)
-    except (OSError, ValueError, subprocess.TimeoutExpired):
-        print("QEMU health evidence failed admission", file=__import__("sys").stderr)
+    except (OSError, ValueError, subprocess.TimeoutExpired) as error:
+        print(f"QEMU health evidence failed admission: {error}", file=sys.stderr)
         return 2
 
 
