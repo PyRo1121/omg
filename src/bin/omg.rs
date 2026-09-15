@@ -805,7 +805,10 @@ fn main() {
 /// suggestions or differentiate exit codes.
 fn finish(result: Result<()>) -> ! {
     match result {
-        Ok(()) => std::process::exit(0),
+        Ok(()) => {
+            omg_lib::cli::update_notice::after_command();
+            std::process::exit(0);
+        }
         Err(error) => {
             eprintln!("Error: {error:#}");
             if let Some(suggestion) = omg_lib::core::error::suggest_for_anyhow(&error) {

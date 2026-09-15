@@ -86,9 +86,10 @@ omg env check
 
 ## Installation
 
-Existing Bash, Zsh and Fish hooks can show a quiet update notice when a terminal
-opens. Checks run in the background at most daily; installation remains explicit.
-See [terminal update notices and opt-out](docs/update-notices.md).
+Successful interactive OMG commands can show an update notice directing you to
+`omg self-update`; no shell hook is required. Existing Bash, Zsh and Fish hooks
+can also show it. Checks run in the background at most daily; installation remains
+explicit. See [built-in update notices and opt-out](docs/update-notices.md).
 
 Release artifacts are cryptographically signed and attested through GitHub Actions. Verification requires `curl` and GitHub CLI (`gh`).
 
